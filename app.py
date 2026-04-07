@@ -419,38 +419,15 @@ def main():
                 st.rerun()
 
         st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-
-        with st.expander("⚙️ System Information", expanded=False):
-            st.markdown(f"""
-            <div style='padding: 0.5rem 0;'>
-                <div style='display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;'>
-                    <div>
-                        <div style='font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 0.25rem;'>Version</div>
-                        <div style='font-size: 0.8rem; color: var(--text-primary); font-weight: 600;'>{VERSION}</div>
-                    </div>
-                    <div>
-                        <div style='font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 0.25rem;'>Status</div>
-                        <div style='font-size: 0.8rem; color: var(--success-green); font-weight: 600;'>● Production</div>
-                    </div>
-                </div>
-                <div style='margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid var(--border-color);'>
-                    <div style='font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 0.5rem;'>Core Components</div>
-                    <div style='display: flex; flex-wrap: wrap; gap: 0.5rem;'>
-                        <span style='font-size: 0.7rem; color: var(--text-secondary); background: rgba(255,195,0,0.1); padding: 0.25rem 0.5rem; border-radius: 4px; border: 1px solid rgba(255,195,0,0.2);'>Walk-Forward</span>
-                        <span style='font-size: 0.7rem; color: var(--text-secondary); background: rgba(6,182,212,0.1); padding: 0.25rem 0.5rem; border-radius: 4px; border: 1px solid rgba(6,182,212,0.2);'>OU (Andrews MU)</span>
-                        <span style='font-size: 0.7rem; color: var(--text-secondary); background: rgba(255,195,0,0.1); padding: 0.25rem 0.5rem; border-radius: 4px; border: 1px solid rgba(255,195,0,0.2);'>DDM (MR Var)</span>
-                        <span style='font-size: 0.7rem; color: var(--text-secondary); background: rgba(136,136,136,0.1); padding: 0.25rem 0.5rem; border-radius: 4px; border: 1px solid rgba(136,136,136,0.2);'>DFA Hurst</span>
-                    </div>
-                </div>
-                <div style='margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid var(--border-color);'>
-                    <div style='font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 0.5rem;'>Configuration</div>
-                    <div style='font-size: 0.75rem; color: var(--text-secondary); line-height: 1.6;'>
-                        <div style='margin-bottom: 0.25rem;'><strong style='color: var(--text-muted);'>Lookbacks:</strong> {', '.join(f'{lb}D' for lb in LOOKBACK_WINDOWS)}</div>
-                        <div><strong style='color: var(--text-muted);'>Break Detection:</strong> <span style="color: var(--success-green);">● Bai-Perron Active</span></div>
-                    </div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+        st.markdown(f"""
+        <div class='info-box'>
+            <p style='font-size:0.8rem; margin:0; color:var(--text-muted); line-height:1.5;'>
+                <strong>Version:</strong> {VERSION}<br>
+                <strong>Engine:</strong> Nishkarsh Convergence<br>
+                <strong>Data:</strong> Google Sheets + yfinance
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
 
     # ─── Resolve active configuration ──────────────────────────────────────
     active_target = st.session_state.get("active_target", target_col)
