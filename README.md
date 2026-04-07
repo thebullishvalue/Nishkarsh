@@ -16,47 +16,44 @@ Nishkarsh merges two orthogonal quantitative analysis systems into a single conv
 ## Architecture
 
 ```
-config.py                     # Constants, thresholds, column mappings
-logger_config.py              # Terminal logging (Pragyam-style direct console output)
-
-data/
-  fetcher.py                  # Unified data acquisition (Google Sheets, yfinance, Stooq)
-  cache.py                    # TTL-based memory/disk cache
-  schema.py                   # Dataclass contracts
-  constituents.py             # Nifty 50 list fetching (niftyindices.com + fallback)
-
+app.py                      # Streamlit entry point (streamlit run app.py)
+core/
+  config.py                 # Constants, thresholds, column mappings, colors
+  logger_config.py          # Terminal logging (Pragyam-style direct console output)
 analytics/
-  ou_process.py               # Ornstein-Uhlenbeck + Andrews MU estimator
-  ddm_filter.py               # Drift-Diffusion Model filter
-  hurst.py                    # Hurst exponent via DFA
-  conformal.py                # Conformal prediction z-scores
-  structural_breaks.py        # Bai-Perron breakpoint detection
-  regime.py                   # Kalman, HMM, GARCH, CUSUM
-  signals.py                  # MSF + MMR calculators
-  utils.py                    # Shared math utilities
-
+  ou_process.py             # Ornstein-Uhlenbeck + Andrews MU estimator
+  ddm_filter.py             # Drift-Diffusion Model filter
+  hurst.py                  # Hurst exponent via DFA
+  conformal.py              # Conformal prediction z-scores
+  structural_breaks.py      # Bai-Perron breakpoint detection
+  regime.py                 # Kalman, HMM, GARCH, CUSUM
+  signals.py                # MSF + MMR calculators
+  utils.py                  # Shared math utilities (sigmoid, zscore, ATR)
+data/
+  fetcher.py                # Unified data acquisition (Google Sheets, yfinance, Stooq)
+  cache.py                  # TTL-based memory/disk cache
+  schema.py                 # Dataclass contracts (UnifiedDataset)
+  constituents.py           # Nifty 50 list fetching (niftyindices.com + fallback)
 engines/
-  aarambh.py                  # FairValueEngine (walk-forward regression)
-  nirnay.py                   # NirnayEngine + constituent aggregation
-
+  aarambh.py                # FairValueEngine (walk-forward regression)
+  nirnay.py                 # NirnayEngine + constituent aggregation
 convergence/
-  cross_validator.py          # 4-dimension adaptive convergence scoring
-  conviction_model.py         # UnifiedConvictionModel (DDM on convergence)
-  divergence_detector.py      # Cross-system divergence detection
-
+  cross_validator.py        # 4-dimension adaptive convergence scoring
+  conviction_model.py       # UnifiedConvictionModel (DDM on convergence)
+  divergence_detector.py    # Cross-system divergence detection
 ui/
-  app.py                      # Main Streamlit entrypoint
-  theme.py                    # Shared CSS and chart theming
-  components.py               # Reusable widgets
-  tab_convergence.py          # Unified convergence dashboard
-  tab_aarambh.py              # Aarambh fair-value views
-  tab_nirnay.py               # Nirnay constituent time-series views
-  tab_diagnostics.py          # ML diagnostics from both engines
-  tab_data.py                 # Merged data table + CSV export
+  theme.py                  # Shared CSS and chart theming, progress bar
+  components.py             # Reusable widgets (metric cards, signal badges)
+  tabs/
+    tab_convergence.py      # Unified convergence dashboard
+    tab_aarambh.py          # Aarambh fair-value views
+    tab_nirnay.py           # Nirnay constituent time-series views
+    tab_diagnostics.py      # ML diagnostics from both engines
+    tab_data.py             # Merged data table + CSV export
 
-requirements.txt              # Dependencies
-README.md                     # This file
-CHANGELOG.md                  # Version history
+requirements.txt            # Merged dependencies
+README.md                   # This file
+CHANGELOG.md                # Version history
 ```
 
 ## Key Principle
@@ -79,7 +76,7 @@ pip install -r requirements.txt
 ### 2. Run the App
 
 ```bash
-streamlit run ui/app.py
+streamlit run app.py
 ```
 
 ### 3. Configure
@@ -118,12 +115,27 @@ The convergence score is an **adaptive-weighted composite** of 4 dimensions:
 
 ---
 
-## Verification
+## Tab Structure
 
-1. **Math parity:** Extracted functions match originals line-by-line
-2. **Engine parity:** Aarambh engine produces same output as original system
-3. **Nirnay parity:** Per-stock MSF/MMR matches original Nirnay system
-4. **End-to-end:** All 5 tabs render with synchronized timezone and data
+| Tab | Content |
+|-----|---------|
+| **🔗 CONVERGENCE** | Normalized Aarambh vs Nirnay overlay, agreement metrics, divergence events |
+| **📊 AARAMBH** | Base Conviction, DDM Confidence, Market State, Model Quality, Fair Value, Breadth |
+| **📈 NIRNAY** | Oversold/Overbought Distribution, Signal Counts, Avg Signal, HMM Regime, Constituents |
+| **🧠 DIAGNOSTICS** | OU diagnostics, Feature Impact, Signal Performance |
+| **📋 DATA** | Time series table + CSV export |
+
+---
+
+## Progress Pipeline
+
+| Phase | Progress | Description |
+|-------|----------|-------------|
+| Data Acquisition | 0-25% | Fetch constituents, macro data, OHLCV |
+| Aarambh Engine | 25-50% | Walk-forward regression + model statistics |
+| Nirnay Engine | 50-70% | Per-stock MSF+MMR+regime analysis |
+| Convergence | 70-90% | Cross-validation + DDM filtering + divergence |
+| Final Assembly | 90-100% | Session state + summary |
 
 ---
 
