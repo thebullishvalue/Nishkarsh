@@ -71,7 +71,33 @@ from core.logger_config import console, generate_run_id, Colors
 from core.config import LOOKBACK_WINDOWS, MIN_DATA_POINTS, STALENESS_DAYS, COLOR_RED
 
 
-# ─── Helper: Google Sheets loader ────────────────────────────────────────────
+# ── Secret Management ────────────────────────────────────────────────────────
+
+def _get_sheet_url() -> str:
+    """Get Google Sheets URL from secrets, env vars, or fallback.
+
+    Priority:
+    1. Streamlit Cloud secrets (st.secrets["aarambh"]["google_sheets_url"])
+    2. Environment variable (AARAMBH_GOOGLE_SHEETS_URL)
+    3. Fallback placeholder (user must provide)
+    """
+    # Try Streamlit secrets first
+    try:
+        url = st.secrets.get("aarambh", {}).get("google_sheets_url", "")
+        if url:
+            return url
+    except Exception:
+        pass
+
+    # Try environment variables
+    import os
+    env_url = os.environ.get("AARAMBH_GOOGLE_SHEETS_URL", "")
+    if env_url:
+        return env_url
+
+    # Fallback placeholder
+    return ""
+
 
 def load_google_sheet(url: str):
     """Wrapper to match original correl.py signature: (df, error)."""
@@ -272,12 +298,21 @@ def main():
             else:
                 st.info("📤 Upload a CSV or Excel file to begin analysis")
         else:
+            default_url = _get_sheet_url()
+            has_secret = bool(default_url)
             sheet_url = st.text_input(
                 "Sheet URL",
-                value="https://docs.google.com/spreadsheets/d/1po7z42n3dYIQGAvn0D1-a4pmyxpnGPQ13TrNi3DB5_c/edit?gid=1938234952#gid=1938234952",
+                value=default_url if has_secret else "",
+                type="password" if has_secret else "default",
                 label_visibility="collapsed",
+                placeholder="Enter Google Sheets URL or set AARAMBH_GOOGLE_SHEETS_URL env var",
             )
+            if not sheet_url and has_secret:
+                sheet_url = default_url
             if not has_data and st.button("🚀 Run Analysis", type="primary"):
+                if not sheet_url:
+                    st.error("Please provide a Google Sheets URL or set the AARAMBH_GOOGLE_SHEETS_URL environment variable.")
+                    return
                 with st.spinner("Loading data and running analysis..."):
                     df, error = load_google_sheet(sheet_url)
                     if error:

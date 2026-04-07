@@ -73,7 +73,21 @@ CHANGELOG.md                # Version history
 pip install -r requirements.txt
 ```
 
-### 2. Run the App
+### 2. Configure Secrets
+
+The Google Sheets URL must be provided via secrets or environment variables.
+
+**Local Development:**
+```bash
+export AARAMBH_GOOGLE_SHEETS_URL="https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID/edit?gid=YOUR_GID"
+```
+
+**Streamlit Cloud:**
+1. Go to Dashboard > Settings > Secrets
+2. Add secret key: `aarambh.google_sheets_url`
+3. Value: Your Google Sheets URL
+
+### 3. Run the App
 
 ```bash
 streamlit run app.py
