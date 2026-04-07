@@ -43,12 +43,9 @@ DEFAULT_PREDICTORS = (
     "US02Y", "US10Y", "US30Y", "NIFTY50_DY", "NIFTY50_PB",
 )
 
-# Default Google Sheets URL
-DEFAULT_SHEET_URL = (
-    "https://docs.google.com/spreadsheets/d/"
-    "1po7z42n3dYIQGAvn0D1-a4pmyxpnGPQ13TrNi3DB5_c/"
-    "edit?gid=1938234952#gid=1938234952"
-)
+# Google Sheets URL (should be set via secrets or environment variable)
+# This is only a placeholder for type hints
+DEFAULT_SHEET_URL = ""
 
 # DDM parameters (calibrated for daily conviction series)
 DDM_LEAK_RATE = 0.08
