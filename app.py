@@ -821,17 +821,12 @@ def main():
     if 'tf_selected' not in st.session_state:
         st.session_state.tf_selected = '6M'
     TIMEFRAMES = {'3M': 63, '6M': 126, '1Y': 252, '2Y': 504, 'ALL': None}
-    st.markdown("""
-    <style>
-        div[data-testid="stHorizontalBlock"] button[kind="secondary"],
-        div[data-testid="stHorizontalBlock"] button[kind="primary"] { width: 100% !important; }
-    </style>
-    """, unsafe_allow_html=True)
-    tf_cols = st.columns(len(TIMEFRAMES))
+    
+    tf_cols = st.columns(len(TIMEFRAMES), gap="small")
     for i, tf in enumerate(TIMEFRAMES.keys()):
         with tf_cols[i]:
             btn_type = "primary" if st.session_state.tf_selected == tf else "secondary"
-            if st.button(tf, key=f"tf_{tf}", type=btn_type):
+            if st.button(tf, key=f"tf_{tf}", type=btn_type, use_container_width=True):
                 st.session_state.tf_selected = tf
                 st.rerun()
     selected_tf = st.session_state.tf_selected
