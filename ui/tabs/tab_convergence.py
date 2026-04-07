@@ -27,31 +27,40 @@ def render_convergence_tab(ts_filtered=None):
         return
 
     # ─── Metric Cards Row ────────────────────────────────────────────────
-    col1, col2, col3, col4, col5, col6 = st.columns(6)
+    col1, col2, col3, col4 = st.columns(4)
 
     with col1:
-        if nishkarsh_result:
-            score = nishkarsh_result.nishkarsh_conviction
-            signal = nishkarsh_result.nishkarsh_signal
+        if nishkarsh_result is not None:
+            score = float(nishkarsh_result.nishkarsh_conviction)
+            signal = str(nishkarsh_result.nishkarsh_signal)
             color = "success" if "BUY" in signal else "danger" if "SELL" in signal else "neutral"
             render_metric_card("NISHKARSH CONVICTION", f"{score:+.0f}", signal, color)
         else:
             render_metric_card("NISHKARSH CONVICTION", "N/A", "Not computed", "neutral")
 
     with col2:
-        if aarambh_ts is not None and "ConvictionBounded" in aarambh_ts.columns:
-            a_conv = aarambh_ts["ConvictionBounded"].iloc[-1]
+        if aarambh_ts is not None and not aarambh_ts.empty and "ConvictionBounded" in aarambh_ts.columns:
+            a_conv = float(aarambh_ts["ConvictionBounded"].iloc[-1])
             render_metric_card("AARAMBH CONVICTION", f"{a_conv:+.0f}", "Fair value breadth",
                              "success" if a_conv < -20 else "danger" if a_conv > 20 else "neutral")
         else:
-            render_metric_card("AARAMBH CONVICTION", "N/A", "", "neutral")
+            render_metric_card("AARAMBH CONVICTION", "N/A", "No conviction data", "neutral")
 
     with col3:
         if nirnay_daily is not None and not nirnay_daily.empty:
-            df_n = nirnay_daily[~nirnay_daily.index.duplicated(keep="last")]
-            n_avg = df_n["avg_unified_osc"].iloc[-1] if "avg_unified_osc" in df_n.columns else 0
-            render_metric_card("NIRNAY AVG SIGNAL", f"{n_avg:.1f}", "Constituent oscillator",
-                             "success" if n_avg < -3 else "danger" if n_avg > 3 else "neutral")
+            df_n = nirnay_daily[~nirnay_daily.index.duplicated(keep="last")].copy()
+            # Normalize column names like in tab_nirnay.py
+            col_map = {}
+            for c in df_n.columns:
+                cl = c.lower().replace("-", "_")
+                if cl in ("avg_signal", "avg_unified_osc"):
+                    col_map[c] = "Avg_Signal"
+            df_n = df_n.rename(columns=col_map)
+            if "Avg_Signal" not in df_n.columns:
+                df_n["Avg_Signal"] = 0
+            n_avg = float(df_n["Avg_Signal"].iloc[-1])
+            render_metric_card("NIRNAY AVG SIGNAL", f"{n_avg:.2f}", "Unified Osc",
+                             "success" if n_avg < -1 else "danger" if n_avg > 1 else "neutral")
         else:
             render_metric_card("NIRNAY AVG SIGNAL", "N/A", "No constituent data", "neutral")
 
@@ -59,16 +68,6 @@ def render_convergence_tab(ts_filtered=None):
         agreement = convergence_df["agreement_ratio"].iloc[-1]
         render_metric_card("AGREEMENT", f"{agreement:.0%}", "Cross-system alignment",
                           "success" if agreement > 0.7 else "warning" if agreement > 0.5 else "neutral")
-
-    with col5:
-        n_div = len(divergence_events) if divergence_events is not None and not divergence_events.empty else 0
-        render_metric_card("DIVERGENCES", str(n_div), "Active divergence events",
-                          "danger" if n_div > 5 else "warning" if n_div > 2 else "neutral")
-
-    with col6:
-        confidence = convergence_df["confidence"].iloc[-1]
-        render_metric_card("CONFIDENCE", f"{confidence:.0%}", "Convergence reliability",
-                          "success" if confidence > 0.7 else "neutral")
 
     st.markdown("---")
 
