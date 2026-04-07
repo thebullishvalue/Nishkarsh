@@ -21,7 +21,7 @@ from core.config import (
 )
 
 VERSION = "1.1.0"
-PRODUCT_NAME = "Nishkarsh"
+PRODUCT_NAME = "NISHKARSH"
 COMPANY = "@thebullishvalue"
 
 
