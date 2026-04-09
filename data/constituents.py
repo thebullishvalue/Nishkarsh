@@ -9,11 +9,17 @@ from __future__ import annotations
 
 import io
 import logging
+import warnings
 
 import pandas as pd
 import requests
+import streamlit as st
+import urllib3
 
 from core.config import NIFTY50_URL, NIFTY50_FALLBACK
+
+# Suppress insecure request warnings just for these external fetches
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Wikipedia fallback URLs for major indices
 _INDIA_INDEX_WIKI = {
@@ -30,6 +36,7 @@ _HEADERS = {
 }
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
 def fetch_nifty50_constituents() -> tuple[list[str], str]:
     """Fetch Nifty 50 constituent symbols with fallback chain.
 
@@ -48,7 +55,9 @@ def fetch_nifty50_constituents() -> tuple[list[str], str]:
     """
     # Primary: niftyindices.com
     try:
-        resp = requests.get(NIFTY50_URL, headers=_HEADERS, verify=False, timeout=10)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            resp = requests.get(NIFTY50_URL, headers=_HEADERS, verify=False, timeout=10)
         resp.raise_for_status()
         df = pd.read_csv(io.StringIO(resp.text))
         if "Symbol" in df.columns:
@@ -86,9 +95,9 @@ def _parse_wikipedia_constituents(url: str, min_count: int = 40) -> list[str] | 
     list[str] | None
         Constituent symbols without suffix, or ``None`` if no valid table found.
     """
-    resp = requests.get(url, headers=_HEADERS, timeout=15)
-    resp.raise_for_status()
-    tables = pd.read_html(io.StringIO(resp.text))
+    tmp_resp = requests.get(url, headers=_HEADERS, timeout=15)
+    tmp_resp.raise_for_status()
+    tables = pd.read_html(io.StringIO(tmp_resp.text))
     for tbl in tables:
         if "Symbol" in tbl.columns:
             symbols = tbl["Symbol"].dropna().astype(str).str.strip().tolist()

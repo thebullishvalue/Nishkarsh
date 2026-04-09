@@ -11,10 +11,12 @@ from __future__ import annotations
 import io
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
 import pandas as pd
 import requests
+import streamlit as st
 import yfinance as yf
 
 from core.config import (
@@ -22,86 +24,56 @@ from core.config import (
     MACRO_SYMBOLS_YF,
     DEFAULT_SHEET_URL,
 )
-from data.cache import Cache
 from data.schema import UnifiedDataset
 from data.constituents import fetch_nifty50_constituents
-
-cache = Cache(ttl=3600)
 
 
 # ─── Aarambh data (Google Sheets) ────────────────────────────────────────────
 
-
-def fetch_aarambh_data(
-    source: str = DEFAULT_SHEET_URL,
-) -> pd.DataFrame | None:
-    """Fetch valuation data from a Google Sheet.
-
-    Parameters
-    ----------
-    source : str
-        Google Sheets URL.
-
-    Returns
-    -------
-    pd.DataFrame | None
-        Raw sheet data, or ``None`` on failure.
-    """
-    cache_key = f"aarambh_sheet_{source}"
-    cached = cache.get(cache_key)
-    if cached is not None:
-        return cached
-
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_google_sheet(url: str) -> tuple[pd.DataFrame | None, str | None]:
+    """Fetch valuation data from a Google Sheet with Streamlit native caching."""
+    if not url:
+        return None, "Empty URL"
     try:
-        sheet_id_match = re.search(r"/d/([a-zA-Z0-9-_]+)", source)
+        sheet_id_match = re.search(r"/d/([a-zA-Z0-9-_]+)", url)
         if not sheet_id_match:
-            return None
+            return None, "Invalid Google Sheets URL"
         sheet_id = sheet_id_match.group(1)
-        gid_match = re.search(r"gid=(\d+)", source)
+        gid_match = re.search(r"gid=(\d+)", url)
         gid = gid_match.group(1) if gid_match else "0"
         csv_url = (
             f"https://docs.google.com/spreadsheets/d/"
             f"{sheet_id}/export?format=csv&gid={gid}"
         )
         df = pd.read_csv(csv_url)
-        cache.put(cache_key, value=df)
-        return df
+        return (df, None) if df is not None and not df.empty else (None, "Failed to fetch data")
     except Exception as e:
         logging.error("Failed to load Google Sheets: %s", e)
-        return None
+        return None, str(e)
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_aarambh_data(
+    source: str = DEFAULT_SHEET_URL,
+) -> pd.DataFrame | None:
+    """Legacy wrapper for component compatibility."""
+    df, _ = load_google_sheet(source)
+    return df
 
 
 # ─── Constituent OHLCV (yfinance) ────────────────────────────────────────────
 
-
+@st.cache_data(ttl=3600, show_spinner=False)
 def fetch_constituent_ohlcv(
     symbols: list[str],
     start_date: pd.Timestamp | str,
     end_date: pd.Timestamp | str,
 ) -> dict[str, pd.DataFrame]:
-    """Batch-download OHLCV for Nifty 50 constituents via yfinance.
-
-    Parameters
-    ----------
-    symbols : list[str]
-        Constituent symbols with ``.NS`` suffix.
-    start_date : pd.Timestamp | str
-        Start of the date range.
-    end_date : pd.Timestamp | str
-        End of the date range.
-
-    Returns
-    -------
-    dict[str, pd.DataFrame]
-        Per-symbol OHLCV DataFrames, keyed by symbol.
-    """
-    cache_key = f"ohlcv_{','.join(sorted(symbols))}_{start_date}_{end_date}"
-    cached = cache.get(cache_key)
-    if cached is not None:
-        return cached
-
+    """Batch-download OHLCV for Nifty 50 constituents via yfinance."""
     start_yf = str(pd.Timestamp(start_date).date())
-    end_yf = str(pd.Timestamp(end_date).date())
+    # yfinance treats 'end' as exclusive, so add 1 day to include the last date
+    end_yf = str(pd.Timestamp(end_date).date() + pd.Timedelta(days=1))
 
     try:
         raw = yf.download(
@@ -129,16 +101,14 @@ def fetch_constituent_ohlcv(
             except KeyError:
                 pass
 
-    cache.put(cache_key, value=result)
     return result
 
 
 # ─── Macro data (Stooq + Yahoo Finance) ──────────────────────────────────────
 
-
 def _fetch_stooq_symbol(
     symbol: str, start_date: str, end_date: str
-) -> pd.Series | None:
+) -> tuple[str, pd.Series | None]:
     """Fetch a single yield series from Stooq via HTTP."""
     try:
         url = (
@@ -150,47 +120,37 @@ def _fetch_stooq_symbol(
             df = pd.read_csv(io.StringIO(resp.text))
             if "Date" in df.columns and "Close" in df.columns:
                 df["Date"] = pd.to_datetime(df["Date"])
-                return df.set_index("Date").sort_index()["Close"]
+                return symbol, df.set_index("Date").sort_index()["Close"]
     except Exception:
         pass
-    return None
+    return symbol, None
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
 def fetch_macro_live(
     start_date: pd.Timestamp | str,
     end_date: pd.Timestamp | str,
 ) -> pd.DataFrame:
-    """Fetch macro indicators from Stooq (yields) and Yahoo Finance (FX, commodities).
-
-    Parameters
-    ----------
-    start_date : pd.Timestamp | str
-        Start of the date range.
-    end_date : pd.Timestamp | str
-        End of the date range.
-
-    Returns
-    -------
-    pd.DataFrame
-        Combined macro DataFrame, forward-filled.
-    """
-    cache_key = f"macro_{start_date}_{end_date}"
-    cached = cache.get(cache_key)
-    if cached is not None:
-        return cached
-
+    """Fetch macro indicators concurrently from Stooq and via batch yfinance."""
     start_str = str(pd.Timestamp(start_date).date())
-    end_str = str(pd.Timestamp(end_date).date())
+    # yfinance treats 'end' as exclusive, so add 1 day to include the last date
+    end_str = str(pd.Timestamp(end_date).date() + pd.Timedelta(days=1))
 
-    # Stooq yields
+    # Stooq yields - fetched concurrently
     stooq_parts: dict[str, pd.Series] = {}
-    for _name, symbol in MACRO_SYMBOLS_STOOQ.items():
-        series = _fetch_stooq_symbol(symbol, start_str, end_str)
-        if series is not None and len(series) > 0:
-            stooq_parts[symbol] = series
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        futures = {
+            executor.submit(_fetch_stooq_symbol, symbol, start_str, end_str): name
+            for name, symbol in MACRO_SYMBOLS_STOOQ.items()
+        }
+        for future in as_completed(futures):
+            symbol, series = future.result()
+            if series is not None and len(series) > 0:
+                stooq_parts[symbol] = series
+
     stooq_df = pd.DataFrame(stooq_parts).sort_index() if stooq_parts else pd.DataFrame()
 
-    # Yahoo Finance macro
+    # Yahoo Finance macro (internally batched by yfinance)
     yf_df = pd.DataFrame()
     try:
         yf_tickers = list(MACRO_SYMBOLS_YF.values())
@@ -224,7 +184,6 @@ def fetch_macro_live(
     if not combined.empty:
         combined = combined.ffill()
 
-    cache.put(cache_key, value=combined)
     return combined
 
 
