@@ -1,8 +1,10 @@
 """
-Nishkarsh v1.1.0 — Main Streamlit entrypoint.
+Nishkarsh v3.1.0 — Main Streamlit entrypoint.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
 Two systems. One conclusion.
+
+Midnight Bloomberg Terminal — Institutional quant-trading interface.
 
 Usage:
     streamlit run app.py
@@ -30,13 +32,6 @@ warnings.filterwarnings("ignore", message=".*YF.download.*")
 warnings.filterwarnings("ignore", message=".*auto_adjust.*")
 warnings.filterwarnings("ignore", message=".*Mean of empty slice.*")
 warnings.filterwarnings("ignore", category=UserWarning, module="yfinance")
-warnings.filterwarnings("ignore", category=UserWarning, module="urllib3")
-try:
-    import urllib3
-    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-    urllib3.disable_warnings(urllib3.exceptions.HTTPWarning)
-except Exception:
-    pass
 pd.options.mode.chained_assignment = None
 
 # ── Path setup ───────────────────────────────────────────────────────────────
@@ -46,15 +41,21 @@ if str(PROJECT_ROOT) not in sys.path:
 
 # ── UI ───────────────────────────────────────────────────────────────────────
 from ui.theme import inject_css, apply_chart_theme, VERSION, PRODUCT_NAME, COMPANY, progress_bar
-from ui.components import render_metric_card
 from ui.tabs.tab_convergence import render_convergence_tab
+from ui.components import (
+    render_header,
+    render_info_box,
+    render_nishkarsh_signal_card,
+    render_warning_box,
+    render_metric_card,
+)
 from ui.tabs.tab_aarambh import render_aarambh_tab
 from ui.tabs.tab_nirnay import render_nirnay_tab
 from ui.tabs.tab_diagnostics import render_diagnostics_tab
 from ui.tabs.tab_data import render_data_tab
 
 # ── Data ─────────────────────────────────────────────────────────────────────
-from data.fetcher import fetch_aarambh_data, fetch_constituent_ohlcv, fetch_macro_live
+from data.fetcher import fetch_aarambh_data, fetch_constituent_ohlcv, fetch_macro_live, load_google_sheet
 from data.constituents import fetch_nifty50_constituents
 
 # ── Engines ──────────────────────────────────────────────────────────────────
@@ -74,119 +75,86 @@ from core.config import LOOKBACK_WINDOWS, MIN_DATA_POINTS, STALENESS_DAYS, COLOR
 # ── Secret Management ────────────────────────────────────────────────────────
 
 def _get_sheet_url() -> str:
-    """Get Google Sheets URL from secrets, env vars, or fallback.
-
-    Priority:
-    1. Streamlit Cloud secrets (st.secrets["aarambh"]["google_sheets_url"])
-    2. Environment variable (AARAMBH_GOOGLE_SHEETS_URL)
-    3. Fallback placeholder (user must provide)
-    """
-    # Try Streamlit secrets first
+    """Get Google Sheets URL from secrets, env vars, or fallback."""
     try:
         url = st.secrets.get("aarambh", {}).get("google_sheets_url", "")
         if url:
             return url
     except Exception:
         pass
-
-    # Try environment variables
-    import os
     env_url = os.environ.get("AARAMBH_GOOGLE_SHEETS_URL", "")
     if env_url:
         return env_url
-
-    # Fallback placeholder
     return ""
-
-
-def load_google_sheet(url: str):
-    """Wrapper to match original correl.py signature: (df, error)."""
-    try:
-        import re
-        sheet_id_match = re.search(r"/d/([a-zA-Z0-9-_]+)", url)
-        if not sheet_id_match:
-            return None, "Invalid Google Sheets URL"
-        sheet_id = sheet_id_match.group(1)
-        gid_match = re.search(r"gid=(\d+)", url)
-        gid = gid_match.group(1) if gid_match else "0"
-        csv_url = (
-            f"https://docs.google.com/spreadsheets/d/"
-            f"{sheet_id}/export?format=csv&gid={gid}"
-        )
-        df = pd.read_csv(csv_url)
-        return (df, None) if df is not None else (None, "Failed to fetch data")
-    except Exception as e:
-        return None, str(e)
 
 
 # ─── UI Rendering helpers ────────────────────────────────────────────────────
 
 def _render_header() -> None:
-    st.markdown(
-        f"""
-    <div class="premium-header">
-        <h1>{PRODUCT_NAME.upper()} : Unified Convergence Analysis</h1>
-        <div class="tagline">Walk-Forward Valuation + Constituent Regime Intelligence | Quantitative Convergence</div>
-    </div>
-    """,
-        unsafe_allow_html=True,
+    render_header(
+        title=f"{PRODUCT_NAME}",
+        tagline="Walk-Forward Valuation + Constituent Regime Intelligence  |  Quantitative Convergence"
     )
 
 
 def _render_landing_page() -> None:
+    """Render the landing page with three system cards."""
     st.markdown("<br>", unsafe_allow_html=True)
     col1, col2, col3 = st.columns(3)
     with col1:
         st.markdown("""
-        <div class='metric-card purple' style='min-height: 280px; justify-content: flex-start;'>
-            <h3 style='color: var(--purple); margin-bottom: 0.5rem;'>📊 Aarambh — Top-Down Valuation</h3>
-            <p style='color: var(--text-muted); font-size: 0.9rem; line-height: 1.6;'>
-                Walk-forward ensemble regression on Nifty 50 PE ratio with conformal z-scores and DDM conviction filtering.
-            </p>
-            <br>
-            <p style='color: var(--text-secondary); font-size: 0.85rem;'>
-                <strong>Ensemble:</strong> Ridge + Huber + ElasticNet + WLS<br>
-                <strong>Validation:</strong> Walk-forward OOS + Structural Break Detection<br>
-                <strong>Uncertainty:</strong> Model disagreement + Conformal bounds
-            </p>
+        <div class='system-card aarambh'>
+            <h3>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
+                AARAMBH
+            </h3>
+            <p>Walk-forward ensemble regression on Nifty 50 PE ratio with conformal z-scores and DDM filtering.</p>
+            <div class='spec'>
+                <span>E:</span> Ridge + Huber + ENet + WLS<br>
+                <span>V:</span> Walk-forward OOS<br>
+                <span>U:</span> Conformal bounds
+            </div>
         </div>
         """, unsafe_allow_html=True)
     with col2:
         st.markdown("""
-        <div class='metric-card info' style='min-height: 280px; justify-content: flex-start;'>
-            <h3 style='color: var(--info-cyan); margin-bottom: 0.5rem;'>📈 Nirnay — Bottom-Up Regime</h3>
-            <p style='color: var(--text-muted); font-size: 0.9rem; line-height: 1.6;'>
-                Per-constituent MSF + MMR signal analysis with HMM/GARCH/CUSUM regime intelligence aggregation.
-            </p>
-            <br>
-            <p style='color: var(--text-secondary); font-size: 0.85rem;'>
-                <strong>Output:</strong> HMM State Probabilities + Regime Distribution<br>
-                <strong>Projection:</strong> 90-day path with bands<br>
-                <strong>Validation:</strong> DFA Hurst exponent (ADF-guarded)
-            </p>
+        <div class='system-card nirnay'>
+            <h3>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+                NIRNAY
+            </h3>
+            <p>Per-constituent MSF + MMR analysis with HMM/GARCH/CUSUM regime intelligence aggregation.</p>
+            <div class='spec'>
+                <span>O:</span> HMM Probabilities<br>
+                <span>P:</span> 90D Path + Bands<br>
+                <span>V:</span> DFA Hurst exponent
+            </div>
         </div>
         """, unsafe_allow_html=True)
     with col3:
         st.markdown("""
-        <div class='metric-card primary' style='min-height: 280px; justify-content: flex-start;'>
-            <h3 style='color: var(--primary-color); margin-bottom: 0.5rem;'>🔗 Convergence Layer</h3>
-            <p style='color: var(--text-muted); font-size: 0.9rem; line-height: 1.6;'>
-                Adaptive-weighted composite of 4 dimensions: Direction, Breadth, Magnitude, Regime — with DDM filtering.
-            </p>
-            <br>
-            <p style='color: var(--text-secondary); font-size: 0.85rem;'>
-                <strong>Lookbacks:</strong> 5D, 10D, 20D, 50D, 100D<br>
-                <strong>Smoothing:</strong> Leaky DDM + MR variance<br>
-                <strong>Range:</strong> Soft-bounded ±100
-            </p>
+        <div class='system-card convergence'>
+            <h3>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="16"></line><line x1="8" y1="12" x2="16" y2="12"></line></svg>
+                CONVERGENCE
+            </h3>
+            <p>Adaptive-weighted composite of 4 dimensions: Direction, Breadth, Magnitude, Regime — with DDM.</p>
+            <div class='spec'>
+                <span>L:</span> Multi-temporal<br>
+                <span>S:</span> Leaky DDM<br>
+                <span>R:</span> Soft ±100 limit
+            </div>
         </div>
         """, unsafe_allow_html=True)
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown("""
-    <div class='info-box'>
-        <h4>🚀 Getting Started</h4>
-        <p>Use the <strong>Sidebar</strong> to load data (CSV/Excel or Google Sheet).
-        Select a <strong>Target</strong> and <strong>Predictors</strong>, then click <strong>Run Analysis</strong> to execute the convergence engine.</p>
+    <div class='landing-prompt'>
+        <h4>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polygon points="10 8 16 12 10 16 10 8"></polygon></svg>
+            SYSTEM INITIALIZATION
+        </h4>
+        <p>Use the <strong>Sidebar</strong> to inject data vectors (CSV/Excel or Google Sheet).<br>
+           Select a <strong>Target</strong> and <strong>Predictors</strong>, then execute <strong>Run Analysis</strong> to begin alignment convergence.</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -199,11 +167,11 @@ def _render_primary_signal(nishkarsh_result, agreement, aarambh_signal) -> None:
         upper = nishkarsh_result.confidence_upper
         lower = nishkarsh_result.confidence_lower
         if "BUY" in sig:
-            signal_class, signal_emoji = "undervalued", "🟢"
+            signal_class = "undervalued"
         elif "SELL" in sig:
-            signal_class, signal_emoji = "overvalued", "🔴"
+            signal_class = "overvalued"
         else:
-            signal_class, signal_emoji = "fair", "🟡"
+            signal_class = "fair"
         agreement_text = "Strong agreement" if agreement > 0.7 else "Moderate agreement" if agreement > 0.5 else "Weak agreement"
         explanation = (
             f"Nishkarsh Conviction: {conv:+.0f} ({sig}). "
@@ -215,25 +183,25 @@ def _render_primary_signal(nishkarsh_result, agreement, aarambh_signal) -> None:
         conv = aarambh_signal.get("conviction_score", 0)
         sig = aarambh_signal.get("signal", "HOLD")
         if sig == "BUY":
-            signal_class, signal_emoji = "undervalued", "🟢"
+            signal_class = "undervalued"
         elif sig == "SELL":
-            signal_class, signal_emoji = "overvalued", "🔴"
+            signal_class = "overvalued"
         else:
-            signal_class, signal_emoji = "fair", "🟡"
+            signal_class = "fair"
         agreement_text = "N/A"
         explanation = f"Conviction: {conv:+.0f} ({sig})."
 
     st.markdown(
-        f'<div class="signal-card {html_mod.escape(signal_class)}" style="padding: 1.5rem;">'
-        f'<div class="label">NISHKARSH CONVERGENCE SIGNAL (निष्कर्ष)</div>'
-        f'<div class="value">{signal_emoji} {html_mod.escape(sig)}</div>'
+        f'<div class="signal-card {html_mod.escape(signal_class)}">'
+        f'<div class="label">NISHKARSH CONVERGENCE SIGNAL &#40;&#x0928;&#x093F;&#x0937;&#x094D;&#x0915;&#x0930;&#x094D;&#x0937;&#41;</div>'
+        f'<div class="value"><div class="signal-dot"></div> {html_mod.escape(sig)}</div>'
         f'<div class="subtext">'
-        f'Score: <strong>{conv:+.0f}</strong> • '
-        f'Agreement: <strong>{agreement:.0%}</strong> — {html_mod.escape(agreement_text)}'
+        f'Score: <strong style="color:var(--ink-primary)">{conv:+.0f}</strong> &bull; '
+        f'Agreement: <strong style="color:var(--ink-primary)">{agreement:.0%}</strong> — {html_mod.escape(agreement_text)}'
         f'</div>'
-        f'<div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border-color); '
-        f'font-size: 0.85rem; line-height: 1.5; color: var(--text-secondary);">'
-        f'<strong>What this means:</strong> {html_mod.escape(explanation)}'
+        f'<div style="margin-top:1.25rem;padding-top:1.25rem;border-top:1px dashed var(--border);font-size:0.85rem;line-height:1.65;color:var(--ink-secondary);font-family:var(--data);">'
+        f'<strong style="color:var(--amber);font-family:var(--display);font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;">INTERPRETATION</strong><br>'
+        f'{html_mod.escape(explanation)}'
         f'</div>'
         f'</div>',
         unsafe_allow_html=True,
@@ -245,7 +213,7 @@ def _render_footer() -> None:
     utc_now = datetime.now(timezone.utc)
     ist_now = utc_now + timedelta(hours=5, minutes=30)
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-    st.caption(f"© {ist_now.year} {PRODUCT_NAME} | {COMPANY} | v{VERSION} | {ist_now.strftime('%Y-%m-%d %H:%M:%S IST')}")
+    st.caption(f"© {ist_now.year} {PRODUCT_NAME}  |  {COMPANY}  |  v{VERSION}  |  {ist_now.strftime('%Y-%m-%d %H:%M:%S IST')}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -255,7 +223,7 @@ def _render_footer() -> None:
 def main():
     st.set_page_config(
         page_title=f"{PRODUCT_NAME} | Unified Convergence",
-        page_icon="📊", layout="wide", initial_sidebar_state="collapsed",
+        layout="wide", initial_sidebar_state="collapsed",
     )
     inject_css()
 
@@ -263,25 +231,25 @@ def main():
     with st.sidebar:
         st.markdown(
             """
-        <div style="text-align: center; padding: 1rem 0; margin-bottom: 1rem;">
-            <div style="font-size: 1.75rem; font-weight: 800; color: #FFC300;">NISHKARSH</div>
-            <div style="color: #888888; font-size: 0.75rem; margin-top: 0.25rem;">निष्कर्ष | Unified Convergence</div>
+        <div style="text-align:center;padding:0.75rem 0 1rem 0;">
+            <div style="font-family:var(--display);font-size:1.5rem;font-weight:700;color:var(--amber);letter-spacing:0.06em;">NISHKARSH</div>
+            <div style="font-family:var(--data);color:var(--ink-tertiary);font-size:0.65rem;margin-top:0.2rem;letter-spacing:0.08em;text-transform:uppercase;">निष्कर्ष | Unified Convergence</div>
         </div>
         """,
             unsafe_allow_html=True,
         )
         st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
-        st.markdown('<div class="sidebar-title">📁 Data Source</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sidebar-title">Data Source</div>', unsafe_allow_html=True)
         data_source = st.radio(
-            "Source", ["📊 Google Sheets", "📤 Upload"],
+            "Source", ["Google Sheets", "Upload"],
             horizontal=True, label_visibility="collapsed", index=0,
         )
 
         df = None
         has_data = "data" in st.session_state and "run_analysis" in st.session_state
 
-        if data_source == "📤 Upload":
+        if data_source == "Upload":
             uploaded_file = st.file_uploader("CSV/Excel", type=["csv", "xlsx"], label_visibility="collapsed")
             if uploaded_file:
                 try:
@@ -289,14 +257,14 @@ def main():
                 except Exception as e:
                     st.error(f"Error: {e}")
                     return
-                if not has_data and st.button("🚀 Run Analysis", type="primary"):
+                if not has_data and st.button("Run Analysis", type="primary"):
                     st.session_state.pop("engine", None)
                     st.session_state.pop("engine_cache", None)
                     st.session_state["data"] = df
                     st.session_state["run_analysis"] = True
                     st.rerun()
             else:
-                st.info("📤 Upload a CSV or Excel file to begin analysis")
+                st.info("Upload a CSV or Excel file to begin analysis")
         else:
             default_url = _get_sheet_url()
             has_secret = bool(default_url)
@@ -309,7 +277,7 @@ def main():
             )
             if not sheet_url and has_secret:
                 sheet_url = default_url
-            if not has_data and st.button("🚀 Run Analysis", type="primary"):
+            if not has_data and st.button("Run Analysis", type="primary"):
                 if not sheet_url:
                     st.error("Please provide a Google Sheets URL or set the AARAMBH_GOOGLE_SHEETS_URL environment variable.")
                     return
@@ -343,7 +311,7 @@ def main():
         return
 
     with st.sidebar:
-        st.markdown('<div class="sidebar-title">🧠 Model Configuration</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sidebar-title">Model Configuration</div>', unsafe_allow_html=True)
 
         default_target = "NIFTY50_PE" if "NIFTY50_PE" in numeric_cols else numeric_cols[0]
         active_target_state = st.session_state.get("active_target", default_target)
@@ -366,7 +334,7 @@ def main():
         if "active_features" not in st.session_state:
             st.session_state["active_features"] = tuple(valid_defaults or available[:3])
 
-        with st.expander("📊 Predictor Columns", expanded=False):
+        with st.expander("Predictor Columns", expanded=False):
             st.caption("Select predictors, then click Apply to recompute.")
             staging_features = st.multiselect(
                 "Predictor Columns", options=available,
@@ -374,7 +342,7 @@ def main():
                 label_visibility="collapsed",
             )
             if not staging_features:
-                st.warning("⚠️ Select at least one predictor.")
+                st.warning("Select at least one predictor.")
                 staging_features = [f for f in st.session_state["active_features"] if f in available] or available[:3]
 
             staging_set = set(staging_features)
@@ -395,7 +363,7 @@ def main():
             elif has_other_changes:
                 st.caption("Pending: Target/Date changes")
 
-            if st.button("✅ Apply Configuration" if has_changes else "No changes", disabled=not has_changes, type="primary" if has_changes else "secondary"):
+            if st.button("Apply Configuration" if has_changes else "No changes", disabled=not has_changes, type="primary" if has_changes else "secondary"):
                 if has_changes:
                     st.session_state["active_target"] = target_col
                     st.session_state["active_features"] = tuple(staging_features)
@@ -410,7 +378,7 @@ def main():
         st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
         if "run_analysis" in st.session_state and st.session_state.get("run_analysis"):
-            if st.button("🔄 Reset Analysis", type="secondary"):
+            if st.button("Reset Analysis", type="secondary"):
                 st.session_state.pop("data", None)
                 st.session_state.pop("engine", None)
                 st.session_state.pop("engine_cache", None)
@@ -421,10 +389,10 @@ def main():
         st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
         st.markdown(f"""
         <div class='info-box'>
-            <p style='font-size:0.8rem; margin:0; color:var(--text-muted); line-height:1.5;'>
-                <strong>Version:</strong> {VERSION}<br>
-                <strong>Engine:</strong> Nishkarsh Convergence<br>
-                <strong>Data:</strong> Google Sheets + yfinance
+            <p style='font-size:0.75rem;margin:0;color:var(--ink-tertiary);line-height:1.6;'>
+                <strong style="color:var(--ink-secondary);">Version:</strong> {VERSION}<br>
+                <strong style="color:var(--ink-secondary);">Engine:</strong> Nishkarsh Convergence<br>
+                <strong style="color:var(--ink-secondary);">Data:</strong> Google Sheets + yfinance
             </p>
         </div>
         """, unsafe_allow_html=True)
@@ -433,10 +401,6 @@ def main():
     active_target = st.session_state.get("active_target", target_col)
     active_features = list(st.session_state.get("active_features", [c for c in numeric_cols if c != active_target][:3]))
     active_date = st.session_state.get("active_date_col", date_col)
-
-    # ─── Header (Only on Landing Page) ────────────────────────────────────
-    if df is None:
-        _render_header()
 
     # ─── Data staleness warning ────────────────────────────────────────────
     if active_date != "None" and active_date in df.columns:
@@ -449,12 +413,10 @@ def main():
                 now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
                 data_age = (now_utc - latest_date).days
                 if data_age > STALENESS_DAYS:
-                    st.markdown(f"""
-                    <div style="background: rgba(239,68,68,0.1); border: 1px solid {COLOR_RED}; border-radius: 10px; padding: 0.75rem 1.25rem; margin-bottom: 1rem; display: flex; align-items: center; gap: 12px;">
-                        <span style="font-size: 1.4rem;">⚠️</span>
-                        <div><span style="color: {COLOR_RED}; font-weight: 700;">Stale Data</span><span style="color: #888; font-size: 0.85rem;"> — Last data point is <b>{latest_date.strftime('%d %b %Y')}</b> ({data_age} days ago). Update your data source.</span></div>
-                    </div>
-                    """, unsafe_allow_html=True)
+                    render_warning_box(
+                        title="Stale Data",
+                        content=f"Last data point is from {latest_date.strftime('%d %b %Y')} ({data_age} days ago). Analysis may be outdated."
+                    )
         except Exception:
             pass
 
@@ -496,7 +458,7 @@ def main():
 
         # ── Phase 1: Data Loading ─────────────────────────────────────────
         console.start_phase("DATA ACQUISITION", 1, 5)
-        progress_bar(progress_container, 5, "Fetching constituents", "niftyindices.com · CSV parse")
+        progress_bar(progress_container, 2, "Fetching constituents", "niftyindices.com · CSV parse")
 
         console.section("Constituent Fetch")
         constituents, src_msg = fetch_nifty50_constituents()
@@ -504,7 +466,7 @@ def main():
         console.item("Count", len(constituents))
         console.item("Symbols", f"{constituents[0]}, {constituents[1]}, {constituents[2]}...")
         console.success(f"Fetched {len(constituents)} Nifty 50 constituents")
-        progress_bar(progress_container, 10, "Fetching macro data", "Stooq yields · Yahoo Finance FX · Commodities")
+        progress_bar(progress_container, 5, "Fetching macro data", "Stooq yields · Yahoo Finance FX · Commodities")
 
         console.section("Macro Data")
         end_date = pd.Timestamp.today()
@@ -517,7 +479,7 @@ def main():
             console.success(f"Macro data: {len(macro_df.columns)} symbols × {len(macro_df)} rows")
         else:
             console.warning("No macro data available")
-        progress_bar(progress_container, 15, "Fetching OHLCV data", f"yfinance · {len(constituents)} constituents")
+        progress_bar(progress_container, 10, "Fetching OHLCV data", f"yfinance · {len(constituents)} constituents")
 
         console.section("Constituent OHLCV")
         constituent_ohlcv = {}
@@ -529,7 +491,7 @@ def main():
                 sample = list(constituent_ohlcv.items())[0]
                 console.item("Sample", f"{sample[0]}: {len(sample[1])} rows")
             console.success(f"OHLCV data for {len(constituent_ohlcv)} constituents")
-        progress_bar(progress_container, 20, "Assembling macro indicators", "Bond yields from Google Sheets")
+        progress_bar(progress_container, 15, "Assembling macro indicators", "Bond yields from Google Sheets")
 
         console.section("Nirnay Macro Assembly")
         nirnay_macro_df = macro_df.copy() if macro_df is not None and not macro_df.empty else pd.DataFrame()
@@ -545,11 +507,11 @@ def main():
             console.success(f"Combined macro: {len(nirnay_macro_df.columns)} indicators × {len(nirnay_macro_df)} rows")
         macro_cols_list = list(nirnay_macro_df.columns) if not nirnay_macro_df.empty else []
         console.end_phase("DATA ACQUISITION")
-        progress_bar(progress_container, 25, "Data acquisition complete", f"{len(constituent_ohlcv)} constituents · {len(nirnay_macro_df.columns)} macros")
+        progress_bar(progress_container, 20, "Data acquisition complete", f"{len(constituent_ohlcv)} constituents · {len(nirnay_macro_df.columns)} macros")
 
         # ── Phase 2: Aarambh FairValueEngine ─────────────────────────────
         console.start_phase("AARAMBH ENGINE", 2, 5)
-        progress_bar(progress_container, 25, "Running Aarambh engine", f"Walk-forward · {len(active_features)} predictors · {len(data)} rows")
+        progress_bar(progress_container, 20, "Running Aarambh engine", f"Walk-forward · {len(active_features)} predictors · {len(data)} rows")
 
         console.section("Engine Configuration")
         console.item("Target", active_target)
@@ -560,7 +522,7 @@ def main():
 
         console.section("Walk-Forward Regression")
         engine = FairValueEngine()
-        engine.fit(X, y, feature_names=active_features, progress_callback=lambda pct, msg: progress_bar(progress_container, int(25 + pct * 25), "Running Aarambh engine", msg))
+        engine.fit(X, y, feature_names=active_features, progress_callback=lambda pct, msg: progress_bar(progress_container, int(20 + pct * 20), "Running Aarambh engine", msg))
 
         sig = engine.get_current_signal()
         stats = engine.get_model_stats()
@@ -574,11 +536,11 @@ def main():
         console.item("Oversold Breadth", f"{sig['oversold_breadth']:.0f}%")
         console.success(f"Aarambh engine complete | {len(engine.ts_data)} output rows")
         console.end_phase("AARAMBH ENGINE")
-        progress_bar(progress_container, 50, "Aarambh engine complete", f"Signal: {sig['signal']} ({sig['strength']}) · Conviction: {sig['conviction_score']:+.0f}")
+        progress_bar(progress_container, 40, "Aarambh engine complete", f"Signal: {sig['signal']} ({sig['strength']}) · Conviction: {sig['conviction_score']:+.0f}")
 
         # ── Phase 3: Nirnay Constituent Analysis ──────────────────────────
         console.start_phase("NIRNAY ENGINE", 3, 5)
-        progress_bar(progress_container, 55, "Running Nirnay engine", f"MSF+MMR+Regime · {len(constituent_ohlcv)} constituents")
+        progress_bar(progress_container, 42, "Running Nirnay engine", f"MSF+MMR+Regime · {len(constituent_ohlcv)} constituents")
 
         nirnay_daily = pd.DataFrame()
         nirnay_constituent_dfs = {}
@@ -610,14 +572,13 @@ def main():
                     )
                     nirnay_constituent_dfs[sym] = result_df
 
-                    # Quick stats
                     last_row = result_df.iloc[-1]
                     osc = last_row.get('Unified_Osc', 0)
                     cond = last_row.get('Condition', 'N/A')
                     regime = last_row.get('Regime', 'N/A')
                     console.detail(f"[{i+1}/{total}] {sym}: osc={osc:+.1f} [{cond}] regime={regime} rows={n_rows} macros={has_macro}")
 
-                    pct_val = int(55 + (i + 1) / total * 35)
+                    pct_val = int(45 + (i + 1) / total * 30)
                     progress_bar(progress_container, pct_val, f"Analyzing {sym}", f"osc={osc:+.1f} [{cond}] regime={regime}")
 
                 except Exception as e:
@@ -637,11 +598,11 @@ def main():
                 console.success(f"Nirnay aggregation: {len(nirnay_daily)} trading days")
 
         console.end_phase("NIRNAY ENGINE")
-        progress_bar(progress_container, 70, "Nirnay engine complete", f"{len(nirnay_constituent_dfs)} stocks · {len(nirnay_daily)} trading days")
+        progress_bar(progress_container, 75, "Nirnay engine complete", f"{len(nirnay_constituent_dfs)} stocks · {len(nirnay_daily)} trading days")
 
         # ── Phase 4: Convergence ──────────────────────────────────────────
         console.start_phase("CONVERGENCE", 4, 5)
-        progress_bar(progress_container, 72, "Computing convergence", "Cross-validation · DDM filtering")
+        progress_bar(progress_container, 78, "Computing convergence", "Cross-validation · DDM filtering")
 
         console.section("Cross-Validation Setup")
         validator = CrossValidator()
@@ -666,7 +627,8 @@ def main():
 
         console.section("Daily Convergence Scoring")
         overlap_count = 0
-        for ts_idx in aarambh_ts.index:
+        total_dates = len(aarambh_ts.index)
+        for i, ts_idx in enumerate(aarambh_ts.index):
             ts_date = ts_idx.date() if hasattr(ts_idx, "date") else pd.Timestamp(ts_idx).date()
             date_str = str(ts_date)
             row_a = aarambh_ts.loc[ts_idx]
@@ -700,11 +662,16 @@ def main():
             validator.compute_convergence(aarambh_sig, nirnay_stats, date_str)
             divergence_detector.detect(aarambh_sig, nirnay_stats, date_str)
 
+            if (i + 1) % 10 == 0 or i == total_dates - 1:
+                pct_val = int(78 + (i + 1) / total_dates * 7)
+                progress_bar(progress_container, pct_val, "Computing convergence", f"{i + 1}/{total_dates} dates scored")
+
         console.item("Total Aarambh Dates", len(aarambh_ts))
         console.item("Overlap Dates", overlap_count)
         console.success(f"Convergence scoring complete")
 
         console.section("Conviction Model")
+        progress_bar(progress_container, 86, "Fitting conviction model", "Unified conviction series")
         convergence_df = validator.get_convergence_series()
         conviction_model = UnifiedConvictionModel()
         results = conviction_model.fit(
@@ -719,6 +686,7 @@ def main():
         console.success(f"Unified conviction: {len(results)} scores computed")
 
         console.section("Divergence Detection")
+        progress_bar(progress_container, 88, "Detecting divergences", "Cross-system divergence analysis")
         events = divergence_detector.get_events()
         console.item("Total Events", len(events))
         if not events.empty:
@@ -732,9 +700,9 @@ def main():
 
         # ── Phase 5: Final Assembly ───────────────────────────────────────
         console.start_phase("FINAL ASSEMBLY", 5, 5)
+        progress_bar(progress_container, 92, "Storing results", "Session state · Cache")
         console.section("Session State")
 
-        # Store all results
         st.session_state["engine"] = engine
         st.session_state["engine_cache"] = cache_key
         st.session_state["aarambh_ts"] = aarambh_ts
@@ -753,7 +721,6 @@ def main():
 
         console.end_phase("FINAL ASSEMBLY")
 
-        # ── RUN SUMMARY ───────────────────────────────────────────────────
         console.summary("RUN SUMMARY", {
             "Total Phases": "5/5 complete",
             "Aarambh Rows": len(engine.ts_data),
@@ -798,7 +765,7 @@ def main():
     if 'tf_selected' not in st.session_state:
         st.session_state.tf_selected = '6M'
     TIMEFRAMES = {'3M': 63, '6M': 126, '1Y': 252, '2Y': 504, 'ALL': None}
-    
+
     tf_cols = st.columns(len(TIMEFRAMES), gap="small")
     for i, tf in enumerate(TIMEFRAMES.keys()):
         with tf_cols[i]:
@@ -824,7 +791,7 @@ def main():
 
     # ─── Tabs ──────────────────────────────────────────────────────────────
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "**🔗 CONVERGENCE**", "**📊 AARAMBH**", "**📈 NIRNAY**", "**🧠 DIAGNOSTICS**", "**📋 DATA**",
+        "CONVERGENCE", "AARAMBH", "NIRNAY", "DIAGNOSTICS", "DATA",
     ])
     with tab1:
         render_convergence_tab(ts_filtered)
