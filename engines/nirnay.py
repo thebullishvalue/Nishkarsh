@@ -40,10 +40,11 @@ def _sigmoid(x: np.ndarray | float, scale: float = 1.0) -> np.ndarray | float:
 
 
 def _zscore_clipped(series: pd.Series, window: int, clip: float = 3.0) -> pd.Series:
-    """Rolling z-score with outlier clipping."""
-    roll_mean = series.rolling(window=window).mean()
-    roll_std = series.rolling(window=window).std()
-    z = (series - roll_mean) / roll_std.replace(0, np.nan)
+    """Rolling causal z-score with outlier clipping. Uses shift(1) to prevent today's outlier from biasing the denominator."""
+    series_filled = series.ffill().fillna(0)
+    roll_mean = series_filled.rolling(window=window, min_periods=1).mean().shift(1).bfill()
+    roll_std = series_filled.rolling(window=window, min_periods=1).std().shift(1).bfill()
+    z = (series_filled - roll_mean) / roll_std.replace(0, np.nan)
     return z.clip(-clip, clip).fillna(0)
 
 
@@ -166,46 +167,78 @@ def calculate_mmr(
     target = df["Close"]
 
     if len(df) < length + 10 or not available_macros:
-        return (
-            pd.Series(0.0, index=df.index),
-            [],
-            pd.Series(0.0, index=df.index),
-        )
+        return (pd.Series(0.0, index=df.index), [], pd.Series(0.0, index=df.index))
 
-    correlations = df[available_macros].corrwith(target).abs().sort_values(ascending=False)
-    top_drivers = correlations.head(num_vars).index.tolist()
+    y_mean = target.rolling(length, min_periods=1).mean().shift(1).bfill()
+    y_std = target.rolling(length, min_periods=1).std().shift(1).bfill()
 
-    preds: list[pd.Series] = []
-    r2_sum: float | pd.Series = 0
-    r2_sq_sum: float | pd.Series = 0
-    y_mean = target.rolling(length).mean()
-    y_std = target.rolling(length).std()
-    driver_details: list[dict[str, Any]] = []
-
-    for ticker in top_drivers:
-        x = df[ticker]
-        x_mean = x.rolling(length).mean()
-        x_std = x.rolling(length).std()
-        roll_corr = x.rolling(length).corr(target)
-        slope = roll_corr * (y_std / x_std)
+    preds_list = []
+    r2_list = []
+    
+    # Vectorized causal rolling computations
+    for ticker in available_macros:
+        x = df[ticker].ffill().fillna(0)
+        x_mean = x.rolling(length, min_periods=1).mean().shift(1).bfill()
+        x_std = x.rolling(length, min_periods=1).std().shift(1).bfill()
+        
+        # Pearson correlation shifted (only prior data used to estimate relationship)
+        roll_corr = x.rolling(length, min_periods=length).corr(target).shift(1).bfill().fillna(0)
+        slope = roll_corr * (y_std / x_std.replace(0, np.nan)).fillna(0)
         intercept = y_mean - (slope * x_mean)
+        
         pred = (slope * x) + intercept
         r2 = roll_corr**2
-        preds.append(pred * r2)
-        r2_sum += r2
-        r2_sq_sum += r2**2
-        driver_details.append({
-            "Symbol": ticker,
-            "Correlation": round(float(df[ticker].corr(target)), 4),
-        })
+        
+        preds_list.append(pred)
+        r2_list.append(r2)
 
-    r2_sum = r2_sum.replace(0, np.nan)
-    y_predicted = sum(preds) / r2_sum if preds else y_mean
-    deviation = target - y_predicted
+    all_preds = pd.concat(preds_list, axis=1)
+    all_r2 = pd.concat(r2_list, axis=1)
+    
+    # Causally select top `num_vars` drivers per row!
+    all_preds_arr = all_preds.values
+    all_r2_arr = all_r2.values
+    
+    n_rows = len(df)
+    y_predicted = np.empty(n_rows, dtype=np.float64)
+    model_r2_arr = np.empty(n_rows, dtype=np.float64)
+    
+    for i in range(n_rows):
+        row_r2 = all_r2_arr[i]
+        valid_mask = ~np.isnan(row_r2)
+        if np.sum(valid_mask) < num_vars:
+            y_predicted[i] = y_mean.iloc[i]
+            model_r2_arr[i] = 0.0
+            continue
+            
+        top_indices = np.argsort(row_r2[valid_mask])[-num_vars:]
+        top_real_indices = np.where(valid_mask)[0][top_indices]
+        
+        r2_sel = row_r2[top_real_indices]
+        preds_sel = all_preds_arr[i, top_real_indices]
+        
+        r2_sum = np.sum(r2_sel)
+        if r2_sum > 1e-6:
+            y_predicted[i] = np.sum(preds_sel * r2_sel) / r2_sum
+            model_r2_arr[i] = np.sum(r2_sel**2) / r2_sum
+        else:
+            y_predicted[i] = y_mean.iloc[i]
+            model_r2_arr[i] = 0.0
+
+    deviation = target - pd.Series(y_predicted, index=df.index)
     mmr_z = _zscore_clipped(deviation, length, 3.0)
     mmr_signal = _sigmoid(mmr_z, 1.5)
-    model_r2 = r2_sq_sum / r2_sum
-    mmr_quality = np.sqrt(model_r2.fillna(0))
+    mmr_quality = pd.Series(np.sqrt(model_r2_arr), index=df.index).fillna(0)
+
+    # For display purposes (not trading logic), get the trailing global top drivers
+    driver_details = []
+    if len(df) > length:
+        trailing_corr = df[available_macros].iloc[-length:].corrwith(target.iloc[-length:]).abs().sort_values(ascending=False)
+        for ticker in trailing_corr.head(num_vars).index:
+            driver_details.append({
+                "Symbol": ticker,
+                "Correlation": round(float(trailing_corr[ticker]), 4),
+            })
 
     return mmr_signal, driver_details, mmr_quality
 

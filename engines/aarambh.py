@@ -367,7 +367,7 @@ class FairValueEngine:
     @staticmethod
     def _fit_ensemble(
         X_train: np.ndarray, y_train: np.ndarray, t: int, global_weights: np.ndarray,
-    ) -> tuple[dict, any | None, np.ndarray]:
+    ) -> tuple[dict, Any | None, np.ndarray]:
         models: dict = {"ridge": None, "huber": None, "ols": None, "elasticnet": None, "pca_wls": None}
         scaler = None
         valid_cols = np.std(X_train, axis=0) > 1e-8
@@ -420,7 +420,7 @@ class FairValueEngine:
         return models, scaler, valid_cols
 
     def _predict_ensemble(
-        self, X_pred: np.ndarray, models: dict, scaler: any | None,
+        self, X_pred: np.ndarray, models: dict, scaler: Any | None,
         valid_cols: np.ndarray, t_start: int,
         X_val: np.ndarray | None = None, y_val: np.ndarray | None = None,
     ) -> tuple[list[np.ndarray], list[float]]:
@@ -631,7 +631,7 @@ class FairValueEngine:
         residual = np.asarray(self.residuals)
         last_low_idx = -1
         last_high_idx = -1
-        expanding_std = pd.Series(residual).expanding(min_periods=min(20, max(2, len(residual) // 3))).std().bfill().values
+        expanding_std = pd.Series(residual).expanding(min_periods=min(20, max(2, len(residual) // 3))).std().ffill().fillna(0.0).values
 
         for i in range(order * 2, n):
             window_price = price[i - 2 * order : i + 1]
@@ -665,10 +665,13 @@ class FairValueEngine:
                 conf_bottoms.append(i)
                 bottom_vals.append(r[i - order])
 
+        fallback_top = float(pd.Series(r).ewm(alpha=0.05).mean().iloc[-1] + pd.Series(r).ewm(alpha=0.05).std().iloc[-1]) if n > 0 else 0.0
+        fallback_bottom = float(pd.Series(r).ewm(alpha=0.05).mean().iloc[-1] - pd.Series(r).ewm(alpha=0.05).std().iloc[-1]) if n > 0 else 0.0
+
         self.pivots = {
             "tops": conf_tops, "bottoms": conf_bottoms,
-            "avg_top": float(np.mean(top_vals)) if top_vals else float(np.mean(r) + np.std(r)),
-            "avg_bottom": float(np.mean(bottom_vals)) if bottom_vals else float(np.mean(r) - np.std(r)),
+            "avg_top": float(np.mean(top_vals)) if top_vals else fallback_top,
+            "avg_bottom": float(np.mean(bottom_vals)) if bottom_vals else fallback_bottom,
         }
         self.ts_data["IsPivotTop"] = False
         self.ts_data["IsPivotBottom"] = False
