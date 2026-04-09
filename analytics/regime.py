@@ -9,8 +9,27 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
-
+from numba import njit
 from analytics.utils import MathUtils
+
+@njit(cache=True)
+def _njit_forward_step(transition_matrix: np.ndarray, state_probabilities: np.ndarray,
+                       emissions: np.ndarray) -> np.ndarray:
+    predicted = transition_matrix.T @ state_probabilities
+    updated = emissions * predicted
+    total = np.sum(updated)
+    if total > 1e-10:
+        updated = updated / total
+    else:
+        updated = np.array([0.33, 0.34, 0.33])
+    return updated
+
+@njit(cache=True)
+def _njit_gaussian_pdf(x: float, mean: float, std: float) -> float:
+    var = std ** 2
+    denom = (2 * np.pi * var) ** 0.5
+    num = np.exp(-(x - mean) ** 2 / (2 * var))
+    return num / denom
 
 
 # ─── Dataclass states ────────────────────────────────────────────────────────
@@ -38,10 +57,11 @@ class HMMState:
 
     def __post_init__(self) -> None:
         if self.transition_matrix is None:
+            # Extreme structural hysteresis: 98% chance to remain, punishing noise flips.
             self.transition_matrix = np.array([
-                [0.85, 0.10, 0.05],
-                [0.10, 0.80, 0.10],
-                [0.05, 0.10, 0.85],
+                [0.98, 0.01, 0.01],
+                [0.01, 0.98, 0.01],
+                [0.01, 0.01, 0.98],
             ])
         if self.emission_means is None:
             self.emission_means = np.array([0.6, 0.0, -0.6])
@@ -155,25 +175,22 @@ class AdaptiveHMM:
         self.state_history: list[int] = []
 
     def _emission_prob(self, observation: float, state_idx: int) -> float:
-        """Emission probability for a given state."""
-        return MathUtils.gaussian_pdf(
+        """Emission probability for a given state with static epsilon shrinkage."""
+        std = self.state.emission_stds[state_idx] + 1e-4  # Epsilon diagonal penalty
+        return _njit_gaussian_pdf(
             observation,
             self.state.emission_means[state_idx],
-            self.state.emission_stds[state_idx],
+            std
         )
 
     def _forward_step(self, observation: float) -> np.ndarray:
-        """Single step of the forward algorithm."""
-        predicted = self.state.transition_matrix.T @ self.state.state_probabilities
-        emissions = np.array(
-            [self._emission_prob(observation, s) for s in range(3)]
+        """Single step of the forward algorithm vectorized via Numba."""
+        emissions = np.array([self._emission_prob(observation, s) for s in range(3)])
+        updated = _njit_forward_step(
+            self.state.transition_matrix,
+            self.state.state_probabilities,
+            emissions
         )
-        updated = emissions * predicted
-        total = updated.sum()
-        if total > 1e-10:
-            updated /= total
-        else:
-            updated = np.array([0.33, 0.34, 0.33])
         self.state.state_probabilities = updated
         return updated
 
@@ -208,7 +225,8 @@ class AdaptiveHMM:
             if mask.sum() >= 2:
                 state_obs = recent_obs[mask]
                 new_mean = np.mean(state_obs)
-                new_std = max(np.std(state_obs), 0.1)
+                new_std = max(np.std(state_obs), 1e-4) # Enforce positive bounds
+
                 self.state.emission_means[state_idx] = (
                     0.9 * self.state.emission_means[state_idx] + 0.1 * new_mean
                 )
