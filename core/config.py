@@ -5,7 +5,7 @@ Merged from both Aarambh (correl.py) and Nirnay (nirnay_core.py) monoliths.
 
 # ─── Version / Product ───────────────────────────────────────────────────────
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 PRODUCT_NAME = "Nishkarsh"
 COMPANY = "@thebullishvalue"
 
@@ -34,7 +34,7 @@ Z_THRESHOLD = 1.0
 STALENESS_DAYS = 3
 
 # Timeframe filter mapping (trading days)
-TIMEFRAME_TRADING_DAYS = {"1M": 21, "6M": 126, "1Y": 252, "2Y": 504}
+TIMEFRAME_TRADING_DAYS = {"3M": 63, "6M": 126, "1Y": 252, "2Y": 504}
 
 # Default predictors for NIFTY50 use case
 DEFAULT_PREDICTORS = (
@@ -159,19 +159,19 @@ NIFTY_INDICES = {
 
 # ─── Chart Theme ─────────────────────────────────────────────────────────────
 
-CHART_BG = "#1A1A1A"
-CHART_GRID = "#2A2A2A"
-CHART_ZEROLINE = "#3A3A3A"
-CHART_FONT_COLOR = "#EAEAEA"
+CHART_BG = "rgba(0,0,0,0)"
+CHART_GRID = "rgba(255,255,255,0.03)"
+CHART_ZEROLINE = "rgba(255,255,255,0.08)"
+CHART_FONT_COLOR = "#94A3B8"
 
-# Signal colors
-COLOR_GREEN = "#10b981"
-COLOR_RED = "#ef4444"
-COLOR_GOLD = "#FFC300"
-COLOR_CYAN = "#06b6d4"
-COLOR_AMBER = "#f59e0b"
-COLOR_PURPLE = "#8b5cf6"
-COLOR_MUTED = "#888888"
+# Signal colors - Obsidian Quant
+COLOR_GREEN = "#34D399"  # EMERALD
+COLOR_RED = "#FB7185"    # ROSE
+COLOR_GOLD = "#D4A853"   # AMBER GOLD
+COLOR_CYAN = "#22D3EE"   # CYAN
+COLOR_AMBER = "#D4A853"  # AMBER
+COLOR_PURPLE = "#8B5CF6" # PURPLE
+COLOR_MUTED = "rgba(148,163,184,0.4)"  # SLATE
 
 # ─── Nifty 50 Default Constituents (fallback list) ──────────────────────────
 
