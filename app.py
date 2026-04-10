@@ -40,7 +40,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 # ── UI ───────────────────────────────────────────────────────────────────────
-from ui.theme import inject_css, apply_chart_theme, VERSION, PRODUCT_NAME, COMPANY, progress_bar
+from ui.theme import inject_css, VERSION, PRODUCT_NAME, COMPANY, progress_bar
 from ui.tabs.tab_convergence import render_convergence_tab
 from ui.components import (
     render_header,
@@ -48,6 +48,7 @@ from ui.components import (
     render_nishkarsh_signal_card,
     render_warning_box,
     render_metric_card,
+    section_gap,
 )
 from ui.tabs.tab_aarambh import render_aarambh_tab
 from ui.tabs.tab_nirnay import render_nirnay_tab
@@ -99,13 +100,13 @@ def _render_header() -> None:
 
 def _render_landing_page() -> None:
     """Render the landing page with three system cards."""
-    st.markdown("<br>", unsafe_allow_html=True)
-    col1, col2, col3 = st.columns(3)
+    section_gap()
+    col1, col2, col3 = st.columns(3, gap="medium")
     with col1:
         st.markdown("""
         <div class='system-card aarambh'>
             <h3>
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
                 AARAMBH
             </h3>
             <p>Walk-forward ensemble regression on Nifty 50 PE ratio with conformal z-scores and DDM filtering.</p>
@@ -120,7 +121,7 @@ def _render_landing_page() -> None:
         st.markdown("""
         <div class='system-card nirnay'>
             <h3>
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
                 NIRNAY
             </h3>
             <p>Per-constituent MSF + MMR analysis with HMM/GARCH/CUSUM regime intelligence aggregation.</p>
@@ -135,22 +136,22 @@ def _render_landing_page() -> None:
         st.markdown("""
         <div class='system-card convergence'>
             <h3>
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="16"></line><line x1="8" y1="12" x2="16" y2="12"></line></svg>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
                 CONVERGENCE
             </h3>
             <p>Adaptive-weighted composite of 4 dimensions: Direction, Breadth, Magnitude, Regime — with DDM.</p>
             <div class='spec'>
                 <span>L:</span> Multi-temporal<br>
                 <span>S:</span> Leaky DDM<br>
-                <span>R:</span> Soft ±100 limit
+                <span>R:</span> Soft \u00b1100 limit
             </div>
         </div>
         """, unsafe_allow_html=True)
-    st.markdown("<br>", unsafe_allow_html=True)
+    section_gap()
     st.markdown("""
     <div class='landing-prompt'>
         <h4>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polygon points="10 8 16 12 10 16 10 8"></polygon></svg>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
             SYSTEM INITIALIZATION
         </h4>
         <p>Use the <strong>Sidebar</strong> to inject data vectors (CSV/Excel or Google Sheet).<br>
@@ -177,7 +178,7 @@ def _render_primary_signal(nishkarsh_result, agreement, aarambh_signal) -> None:
             f"Nishkarsh Conviction: {conv:+.0f} ({sig}). "
             f"Confidence band: [{lower:.0f}, {upper:.0f}]. "
             f"Agreement: {agreement:.0%}. "
-            f"{'Both systems aligned on directional bias.' if agreement > 0.6 else 'Systems showing mixed signals — wait for clearer convergence.'}"
+            f"{'Both systems aligned on directional bias.' if agreement > 0.6 else 'Systems showing mixed signals \u2014 wait for clearer convergence.'}"
         )
     else:
         conv = aarambh_signal.get("conviction_score", 0)
@@ -197,23 +198,29 @@ def _render_primary_signal(nishkarsh_result, agreement, aarambh_signal) -> None:
         f'<div class="value"><div class="signal-dot"></div> {html_mod.escape(sig)}</div>'
         f'<div class="subtext">'
         f'Score: <strong style="color:var(--ink-primary)">{conv:+.0f}</strong> &bull; '
-        f'Agreement: <strong style="color:var(--ink-primary)">{agreement:.0%}</strong> — {html_mod.escape(agreement_text)}'
+        f'Agreement: <strong style="color:var(--ink-primary)">{agreement:.0%}</strong> \u2014 {html_mod.escape(agreement_text)}'
         f'</div>'
-        f'<div style="margin-top:1.25rem;padding-top:1.25rem;border-top:1px dashed var(--border);font-size:0.85rem;line-height:1.65;color:var(--ink-secondary);font-family:var(--data);">'
-        f'<strong style="color:var(--amber);font-family:var(--display);font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;">INTERPRETATION</strong><br>'
+        f'<div style="margin-top:var(--sp-6);padding-top:var(--sp-5);border-top:1px solid var(--border);font-size:0.8rem;line-height:1.7;color:var(--ink-secondary);font-family:var(--data);">'
+        f'<strong style="color:var(--amber);font-family:var(--display);font-size:0.68rem;letter-spacing:0.1em;text-transform:uppercase;">INTERPRETATION</strong><br>'
         f'{html_mod.escape(explanation)}'
         f'</div>'
         f'</div>',
         unsafe_allow_html=True,
     )
-    st.markdown("---")
+    section_gap()
 
 
 def _render_footer() -> None:
     utc_now = datetime.now(timezone.utc)
     ist_now = utc_now + timedelta(hours=5, minutes=30)
-    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-    st.caption(f"© {ist_now.year} {PRODUCT_NAME}  |  {COMPANY}  |  v{VERSION}  |  {ist_now.strftime('%Y-%m-%d %H:%M:%S IST')}")
+    st.markdown(
+        f'<div class="app-footer">'
+        f'<div class="content">'
+        f'\u00a9 {ist_now.year} <strong>{PRODUCT_NAME}</strong> &nbsp;\u00b7&nbsp; {COMPANY} &nbsp;\u00b7&nbsp; v{VERSION} &nbsp;\u00b7&nbsp; {ist_now.strftime("%Y-%m-%d %H:%M:%S IST")}'
+        f'</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -770,7 +777,7 @@ def main():
     for i, tf in enumerate(TIMEFRAMES.keys()):
         with tf_cols[i]:
             btn_type = "primary" if st.session_state.tf_selected == tf else "secondary"
-            if st.button(tf, key=f"tf_{tf}", type=btn_type, use_container_width=True):
+            if st.button(tf, key=f"tf_{tf}", type=btn_type, width='stretch'):
                 st.session_state.tf_selected = tf
                 st.rerun()
     selected_tf = st.session_state.tf_selected
