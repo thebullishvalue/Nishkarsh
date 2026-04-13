@@ -1,6 +1,8 @@
 """
-Configuration constants, thresholds, column mappings, and shared defaults.
-Merged from both Aarambh (correl.py) and Nirnay (nirnay_core.py) monoliths.
+Nishkarsh v1.2.0 — Configuration constants, thresholds, column mappings, and shared defaults.
+निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
+
+CORE — Merged from both Aarambh (correl.py) and Nirnay (nirnay_core.py) monoliths.
 """
 
 # ─── Version / Product ───────────────────────────────────────────────────────
@@ -170,8 +172,60 @@ COLOR_RED = "#FB7185"    # ROSE
 COLOR_GOLD = "#D4A853"   # AMBER GOLD
 COLOR_CYAN = "#22D3EE"   # CYAN
 COLOR_AMBER = "#D4A853"  # AMBER
-COLOR_PURPLE = "#8B5CF6" # PURPLE
+COLOR_PURPLE = "#A78BFA"  # VIOLET (matches CSS --violet)
 COLOR_MUTED = "rgba(148,163,184,0.4)"  # SLATE
+
+# ─── UI Thresholds (centralized magic numbers) ──────────────────────────────
+
+# Conviction score thresholds for signal classification
+UI_CONVICTION_STRONG = 60
+UI_CONVICTION_MODERATE = 40
+UI_CONVICTION_WEAK = 20
+
+# Z-score thresholds for extreme values
+UI_Z_EXTREME = 2.0
+UI_Z_THRESHOLD = 1.0
+
+# Breadth percentage thresholds
+UI_BREADTH_HIGH = 60  # % threshold for high breadth alert
+
+# Agreement ratio thresholds
+UI_AGREEMENT_STRONG = 0.7
+UI_AGREEMENT_MODERATE = 0.5
+
+# Nirnay avg signal thresholds
+UI_NIRNAY_BULLISH = -2
+UI_NIRNAY_BEARISH = 2
+
+# Model spread thresholds
+UI_MODEL_SPREAD_LOW = 0.5
+UI_MODEL_SPREAD_HIGH = 1.5
+
+# OOS R² thresholds
+UI_R2_STRONG = 0.7
+UI_R2_ACCEPTABLE = 0.4
+
+# Band width interpretation
+UI_BAND_NARROW = 30
+UI_BAND_WIDE = 60
+
+# HMM probability threshold
+UI_HMM_CONFIDENT = 0.5
+
+# ADF/KPSS p-value thresholds
+UI_ADF_SIGNIFICANT = 0.05
+UI_KPSS_NOT_SIGNIFICANT = 0.05
+
+# Chart height defaults
+UI_CHART_HEIGHT_SMALL = 280
+UI_CHART_HEIGHT_MEDIUM = 340
+UI_CHART_HEIGHT_LARGE = 380
+UI_CHART_HEIGHT_XLARGE = 540
+UI_CHART_HEIGHT_STACKED = 680
+
+# Data table defaults
+UI_TABLE_HEIGHT = 520
+UI_TABLE_HISTORY_ROWS = 10
 
 # ─── Nifty 50 Default Constituents (fallback list) ──────────────────────────
 
