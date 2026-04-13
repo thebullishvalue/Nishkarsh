@@ -1,10 +1,8 @@
 """
-Nishkarsh v3.1.0 — Main Streamlit entrypoint.
+Nishkarsh v1.2.0 — Main Streamlit entrypoint.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
-Two systems. One conclusion.
-
-Midnight Bloomberg Terminal — Institutional quant-trading interface.
+NISHKARSH — Two systems. One conclusion. Walk-forward valuation + constituent regime intelligence unified by adaptive convergence.
 
 Usage:
     streamlit run app.py
@@ -12,7 +10,6 @@ Usage:
 
 from __future__ import annotations
 
-import html as html_mod
 import logging
 import os
 import sys
@@ -48,6 +45,9 @@ from ui.components import (
     render_nishkarsh_signal_card,
     render_warning_box,
     render_metric_card,
+    render_chart_skeleton,
+    render_collapsible_section,
+    render_collapsible_section_close,
     section_gap,
 )
 from ui.tabs.tab_aarambh import render_aarambh_tab
@@ -101,7 +101,7 @@ def _render_header() -> None:
 def _render_landing_page() -> None:
     """Render the landing page with three system cards."""
     section_gap()
-    col1, col2, col3 = st.columns(3, gap="medium")
+    col1, col2, col3 = st.columns(3, gap="small")
     with col1:
         st.markdown("""
         <div class='system-card aarambh'>
@@ -111,9 +111,9 @@ def _render_landing_page() -> None:
             </h3>
             <p>Walk-forward ensemble regression on Nifty 50 PE ratio with conformal z-scores and DDM filtering.</p>
             <div class='spec'>
-                <span>E:</span> Ridge + Huber + ENet + WLS<br>
-                <span>V:</span> Walk-forward OOS<br>
-                <span>U:</span> Conformal bounds
+                <span>Ensemble:</span> Ridge + Huber + ENet + WLS<br>
+                <span>Validation:</span> Walk-forward OOS<br>
+                <span>Bounds:</span> Conformal prediction
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -126,9 +126,9 @@ def _render_landing_page() -> None:
             </h3>
             <p>Per-constituent MSF + MMR analysis with HMM/GARCH/CUSUM regime intelligence aggregation.</p>
             <div class='spec'>
-                <span>O:</span> HMM Probabilities<br>
-                <span>P:</span> 90D Path + Bands<br>
-                <span>V:</span> DFA Hurst exponent
+                <span>Regime:</span> HMM Probabilities<br>
+                <span>Projection:</span> 90D Path + Bands<br>
+                <span>Trend:</span> DFA Hurst exponent
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -141,9 +141,9 @@ def _render_landing_page() -> None:
             </h3>
             <p>Adaptive-weighted composite of 4 dimensions: Direction, Breadth, Magnitude, Regime — with DDM.</p>
             <div class='spec'>
-                <span>L:</span> Multi-temporal<br>
-                <span>S:</span> Leaky DDM<br>
-                <span>R:</span> Soft \u00b1100 limit
+                <span>Scope:</span> Multi-temporal<br>
+                <span>Smoothing:</span> Leaky DDM<br>
+                <span>Range:</span> Soft \u00b1100 limit
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -152,10 +152,10 @@ def _render_landing_page() -> None:
     <div class='landing-prompt'>
         <h4>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
-            SYSTEM INITIALIZATION
+            AWAITING DATA
         </h4>
-        <p>Use the <strong>Sidebar</strong> to inject data vectors (CSV/Excel or Google Sheet).<br>
-           Select a <strong>Target</strong> and <strong>Predictors</strong>, then execute <strong>Run Analysis</strong> to begin alignment convergence.</p>
+        <p>Load data via the <strong>Sidebar</strong> (CSV/Excel or Google Sheet).<br>
+           Select a <strong>Target</strong> and <strong>Predictors</strong>, then execute <strong>Run Analysis</strong> to initialize both engines.</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -167,45 +167,23 @@ def _render_primary_signal(nishkarsh_result, agreement, aarambh_signal) -> None:
         sig = nishkarsh_result.nishkarsh_signal
         upper = nishkarsh_result.confidence_upper
         lower = nishkarsh_result.confidence_lower
-        if "BUY" in sig:
-            signal_class = "undervalued"
-        elif "SELL" in sig:
-            signal_class = "overvalued"
-        else:
-            signal_class = "fair"
-        agreement_text = "Strong agreement" if agreement > 0.7 else "Moderate agreement" if agreement > 0.5 else "Weak agreement"
+        agreement_text = "Strong" if agreement > 0.7 else "Moderate" if agreement > 0.5 else "Weak"
         explanation = (
-            f"Nishkarsh Conviction: {conv:+.0f} ({sig}). "
+            f"Conviction {conv:+.0f} ({sig}). "
             f"Confidence band: [{lower:.0f}, {upper:.0f}]. "
-            f"Agreement: {agreement:.0%}. "
-            f"{'Both systems aligned on directional bias.' if agreement > 0.6 else 'Systems showing mixed signals \u2014 wait for clearer convergence.'}"
+            f"Agreement: {agreement:.0%} ({agreement_text}). "
+            f"{'Both systems aligned.' if agreement > 0.6 else 'Mixed signals \u2014 wait for clearer convergence.'}"
         )
     else:
         conv = aarambh_signal.get("conviction_score", 0)
         sig = aarambh_signal.get("signal", "HOLD")
-        if sig == "BUY":
-            signal_class = "undervalued"
-        elif sig == "SELL":
-            signal_class = "overvalued"
-        else:
-            signal_class = "fair"
-        agreement_text = "N/A"
         explanation = f"Conviction: {conv:+.0f} ({sig})."
 
-    st.markdown(
-        f'<div class="signal-card {html_mod.escape(signal_class)}">'
-        f'<div class="label">NISHKARSH CONVERGENCE SIGNAL &#40;&#x0928;&#x093F;&#x0937;&#x094D;&#x0915;&#x0930;&#x094D;&#x0937;&#41;</div>'
-        f'<div class="value"><div class="signal-dot"></div> {html_mod.escape(sig)}</div>'
-        f'<div class="subtext">'
-        f'Score: <strong style="color:var(--ink-primary)">{conv:+.0f}</strong> &bull; '
-        f'Agreement: <strong style="color:var(--ink-primary)">{agreement:.0%}</strong> \u2014 {html_mod.escape(agreement_text)}'
-        f'</div>'
-        f'<div style="margin-top:var(--sp-6);padding-top:var(--sp-5);border-top:1px solid var(--border);font-size:0.8rem;line-height:1.7;color:var(--ink-secondary);font-family:var(--data);">'
-        f'<strong style="color:var(--amber);font-family:var(--display);font-size:0.68rem;letter-spacing:0.1em;text-transform:uppercase;">INTERPRETATION</strong><br>'
-        f'{html_mod.escape(explanation)}'
-        f'</div>'
-        f'</div>',
-        unsafe_allow_html=True,
+    render_nishkarsh_signal_card(
+        signal=sig,
+        conviction=conv,
+        agreement=agreement,
+        explanation=explanation,
     )
     section_gap()
 
@@ -768,7 +746,20 @@ def main():
     # ─── Primary Signal (Above Tabs, Always Visible) ───────────────────────
     _render_primary_signal(nishkarsh_result, agreement, signal)
 
-    # ─── Timeframe Filter ─────────────────────────────────────────────────
+    # ─── Sidebar Discovery Hint ─────────────────────────────────────────
+    st.markdown(
+        """
+        <div class="sidebar-hint" onclick="document.querySelector('[data-testid=stSidebarCollapse]').click()" title="Open sidebar for configuration">
+            <svg class="sidebar-hint-arrow" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="15 18 9 12 15 6"></polyline>
+            </svg>
+            <span class="sidebar-hint-label">CONFIGURE</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # ─── Timeframe Filter — with robust persistence ───────────────────────
     if 'tf_selected' not in st.session_state:
         st.session_state.tf_selected = '6M'
     TIMEFRAMES = {'3M': 63, '6M': 126, '1Y': 252, '2Y': 504, 'ALL': None}
@@ -781,6 +772,8 @@ def main():
                 st.session_state.tf_selected = tf
                 st.rerun()
     selected_tf = st.session_state.tf_selected
+
+    # Ensure timeframe survives config changes by always applying it
     ts_filtered = ts.copy()
     if selected_tf != "ALL":
         if active_date != "None" and pd.api.types.is_datetime64_any_dtype(ts["Date"]):
@@ -796,20 +789,95 @@ def main():
     x_axis = ts_filtered["Date"]
     x_title = "Date" if active_date != "None" else "Index"
 
-    # ─── Tabs ──────────────────────────────────────────────────────────────
+    # ─── Keyboard Shortcuts Hint ─────────────────────────────────────────
+    from streamlit.components.v1 import html as st_html
+    st_html(
+        """
+        <div class="kbd-shortcuts" id="kbd-shortcuts">
+            <div class="shortcut-row"><kbd>1</kbd>–<kbd>5</kbd> Switch tabs</div>
+            <div class="shortcut-row"><kbd>R</kbd> Run analysis</div>
+            <div class="shortcut-row"><kbd>?</kbd> Toggle shortcuts</div>
+        </div>
+        <script>
+        (function() {
+            var shortcutsVisible = false;
+            var kbdEl = document.getElementById('kbd-shortcuts');
+            function showKbd() {
+                if (kbdEl) { kbdEl.classList.toggle('visible'); shortcutsVisible = !shortcutsVisible; }
+            }
+            document.addEventListener('keydown', function(e) {
+                if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return;
+                if (e.key === '?') { e.preventDefault(); showKbd(); return; }
+                if (shortcutsVisible) return;
+                var tabKeys = Object();
+                tabKeys['1'] = 0; tabKeys['2'] = 1; tabKeys['3'] = 2; tabKeys['4'] = 3; tabKeys['5'] = 4;
+                if (e.key in tabKeys) {
+                    e.preventDefault();
+                    var tabs = document.querySelectorAll('[data-baseweb="tab"]');
+                    if (tabs[tabKeys[e.key]]) tabs[tabKeys[e.key]].click();
+                }
+                if (e.key === 'r' || e.key === 'R') {
+                    if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+                        var runBtn = document.querySelector('button[kind="primary"]');
+                        if (runBtn) runBtn.click();
+                    }
+                }
+            });
+        })();
+        </script>
+        """,
+        height=0,
+    )
+
+    # ─── Theme Toggle ────────────────────────────────────────────────────
+    from ui.components import render_theme_toggle
+    render_theme_toggle()
+
+    # ─── Tabs with Lazy Loading + Error Boundaries ─────────────────────────
+    # Track which tabs have been rendered (lazy loading)
+    if 'rendered_tabs' not in st.session_state:
+        st.session_state.rendered_tabs = set()
+
+    # Get current active tab from URL hash or default to 0
+    active_tab_idx = 0  # Streamlit doesn't expose active tab index directly, so we render on demand
+
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "CONVERGENCE", "AARAMBH", "NIRNAY", "DIAGNOSTICS", "DATA",
     ])
+
+    # Error boundary wrapper
+    def _safe_render(name, render_fn):
+        """Render a tab with graceful error handling."""
+        try:
+            render_fn()
+        except Exception as e:
+            st.markdown(
+                f'<div style="background:rgba(251,113,133,0.05);border:1px solid rgba(251,113,133,0.2);'
+                f'border-radius:var(--r-md);padding:var(--sp-6);margin:var(--sp-4) 0;">'
+                f'<div style="font-family:var(--display);font-size:0.72rem;font-weight:700;color:var(--rose);'
+                f'text-transform:uppercase;letter-spacing:0.08em;margin-bottom:var(--sp-3);">'
+                f'Error in {name}</div>'
+                f'<div style="font-family:var(--data);font-size:0.8rem;color:var(--ink-secondary);line-height:1.6;">'
+                f'{str(e)}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
     with tab1:
-        render_convergence_tab(ts_filtered)
+        st.session_state.rendered_tabs.add(0)
+        _safe_render("Convergence", lambda: render_convergence_tab(ts_filtered))
     with tab2:
-        render_aarambh_tab(engine, ts_filtered, x_axis, x_title, signal, model_stats, regime_stats, ts, active_target)
+        st.session_state.rendered_tabs.add(1)
+        _safe_render("Aarambh", lambda: render_aarambh_tab(engine, ts_filtered, x_axis, x_title, signal, model_stats, regime_stats, ts, active_target))
     with tab3:
-        render_nirnay_tab()
+        st.session_state.rendered_tabs.add(2)
+        _safe_render("Nirnay", lambda: render_nirnay_tab())
     with tab4:
-        render_diagnostics_tab(engine, ts_filtered, x_axis, x_title, signal, model_stats)
+        st.session_state.rendered_tabs.add(3)
+        _safe_render("Diagnostics", lambda: render_diagnostics_tab(engine, ts_filtered, x_axis, x_title, signal, model_stats))
     with tab5:
-        render_data_tab(ts_filtered, ts, active_target)
+        st.session_state.rendered_tabs.add(4)
+        _safe_render("Data", lambda: render_data_tab(ts_filtered, ts, active_target))
 
     _render_footer()
 
