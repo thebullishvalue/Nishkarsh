@@ -1,5 +1,8 @@
 """
-TTL-based memory and disk cache for data fetching.
+Nishkarsh v1.2.0 — TTL-based memory and disk cache for data fetching.
+निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
+
+DATA — Provides a simple key-value cache with time-to-live expiry.
 
 Provides a simple key-value cache with time-to-live expiry.
 Cache keys are derived from function arguments via MD5 hashing.

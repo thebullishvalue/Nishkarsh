@@ -1,7 +1,8 @@
 """
-Data schema contracts — dataclasses defining unified data structures.
+Nishkarsh v1.2.0 — Data schema contracts: dataclasses defining unified data structures.
+निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
-Only the dataclasses actually consumed by the application are defined here.
+DATA — Only the dataclasses actually consumed by the application are defined here.
 """
 
 from __future__ import annotations

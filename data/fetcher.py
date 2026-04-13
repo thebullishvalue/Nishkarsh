@@ -1,5 +1,8 @@
 """
-Unified data fetcher — Google Sheets, yfinance, and Stooq sources.
+Nishkarsh v1.2.0 — Unified data fetcher: Google Sheets, yfinance, and Stooq sources.
+निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
+
+DATA — Fetches Aarambh valuation data, Nifty 50 constituent OHLCV, and macro indicators.
 
 Fetches Aarambh valuation data from Google Sheets, Nifty 50 constituent
 OHLCV from yfinance, and macro indicators from Stooq / Yahoo Finance.

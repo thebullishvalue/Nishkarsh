@@ -1,5 +1,8 @@
 """
-Nifty 50 constituent list fetching.
+Nishkarsh v1.2.0 — Nifty 50 constituent list fetching.
+निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
+
+DATA — Retrieves constituent symbols from niftyindices.com with Wikipedia fallback.
 
 Retrieves constituent symbols from niftyindices.com with Wikipedia
 fallback and a hardcoded fallback for when both are unavailable.
