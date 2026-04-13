@@ -1,5 +1,8 @@
 """
-UnifiedConvictionModel — DDM filtering on convergence scores.
+Nishkarsh v1.2.0 — UnifiedConvictionModel: DDM filtering on convergence scores.
+निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
+
+CONVERGENCE — Adaptive-weighted composite of 4 dimensions: Direction, Breadth, Magnitude, Regime — with DDM.
 
 Applies the same Drift-Diffusion Model (DDM) primitive used by the
 Aarambh engine on raw conviction, but operates on the cross-system
@@ -36,7 +39,7 @@ class UnifiedConvictionResult:
     nishkarsh_conviction : float
         DDM-filtered convergence score, bounded to [-100, +100].
     nishkarsh_signal : str
-        Classified signal (``STRONG_BUY`` → ``STRONG_SELL``).
+        Classified signal (``STRONG BUY`` → ``STRONG SELL``).
     confidence_upper : float
         Upper bound of the 95% confidence band.
     confidence_lower : float
@@ -165,17 +168,17 @@ class UnifiedConvictionModel:
 
     @staticmethod
     def _classify_signal(conviction: float) -> str:
-        """Classify a conviction score into a signal label."""
+        """Classify a conviction score into a human-readable signal label."""
         if conviction < -CONVICTION_STRONG:
-            return "STRONG_BUY"
+            return "STRONG BUY"
         if conviction < -CONVICTION_MODERATE:
             return "BUY"
         if conviction < -CONVICTION_WEAK:
-            return "WEAK_BUY"
+            return "WEAK BUY"
         if conviction > CONVICTION_STRONG:
-            return "STRONG_SELL"
+            return "STRONG SELL"
         if conviction > CONVICTION_MODERATE:
             return "SELL"
         if conviction > CONVICTION_WEAK:
-            return "WEAK_SELL"
+            return "WEAK SELL"
         return "NEUTRAL"

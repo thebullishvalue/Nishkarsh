@@ -1,5 +1,8 @@
 """
-CrossSystemDivergenceDetector — Detects when Aarambh and Nirnay disagree.
+Nishkarsh v1.2.0 — CrossSystemDivergenceDetector: Detects when Aarambh and Nirnay disagree.
+निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
+
+CONVERGENCE — Adaptive-weighted composite of 4 dimensions: Direction, Breadth, Magnitude, Regime — with DDM.
 
 Divergence types
 ----------------

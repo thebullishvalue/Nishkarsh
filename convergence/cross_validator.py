@@ -1,5 +1,8 @@
 """
-CrossValidator — Per-date cross-referencing of Aarambh and Nirnay outputs.
+Nishkarsh v1.2.0 — CrossValidator: Cross-referencing Aarambha and Nirnay outputs.
+निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
+
+CONVERGENCE — Adaptive-weighted composite of 4 dimensions: Direction, Breadth, Magnitude, Regime — with DDM.
 
 Computes a convergence score from four adaptive-weighted dimensions:
 direction agreement, breadth confirmation, magnitude alignment, and
