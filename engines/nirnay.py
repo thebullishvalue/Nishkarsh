@@ -1,16 +1,8 @@
 """
-Nirnay Engine — Per-stock MSF + MMR with regime intelligence.
+Nishkarsh v1.2.0 — Nirnay Engine: Per-stock MSF + MMR with regime intelligence.
+निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
-Reimplemented from Nirnay/Nirnay-main/app.py to produce identical results
-while integrating into the Nishkarsh package architecture.
-
-Source references
------------------
-- Utility functions: app.py lines 716-730
-- ``calculate_msf``: app.py lines 1039-1103
-- ``calculate_mmr``: app.py lines 1105-1156
-- ``run_full_analysis``: app.py lines 1158-1272
-- ``aggregate_constituent_timeseries``: app.py lines 2900-3006
+NIRNAY — Per-constituent MSF + MMR analysis with HMM/GARCH/CUSUM regime intelligence aggregation.
 """
 
 from __future__ import annotations

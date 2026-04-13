@@ -1,6 +1,8 @@
 """
-FairValueEngine — Walk-forward ensemble regression for Nifty 50 PE fair value.
-Extracted and adapted from correl.py lines 767-1660.
+Nishkarsh v1.2.0 — FairValueEngine: Walk-forward ensemble regression for Nifty 50 PE fair value.
+निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
+
+AARAMBH — Walk-forward ensemble regression on Nifty 50 PE ratio with conformal z-scores and DDM filtering.
 
 Imports math primitives from analytics.* instead of inline definitions.
 No Streamlit dependency.
@@ -367,7 +369,7 @@ class FairValueEngine:
     @staticmethod
     def _fit_ensemble(
         X_train: np.ndarray, y_train: np.ndarray, t: int, global_weights: np.ndarray,
-    ) -> tuple[dict, Any | None, np.ndarray]:
+    ) -> tuple[dict, any | None, np.ndarray]:
         models: dict = {"ridge": None, "huber": None, "ols": None, "elasticnet": None, "pca_wls": None}
         scaler = None
         valid_cols = np.std(X_train, axis=0) > 1e-8
@@ -420,7 +422,7 @@ class FairValueEngine:
         return models, scaler, valid_cols
 
     def _predict_ensemble(
-        self, X_pred: np.ndarray, models: dict, scaler: Any | None,
+        self, X_pred: np.ndarray, models: dict, scaler: any | None,
         valid_cols: np.ndarray, t_start: int,
         X_val: np.ndarray | None = None, y_val: np.ndarray | None = None,
     ) -> tuple[list[np.ndarray], list[float]]:
