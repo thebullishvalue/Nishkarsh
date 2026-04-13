@@ -8,7 +8,7 @@ CORE — Merged from both Aarambh (correl.py) and Nirnay (nirnay_core.py) monoli
 # ─── Version / Product ───────────────────────────────────────────────────────
 
 VERSION = "1.2.0"
-PRODUCT_NAME = "Nishkarsh"
+PRODUCT_NAME = "NISHKARSH"
 COMPANY = "@thebullishvalue"
 
 # ─── Aarambh Engine Defaults ─────────────────────────────────────────────────
