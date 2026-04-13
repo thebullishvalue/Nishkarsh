@@ -1,7 +1,8 @@
 """
-Hurst exponent via Detrended Fluctuation Analysis (DFA).
+Nishkarsh v1.2.0 — Hurst exponent via Detrended Fluctuation Analysis (DFA).
+निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
-Extracted from correl.py lines 496-557.
+ANALYTICS — Measures long-term memory and mean-reversion in time series.
 """
 
 from __future__ import annotations

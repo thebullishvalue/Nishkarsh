@@ -1,7 +1,8 @@
 """
-Signal generators: Market Strength Factor (MSF) and Macro-Micro Regime (MMR).
+Nishkarsh v1.2.0 — Signal generators: Market Strength Factor (MSF) and Macro-Micro Regime (MMR).
+निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
-Extracted from Nirnay nirnay_core.py lines 471-638.
+ANALYTICS — Per-constituent signal computation with ATR normalization and z-score clipping.
 """
 
 from __future__ import annotations

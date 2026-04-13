@@ -1,7 +1,8 @@
 """
-Drift-Diffusion Model (DDM) filter with mean-reverting variance.
+Nishkarsh v1.2.0 — Drift-Diffusion Model (DDM) filter with mean-reverting variance.
+निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
-Extracted from correl.py lines 451-493.
+ANALYTICS — Bounded signal filtering with confidence bands via stochastic DDM.
 """
 
 from __future__ import annotations

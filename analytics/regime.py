@@ -1,7 +1,8 @@
 """
-Regime detection: Kalman Filter, HMM, GARCH, CUSUM.
+Nishkarsh v1.2.0 — Regime detection: Kalman Filter, HMM, GARCH, CUSUM.
+निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
-Extracted from Nirnay nirnay_core.py lines 242-464.
+ANALYTICS — Multi-model regime classification for constituent-level analysis.
 """
 
 from __future__ import annotations

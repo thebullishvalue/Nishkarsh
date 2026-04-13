@@ -1,8 +1,8 @@
 """
-Aarambh math utilities — pure mathematical functions.
+Nishkarsh v1.2.0 — Math utilities: pure mathematical functions.
+निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
-All functions are stateless and side-effect free. They operate on
-NumPy arrays and pandas Series/DataFrames only.
+ANALYTICS — Stateless, side-effect free functions operating on NumPy arrays and pandas structures.
 """
 
 from __future__ import annotations

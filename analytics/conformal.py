@@ -1,7 +1,8 @@
 """
-Conformal prediction z-scores with fat-tail adjustment.
+Nishkarsh v1.2.0 — Conformal prediction z-scores with fat-tail adjustment.
+निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
-Extracted from correl.py lines 618-657.
+ANALYTICS — Conformal prediction bounds for walk-forward regression residuals.
 """
 
 from __future__ import annotations
