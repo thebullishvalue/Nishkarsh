@@ -1,6 +1,8 @@
 """
-Diagnostics tab — ML diagnostics from both engines.
-Obsidian Quant Terminal design language.
+Nishkarsh v1.2.0 — Diagnostics tab: ML diagnostics from both engines.
+निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
+
+UI — Model quality assessment: feature importance, residuals, walk-forward performance.
 """
 
 from __future__ import annotations
@@ -11,23 +13,61 @@ import streamlit as st
 
 from ui.theme import chart_layout, style_axes
 from ui.components import render_metric_card, render_section_header, section_gap
+from core.config import (
+    COLOR_GREEN,
+    COLOR_RED,
+    COLOR_AMBER,
+    COLOR_CYAN,
+    COLOR_MUTED,
+)
 
-# ── Theme palette ───────────────────────────────────────────────────────────
-EMERALD = "#34D399"
-ROSE = "#FB7185"
-AMBER = "#D4A853"
-CYAN = "#22D3EE"
-SLATE = "#94A3B8"
+# ── Alias colors for tab-local use ────────────────────────────────────────
+EMERALD = COLOR_GREEN
+ROSE = COLOR_RED
+AMBER = COLOR_AMBER
+CYAN = COLOR_CYAN
+SLATE = COLOR_MUTED
+
+# ── Tooltip definitions ────────────────────────────────────────────────────
+TOOLTIPS = {
+    "ou_half_life": (
+        "Expected time (in days) for the pricing residual to close halfway back to fair value "
+        "after a shock. Shorter half-lives = faster mean reversion = more frequent opportunities."
+    ),
+    "adf_pvalue": (
+        "Tests whether the pricing residual has a unit root (drifts away from fair value). "
+        "p < 0.05 rejects the unit root, confirming mean-reversion."
+    ),
+    "kpss_pvalue": (
+        "Corroborating test: checks whether the residual is stationary around a trend. "
+        "p > 0.05 fails to reject stationarity — second confirmation of mean-reversion."
+    ),
+    "hmm_cov_shrinkage": (
+        "Covariance regularization for the regime detection model. "
+        "Prevents overfitting when estimating regime volatility from limited data."
+    ),
+    "viterbi_persist": (
+        "Probability the current regime (bull/bear) persists into the next period. "
+        "Near 1.0 = stable regimes; below 0.9 = frequent switching, lower signal confidence."
+    ),
+}
 
 
 def render_diagnostics_tab(engine, ts_filtered, x_axis, x_title, signal, model_stats):
-    """ML Diagnostics: OU diagnostics, feature impacts, signal performance."""
+    """ML Diagnostics with rose system identity."""
+
+    # System identity background
+    st.markdown(
+        '<div class="tab-bg diagnostics"></div>',
+        unsafe_allow_html=True,
+    )
 
     # ═══════════════════════════════════════════════════════════════════════
     # 1. OU MEAN-REVERSION DIAGNOSTICS
     # ═══════════════════════════════════════════════════════════════════════
     render_section_header(
         "OU Mean-Reversion Diagnostics",
+        "Tests whether the pricing residual is stationary — the foundation all mean-reversion signals depend on.",
         icon="crosshair",
         accent="cyan",
     )
@@ -37,17 +77,20 @@ def render_diagnostics_tab(engine, ts_filtered, x_axis, x_title, signal, model_s
 
     c1, c2, c3 = st.columns(3)
     with c1:
-        render_metric_card("OU Half-Life", f"{signal['ou_half_life']:.0f}d", "Andrews MU estimator", "info")
+        render_metric_card("OU HALF-LIFE", f"{signal['ou_half_life']:.0f}d", "Days to close half the pricing gap", "info",
+                           tooltip=TOOLTIPS["ou_half_life"])
     with c2:
         adf_class = "success" if signal["adf_pvalue"] < 0.05 else "danger"
-        render_metric_card("ADF p-value", f"{signal['adf_pvalue']:.3f}", "Unit root test", adf_class)
+        render_metric_card("ADF P-VALUE", f"{signal['adf_pvalue']:.3f}", "Rejects drift if p < 0.05", adf_class,
+                           tooltip=TOOLTIPS["adf_pvalue"])
     with c3:
         kpss_class = "success" if signal["kpss_pvalue"] > 0.05 else "danger"
-        render_metric_card("KPSS p-value", f"{signal['kpss_pvalue']:.3f}", "Stationarity test", kpss_class)
+        render_metric_card("KPSS P-VALUE", f"{signal['kpss_pvalue']:.3f}", "Confirms mean-reversion if p > 0.05", kpss_class,
+                           tooltip=TOOLTIPS["kpss_pvalue"])
 
     # Status indicators
-    ok_svg = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#34D399" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>'
-    warn_svg = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#D4A853" stroke-width="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>'
+    ok_svg = f'<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="{COLOR_GREEN}" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>'
+    warn_svg = f'<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="{COLOR_AMBER}" stroke-width="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>'
     stat_icon = ok_svg if "Stationary" in stationarity else warn_svg
     theta_icon = ok_svg if "Stable" in theta_status else warn_svg
 
@@ -65,8 +108,8 @@ def render_diagnostics_tab(engine, ts_filtered, x_axis, x_title, signal, model_s
     # 2. FEATURE IMPACT
     # ═══════════════════════════════════════════════════════════════════════
     render_section_header(
-        "Feature Impact",
-        "Current predictor contributions to fair value estimation",
+        "Feature Impact on Fair Value",
+        "How much each predictor shifts the fair-value estimate now. Top features drive the signal — if they go stale, the signal degrades.",
         icon="bar-chart",
         accent="violet",
     )
@@ -120,7 +163,7 @@ def render_diagnostics_tab(engine, ts_filtered, x_axis, x_title, signal, model_s
     # ═══════════════════════════════════════════════════════════════════════
     render_section_header(
         "Signal Performance",
-        "Hit rates and t-statistics for conviction-based signals",
+        "Walk-forward hit rates across 5D, 10D, 20D forward return horizons.",
         icon="trending",
         accent="emerald",
     )
@@ -150,17 +193,19 @@ def render_diagnostics_tab(engine, ts_filtered, x_axis, x_title, signal, model_s
     # 4. HMM TELEMETRY
     # ═══════════════════════════════════════════════════════════════════════
     render_section_header(
-        "Regime Intelligence (HMM Telemetry)",
-        "Hidden Markov Model state probabilities and shrinkage penalty",
+        "Regime Detection (HMM)",
+        "How the Hidden Markov Model classifies the market over time. Sustained P > 0.5 = confident. Frequent crossings = uncertainty.",
         icon="eye",
         accent="rose",
     )
 
     c1, c2 = st.columns(2)
     with c1:
-        render_metric_card("HMM COV SHRINKAGE", "1e-4", "Ledoit-Wolf Diagonal", "warning")
+        render_metric_card("COVARIANCE SHRINKAGE", "1e-4", "Regularization strength", "warning",
+                           tooltip=TOOLTIPS["hmm_cov_shrinkage"])
     with c2:
-        render_metric_card("VITERBI PERSIST", "0.98", "Transition Trace", "info")
+        render_metric_card("REGIME PERSISTENCE", "0.98", "Probability regime holds next period", "info",
+                           tooltip=TOOLTIPS["viterbi_persist"])
 
     nirnay_df = st.session_state.get("nirnay_results", pd.DataFrame())
     if not nirnay_df.empty and "avg_hmm_bull" in nirnay_df.columns:

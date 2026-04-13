@@ -1,10 +1,13 @@
 """
-Data tab — Merged data table + CSV export.
-Obsidian Quant Terminal design language.
+Nishkarsh v1.2.0 — Data tab: Merged data table + CSV export with search and filtering.
+निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
+
+UI — Raw data inspection: unified dataset viewer with export capability.
 """
 
 from __future__ import annotations
 
+import pandas as pd
 import streamlit as st
 from datetime import datetime
 
@@ -12,7 +15,7 @@ from ui.components import render_section_header
 
 
 def render_data_tab(ts_filtered, ts, active_target):
-    """Data Table: Time series data with export functionality."""
+    """Data Table: Time series data with search, column visibility, and export."""
 
     render_section_header(
         f"Time Series Data ({len(ts_filtered)} observations)",
@@ -37,11 +40,38 @@ def render_data_tab(ts_filtered, ts, active_target):
             display_df[col] = display_df[col].round(decimals)
 
     if "BullishDiv" in display_df.columns:
-        display_df["BullishDiv"] = display_df["BullishDiv"].apply(lambda x: "\u25cf" if x else "\u25cb")
+        display_df["BullishDiv"] = display_df["BullishDiv"].apply(lambda x: "●" if x else "○")
     if "BearishDiv" in display_df.columns:
-        display_df["BearishDiv"] = display_df["BearishDiv"].apply(lambda x: "\u25cf" if x else "\u25cb")
+        display_df["BearishDiv"] = display_df["BearishDiv"].apply(lambda x: "●" if x else "○")
 
-    st.dataframe(display_df, width='stretch', height=520)
+    # ── Search/filter ───────────────────────────────────────────────────
+    search_col1, search_col2 = st.columns([1, 4], gap="small")
+    with search_col1:
+        date_range_option = st.selectbox("Date Range", ["All", "Last 30", "Last 90", "Last 180", "Last 365"], key="data_date_range")
+    with search_col2:
+        search_term = st.text_input("Search", placeholder="Filter by regime or value...", key="data_search")
+
+    # Apply date range filter
+    filtered_df = display_df.copy()
+    if date_range_option != "All" and "Date" in filtered_df.columns:
+        try:
+            from pandas import DateOffset
+            max_date = pd.to_datetime(filtered_df["Date"]).max()
+            offsets = {"Last 30": 30, "Last 90": 90, "Last 180": 180, "Last 365": 365}
+            cutoff = max_date - pd.Timedelta(days=offsets[date_range_option])
+            filtered_df["Date"] = pd.to_datetime(filtered_df["Date"])
+            filtered_df = filtered_df[filtered_df["Date"] >= cutoff]
+        except Exception:
+            pass
+
+    # Apply text search
+    if search_term:
+        mask = filtered_df.astype(str).apply(
+            lambda col: col.str.contains(search_term, case=False, na=False),
+        ).any(axis=1)
+        filtered_df = filtered_df[mask]
+
+    st.dataframe(filtered_df, width='stretch', height=520)
 
     # ── Export section ──────────────────────────────────────────────────
     st.markdown(

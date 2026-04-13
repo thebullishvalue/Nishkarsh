@@ -1,6 +1,8 @@
 """
-Convergence tab — Unified signal with timeframe filtering.
-Obsidian Quant Terminal design language.
+Nishkarsh v1.2.0 — Convergence tab: Unified signal with timeframe filtering.
+निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
+
+UI — Cross-system convergence visualization: conviction scores with DDM filtering.
 """
 
 from __future__ import annotations
@@ -13,13 +15,49 @@ from plotly.subplots import make_subplots
 
 from ui.theme import chart_layout, style_axes
 from ui.components import render_metric_card, render_section_header, section_gap
+from core.config import (
+    COLOR_GREEN,
+    COLOR_RED,
+    COLOR_AMBER,
+    COLOR_CYAN,
+    COLOR_MUTED,
+    UI_AGREEMENT_STRONG,
+    UI_AGREEMENT_MODERATE,
+    UI_CONVICTION_STRONG,
+    UI_CONVICTION_MODERATE,
+    UI_NIRNAY_BULLISH,
+    UI_NIRNAY_BEARISH,
+    UI_CHART_HEIGHT_STACKED,
+)
 
-# ── Theme palette ───────────────────────────────────────────────────────────
-EMERALD = "#34D399"
-ROSE = "#FB7185"
-AMBER = "#D4A853"
-CYAN = "#22D3EE"
-SLATE = "#94A3B8"
+# ── Alias colors for tab-local use ────────────────────────────────────────
+EMERALD = COLOR_GREEN
+ROSE = COLOR_RED
+AMBER = COLOR_AMBER
+CYAN = COLOR_CYAN
+SLATE = COLOR_MUTED
+
+# ── Tooltip definitions ────────────────────────────────────────────────────
+TOOLTIPS = {
+    "nishkarsh_conviction": (
+        "Composite score combining Aarambh (top-down) and Nirnay (bottom-up) into a single "
+        "signal. Near 0 = both systems uncertain — avoid new positions. Large absolute values "
+        "= high-conviction opportunities."
+    ),
+    "aarambh_conviction": (
+        "Aarambh's fair-value breadth: how many lookback windows see the market as overbought "
+        "vs. oversold. Below -20 = most stocks cheap (bullish); above +20 = most expensive (bearish)."
+    ),
+    "nirnay_avg": (
+        "Average technical signal across all Nifty 50 stocks, computed bottom-up from each "
+        "constituent's price action. Negative = net bullish; positive = net bearish. Moves "
+        "slowly and confirms (or contradicts) Aarambh's top-down view."
+    ),
+    "agreement": (
+        "How often Aarambh and Nirnay point in the same direction. Above 70% = both systems "
+        "agree — trust the signal. Below 50% = they disagree — stay flat until alignment improves."
+    ),
+}
 
 
 def _dynamic_range(vals, padding=0.15):
@@ -34,7 +72,7 @@ def _dynamic_range(vals, padding=0.15):
 
 
 def render_convergence_tab(ts_filtered=None):
-    """Render the convergence dashboard tab."""
+    """Render the convergence dashboard tab with amber-gold system identity."""
     convergence_df = st.session_state.get("convergence_df")
     nishkarsh_result = st.session_state.get("nishkarsh_result")
     aarambh_ts = st.session_state.get("aarambh_ts")
@@ -44,31 +82,38 @@ def render_convergence_tab(ts_filtered=None):
         st.info("No convergence data available. Run the analysis first.")
         return
 
+    # System identity background
+    st.markdown(
+        '<div class="tab-bg convergence"></div>',
+        unsafe_allow_html=True,
+    )
+
     # ═══════════════════════════════════════════════════════════════════════
     # HEADER + METRIC CARDS
     # ═══════════════════════════════════════════════════════════════════════
     render_section_header(
         "Convergence Analysis",
-        "Cross-system agreement between Aarambh (top-down) and Nirnay (bottom-up)",
+        "Aarambh top-down vs Nirnay bottom-up. Agreement = reliable signal. Divergence = stand aside.",
         icon="target",
     )
 
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4 = st.columns(4, gap="small")
 
     with col1:
         if nishkarsh_result:
             score = nishkarsh_result.nishkarsh_conviction
             sig = nishkarsh_result.nishkarsh_signal
             color = "success" if "BUY" in sig else "danger" if "SELL" in sig else "neutral"
-            render_metric_card("NISHKARSH CONVICTION", f"{score:+.0f}", sig, color)
+            render_metric_card("NISHKARSH CONVICTION", f"{score:+.0f}", sig, color, tooltip=TOOLTIPS["nishkarsh_conviction"])
         else:
             render_metric_card("NISHKARSH CONVICTION", "N/A", "Not computed", "neutral")
 
     with col2:
         if aarambh_ts is not None and "ConvictionBounded" in aarambh_ts.columns:
             a_conv = aarambh_ts["ConvictionBounded"].iloc[-1]
-            render_metric_card("AARAMBH CONVICTION", f"{a_conv:+.0f}", "Fair value breadth",
-                               "success" if a_conv < -20 else "danger" if a_conv > 20 else "neutral")
+            render_metric_card("AARAMBH CONVICTION", f"{a_conv:+.0f}", "Market breadth: oversold vs overbought",
+                               "success" if a_conv < -UI_CONVICTION_MODERATE else "danger" if a_conv > UI_CONVICTION_MODERATE else "neutral",
+                               tooltip=TOOLTIPS["aarambh_conviction"])
         else:
             render_metric_card("AARAMBH CONVICTION", "N/A", "", "neutral")
 
@@ -80,15 +125,17 @@ def render_convergence_tab(ts_filtered=None):
                 if candidate in df_n.columns:
                     n_avg = df_n[candidate].iloc[-1]
                     break
-            render_metric_card("NIRNAY AVG SIGNAL", f"{n_avg:.1f}", "Component oscillator",
-                               "success" if n_avg < -3 else "danger" if n_avg > 3 else "neutral")
+            render_metric_card("NIRNAY AVG SIGNAL", f"{n_avg:.1f}", "Bottom-up constituent momentum",
+                               "success" if n_avg < UI_NIRNAY_BULLISH else "danger" if n_avg > UI_NIRNAY_BEARISH else "neutral",
+                               tooltip=TOOLTIPS["nirnay_avg"])
         else:
             render_metric_card("NIRNAY AVG SIGNAL", "N/A", "No constituent data", "neutral")
 
     with col4:
         agreement = convergence_df["agreement_ratio"].iloc[-1]
-        render_metric_card("AGREEMENT", f"{agreement:.0%}", "Cross-system alignment",
-                           "success" if agreement > 0.7 else "warning" if agreement > 0.5 else "neutral")
+        render_metric_card("AGREEMENT", f"{agreement:.0%}", "Aarambh and Nirnay alignment",
+                           "success" if agreement > UI_AGREEMENT_STRONG else "warning" if agreement > UI_AGREEMENT_MODERATE else "neutral",
+                           tooltip=TOOLTIPS["agreement"])
 
     section_gap()
 
@@ -96,8 +143,8 @@ def render_convergence_tab(ts_filtered=None):
     # UNIFIED NORMALIZED SIGNAL — 3-row stacked chart
     # ═══════════════════════════════════════════════════════════════════════
     render_section_header(
-        "Unified Signal \u2014 Normalized Convergence",
-        "Both signals normalized to [-1, 1] via z-score. Negative = bullish, Positive = bearish.",
+        "Unified Signal — Normalized Convergence",
+        "Z-scored to [−1, 1]. Combined signal (top) decomposed into constituent inputs (below).",
         icon="layers",
         accent="cyan",
     )
@@ -323,10 +370,10 @@ def render_convergence_tab(ts_filtered=None):
     fig.add_hline(y=0, line_color="rgba(255,255,255,0.06)", line_width=0.5, row=3, col=1)
 
     # ── Layout ────────────────────────────────────────────────────────
-    fig.update_layout(**chart_layout(height=820, show_legend=False))
+    fig.update_layout(**chart_layout(height=UI_CHART_HEIGHT_STACKED, show_legend=False))
     style_axes(fig, y_title="Normalized", y_range=unified_y, row=1, col=1)
     style_axes(fig, y_title="Conviction", y_range=conv_y, row=2, col=1)
     style_axes(fig, y_title="Avg Signal", y_range=nirnay_y, row=3, col=1)
 
     st.plotly_chart(fig, width='stretch', key="convergence_overlay")
-    st.caption(f"{len(aligned_dates)} trading days with overlapping data. All three rows share one x-axis.")
+    st.caption(f"{len(aligned_dates)} overlapping trading days")
