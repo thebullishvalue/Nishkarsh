@@ -94,7 +94,7 @@ def _get_sheet_url() -> str:
 def _render_header() -> None:
     render_header(
         title=f"{PRODUCT_NAME}",
-        tagline="Walk-Forward Valuation + Constituent Regime Intelligence  |  Quantitative Convergence"
+        tagline="Walk-Forward Valuation + Constituent Regime Intelligence  |  Unified Convergence"
     )
 
 
