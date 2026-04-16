@@ -208,6 +208,7 @@ def _render_footer() -> None:
 def main():
     st.set_page_config(
         page_title=f"NISHKARSH | Unified Convergence",
+        page_icon="📈",
         layout="wide", initial_sidebar_state="collapsed",
     )
     inject_css()
