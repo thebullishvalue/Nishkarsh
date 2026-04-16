@@ -3,7 +3,7 @@
    Extracted to theme.css for maintainability
    ================================================================ */
 
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Syne:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600;700&family=Syne:wght@400;500;600;700;800&family=Instrument+Serif:wght@400&family=IBM+Plex+Mono:wght@300;400;500;600&display=swap');
 
 /* ================================================================
    DESIGN TOKENS — Obsidian Quant
@@ -64,8 +64,9 @@
     --violet-glow: rgba(167, 139, 250, 0.2);
 
     /* ---- Type ---- */
-    --display: 'Syne', -apple-system, sans-serif;
-    --data: 'JetBrains Mono', 'Fira Code', monospace;
+    --display: 'Space Grotesk', 'Syne', -apple-system, sans-serif;
+    --display-serif: 'Instrument Serif', Georgia, serif;
+    --data: 'IBM Plex Mono', 'JetBrains Mono', 'Fira Code', monospace;
 
     /* ---- Radius ---- */
     --r-sm: 6px;
