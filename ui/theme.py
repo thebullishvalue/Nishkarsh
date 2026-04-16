@@ -37,7 +37,7 @@ from core.config import (
 )
 
 VERSION = "1.2.0"
-PRODUCT_NAME = "NISHKARSH"
+PRODUCT_NAME = "Nishkarsh"
 COMPANY = "@thebullishvalue"
 
 # Path to external CSS file
