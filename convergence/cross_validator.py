@@ -1,5 +1,5 @@
 """
-Nishkarsh v1.2.0 — CrossValidator: Cross-referencing Aarambha and Nirnay outputs.
+Nishkarsh v1.3.0 — CrossValidator: Cross-referencing Aarambha and Nirnay outputs.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
 CONVERGENCE — Adaptive-weighted composite of 4 dimensions: Direction, Breadth, Magnitude, Regime — with DDM.
