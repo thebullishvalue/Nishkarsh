@@ -1,5 +1,5 @@
 """
-Nishkarsh v1.2.0 — Nirnay Engine: Per-stock MSF + MMR with regime intelligence.
+Nishkarsh v1.3.0 — Nirnay Engine: Per-stock MSF + MMR with regime intelligence.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
 NIRNAY — Per-constituent MSF + MMR analysis with HMM/GARCH/CUSUM regime intelligence aggregation.
@@ -291,30 +291,50 @@ def run_full_analysis(
         1.0 - 0.1 * agree_strength,
     )
 
-    df["Unified"] = (unified_signal * multiplier).clip(-1.0, 1.0)
-    df["Unified_Osc"] = df["Unified"] * 10
-    df["MSF_Osc"] = df["MSF"] * 10
-    df["MMR_Osc"] = df["MMR"] * 10
-    df["MSF_Weight"] = msf_w_norm
-    df["MMR_Weight"] = mmr_w_norm
-    df["Agreement"] = agreement
+    # Compute all derived columns as local arrays first, then batch-assign in
+    # one shot via df.assign(...). Doing twelve sequential `df[col] = ...`
+    # assignments fragments the internal BlockManager (pandas PerformanceWarning).
+    unified = np.asarray((unified_signal * multiplier).clip(-1.0, 1.0))
+    unified_osc = unified * 10.0
+    msf_osc = df["MSF"].to_numpy() * 10.0
+    mmr_osc = df["MMR"].to_numpy() * 10.0
+    close_arr = df["Close"].to_numpy()
 
-    strong_agreement = agreement > 0.3
-    df["Buy_Signal"] = strong_agreement & (df["Unified_Osc"] < -5)
-    df["Sell_Signal"] = strong_agreement & (df["Unified_Osc"] > 5)
+    agreement_arr = agreement.to_numpy() if hasattr(agreement, "to_numpy") else np.asarray(agreement)
+    strong_agreement = agreement_arr > 0.3
+    buy_signal = strong_agreement & (unified_osc < -5)
+    sell_signal = strong_agreement & (unified_osc > 5)
 
-    # Divergence detection
-    osc_rising = df["Unified_Osc"] > df["Unified_Osc"].shift(1)
-    price_falling = df["Close"] < df["Close"].shift(1)
-    osc_falling = df["Unified_Osc"] < df["Unified_Osc"].shift(1)
-    price_rising = df["Close"] > df["Close"].shift(1)
-    df["Bullish_Div"] = osc_rising & price_falling & (df["Unified_Osc"] < -5)
-    df["Bearish_Div"] = osc_falling & price_rising & (df["Unified_Osc"] > 5)
+    # Divergence detection (shift(1) ↔ prepend NaN, drop last)
+    prev_unified_osc = np.concatenate(([np.nan], unified_osc[:-1]))
+    prev_close = np.concatenate(([np.nan], close_arr[:-1]))
+    with np.errstate(invalid="ignore"):  # NaN comparisons → False, silently
+        osc_rising = unified_osc > prev_unified_osc
+        price_falling = close_arr < prev_close
+        osc_falling = unified_osc < prev_unified_osc
+        price_rising = close_arr > prev_close
+    bullish_div = osc_rising & price_falling & (unified_osc < -5)
+    bearish_div = osc_falling & price_rising & (unified_osc > 5)
 
-    df["Condition"] = np.where(
-        df["Unified_Osc"] < -5,
+    condition = np.where(
+        unified_osc < -5,
         "Oversold",
-        np.where(df["Unified_Osc"] > 5, "Overbought", "Neutral"),
+        np.where(unified_osc > 5, "Overbought", "Neutral"),
+    )
+
+    df = df.assign(
+        Unified=unified,
+        Unified_Osc=unified_osc,
+        MSF_Osc=msf_osc,
+        MMR_Osc=mmr_osc,
+        MSF_Weight=msf_w_norm,
+        MMR_Weight=mmr_w_norm,
+        Agreement=agreement,
+        Buy_Signal=buy_signal,
+        Sell_Signal=sell_signal,
+        Bullish_Div=bullish_div,
+        Bearish_Div=bearish_div,
+        Condition=condition,
     )
 
     # Regime intelligence loop
@@ -372,12 +392,17 @@ def run_full_analysis(
         confidences.append(max(bull_p, bear_p, hmm_probs["NEUTRAL"]))
         signal_history.append(sig)
 
-    df["Regime"] = regimes
-    df["HMM_Bull"] = hmm_bulls
-    df["HMM_Bear"] = hmm_bears
-    df["Vol_Regime"] = vol_regimes
-    df["Change_Point"] = change_points
-    df["Confidence"] = confidences
+    # Batch-assign all six columns in one shot to avoid DataFrame fragmentation
+    # (each `df[col] = ...` triggers an internal block insert; doing six in a
+    # row makes pandas emit a PerformanceWarning).
+    df = df.assign(
+        Regime=regimes,
+        HMM_Bull=hmm_bulls,
+        HMM_Bear=hmm_bears,
+        Vol_Regime=vol_regimes,
+        Change_Point=change_points,
+        Confidence=confidences,
+    )
 
     return df, drivers
 

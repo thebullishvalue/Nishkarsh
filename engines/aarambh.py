@@ -1,5 +1,5 @@
 """
-Nishkarsh v1.2.0 — FairValueEngine: Walk-forward ensemble regression for Nifty 50 PE fair value.
+Nishkarsh v1.3.0 — FairValueEngine: Walk-forward ensemble regression for Nifty 50 PE fair value.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
 AARAMBH — Walk-forward ensemble regression on Nifty 50 PE ratio with conformal z-scores and DDM filtering.
