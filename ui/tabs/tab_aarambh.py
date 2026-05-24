@@ -360,7 +360,13 @@ def _render_model_quality_cards(model_stats, signal):
         )
     with q3:
         h = signal["hurst"]
-        h_label = "Mean-reverting (signals reliable)" if h < 0.40 else "Trending (signals lag)" if h > 0.60 else "Random walk (no edge)"
+        h_label = (
+            "Mean-reverting series. Signals reliable — price reverts to fair value reliably."
+            if h < 0.40
+            else "Trending series. Signals lag — price drifts away from fair value, reversal fails."
+            if h > 0.60
+            else "Random walk regime. No edge — price has no memory of past deviations to exploit."
+        )
         render_metric_card(
             "DFA Hurst", f"{h:.2f}", h_label,
             "success" if h < 0.40 else "danger" if h > 0.60 else "neutral",
@@ -572,7 +578,7 @@ def render_aarambh_tab(engine, ts_filtered, x_axis, x_title, signal, model_stats
     render_section_header(
         "Current Lookback States",
         "Per-window z-score and zone. Uniform zones = high conviction. Mixed = low conviction.",
-        icon="grid",
+        icon="layers",
     )
     _render_lookback_states(ts_filtered)
 

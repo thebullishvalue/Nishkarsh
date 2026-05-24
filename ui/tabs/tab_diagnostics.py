@@ -20,6 +20,8 @@ from core.config import (
     COLOR_CYAN,
     COLOR_MUTED,
 )
+from data.cache import all_caches
+from data.circuit_breaker import all_circuits, CircuitState
 
 # ── Alias colors for tab-local use ────────────────────────────────────────
 EMERALD = COLOR_GREEN
@@ -225,3 +227,81 @@ def render_diagnostics_tab(engine, ts_filtered, x_axis, x_title, signal, model_s
         fig_hmm.update_layout(**chart_layout(height=300))
         style_axes(fig_hmm, y_title="State Probability", x_title=x_title, y_range=[0, 1])
         st.plotly_chart(fig_hmm, width='stretch', key="diagnostics_hmm_plot")
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # 4. DATA LAYER HEALTH — cache hit rate + circuit breaker state per source
+    # ═══════════════════════════════════════════════════════════════════════
+    section_gap()
+    render_section_header(
+        "Data Layer Health",
+        "Two-tier cache statistics and circuit-breaker state for each external service.",
+        icon="database",
+        accent="emerald",
+    )
+
+    # ── Caches ────────────────────────────────────────────────────────────
+    cache_cols = st.columns(len(all_caches()))
+    for col, cache in zip(cache_cols, all_caches()):
+        s = cache.stats()
+        hit_pct = s["hit_rate"] * 100.0
+        total = s["hits"] + s["misses"]
+        # Color: green ≥70% hit rate, amber 30-70%, rose <30% (or no data)
+        if total == 0:
+            color_cls = "neutral"
+        elif hit_pct >= 70:
+            color_cls = "success"
+        elif hit_pct >= 30:
+            color_cls = "warning"
+        else:
+            color_cls = "danger"
+        last_fetch = s["last_fetch_time"]
+        if last_fetch:
+            mins = (pd.Timestamp.now().timestamp() - last_fetch) / 60.0
+            sub = f"{s['disk_entries']} disk · last fetch {mins:.0f}m ago"
+        else:
+            sub = f"{s['disk_entries']} disk · no fetch this run"
+        with col:
+            render_metric_card(
+                f"CACHE · {s['namespace'].upper()}",
+                f"{hit_pct:.0f}%" if total else "—",
+                sub,
+                color_cls,
+                tooltip=(
+                    f"{s['hits']} hits / {s['misses']} misses · "
+                    f"{s['stale_hits']} stale-fallback · "
+                    f"{s['writes']} writes · TTL {s['ttl_seconds']}s · version {s['version']}"
+                ),
+            )
+
+    # ── Circuit Breakers ──────────────────────────────────────────────────
+    circ_cols = st.columns(len(all_circuits()))
+    for col, cb in zip(circ_cols, all_circuits()):
+        st_dict = cb.get_state()
+        state = st_dict["state"]
+        if state == CircuitState.CLOSED.value:
+            color_cls = "success"
+            label_val = "CLOSED"
+        elif state == CircuitState.HALF_OPEN.value:
+            color_cls = "warning"
+            label_val = "HALF-OPEN"
+        else:
+            color_cls = "danger"
+            label_val = "OPEN"
+        last_fail = st_dict["last_failure"]
+        if last_fail:
+            mins = (pd.Timestamp.now().timestamp() - last_fail) / 60.0
+            sub = f"{st_dict['failure_count']} fails · last {mins:.0f}m ago"
+        else:
+            sub = f"{st_dict['success_count']} successful calls"
+        with col:
+            render_metric_card(
+                f"CIRCUIT · {st_dict['name'].upper()}",
+                label_val,
+                sub,
+                color_cls,
+                tooltip=(
+                    f"Threshold: {st_dict['failure_threshold']} failures · "
+                    f"Recovery: {st_dict['recovery_timeout']:.0f}s · "
+                    f"OPEN blocks calls; HALF-OPEN allows 1 test call after recovery timeout."
+                ),
+            )
