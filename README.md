@@ -9,7 +9,7 @@ agreement — and their disagreement — as the signal.
 
 | | |
 |---|---|
-| **Version** | 1.2.0 — *Obsidian Quant Terminal* |
+| **Version** | 1.3.0 — *Resilient Convergence* |
 | **Stack** | Python 3.12+ · Streamlit · scikit-learn · statsmodels · Plotly |
 | **Universe** | Nifty 50 (live, fetched from niftyindices.com) |
 | **License** | See `LICENSE.md` |
@@ -67,7 +67,7 @@ alone can produce this insight.
 
 - **Python 3.12** or higher
 - **pip** (bundled with Python)
-- Internet connection (for live data from niftyindices.com, yfinance, Stooq)
+- Internet connection (for live data from niftyindices.com and yfinance)
 
 ### 1. Install Dependencies
 
@@ -173,11 +173,13 @@ analytics/                     Pure functions. No state. No IO. Independently te
   structural_breaks.py         Bai-Perron multiple breakpoints (with fallback)
   utils.py                     sigmoid, zscore_clipped, ATR, soft bounds, zone classifier
 
-data/                          Sole IO boundary. Cached @ st.cache_data(ttl=3600).
-  fetcher.py                   Google Sheets, yfinance, Stooq — unified fetcher
+data/                          Sole IO boundary. Production-grade resilience.
+  fetcher.py                   Google Sheets + yfinance — circuit-protected, retry-wrapped
   constituents.py              Nifty 50 list (live from niftyindices.com + fallback)
   schema.py                    UnifiedDataset dataclass contracts
-  cache.py                     TTL-based memory and disk cache
+  cache.py                     Two-tier (memory + disk) TTL cache with versioned keys
+                               and last-good-snapshot fallback
+  circuit_breaker.py           CLOSED → OPEN → HALF_OPEN per-service + retry-with-backoff
 
 engines/                       Stateful orchestrators. Import from analytics/.
   aarambh.py                   FairValueEngine — top-down walk-forward ensemble regression
@@ -187,6 +189,8 @@ convergence/                   Consumes both engines. No IO. No Streamlit.
   cross_validator.py           4-dimension adaptive convergence scoring
   conviction_model.py          UnifiedConvictionModel — DDM on convergence scores
   divergence_detector.py       Cross-system divergence detection and classification
+  normalization.py             Shared z-score / align / classify math for the
+                               Convergence cards + Unified Signal plot (single source)
 
 ui/                            Rendering only. No math.
   theme.py                     Obsidian Quant Terminal CSS + Plotly defaults
@@ -214,9 +218,11 @@ Never upward, never sideways. `data/` is the only IO boundary. `ui/` reads from
 │  app.py — Streamlit Entry Point                                 │
 │  ┌───────────────────────────────────────────────────────────┐  │
 │  │  1. DATA ACQUISITION                                      │  │
-│  │     fetcher.py → Google Sheets + yfinance + Stooq         │  │
+│  │     fetcher.py → Google Sheets + yfinance (84 macro       │  │
+│  │       tickers, Sanket's Global Macro universe)            │  │
+│  │     circuit_breaker.py → per-service fault tolerance      │  │
+│  │     cache.py → two-tier TTL cache + stale-fallback        │  │
 │  │     constituents.py → Nifty 50 symbols                    │  │
-│  │     cache.py → TTL-based caching                          │  │
 │  └───────────────────────────────────────────────────────────┘  │
 │  ┌───────────────────────────────────────────────────────────┐  │
 │  │  2. AARAMBH — FairValueEngine                             │  │
@@ -317,9 +323,29 @@ Nishkarsh is honest about what it does not yet do:
 
 **Warning:** `No macro data available`
 
-- Stooq may block automated access during high-traffic periods.
-- The system falls back to Google Sheets bond yields if available.
+- The macro batch covers 84 tickers (66 Global Macro bond ETFs + 18 commodity/FX).
+  Individual ticker failures are tolerated; only a full-batch failure surfaces this warning.
+- The data layer falls back to the **last-good snapshot** (`cache.get_stale`) when a
+  fetch fails and the circuit is open — the UI keeps working through API outages.
 - Macro data is supplementary; the core pipeline still runs without it.
+
+### Circuit Breaker Open
+
+**Warning:** `Circuit 'yfinance' is OPEN — retry in 60s`
+
+- After 5 consecutive failures, a service's circuit opens and blocks calls for
+  60 seconds before allowing a single test request (HALF-OPEN state).
+- Check **Diagnostics → Data Layer Health** for current circuit state and
+  failure counts.
+- A successful test call closes the circuit automatically; no manual reset needed.
+
+### Stale Cache
+
+**Notice:** `Serving last-good snapshot`
+
+- This is intentional. When a fetch fails *and* the circuit is open, the data
+  layer returns the previous successful snapshot (no TTL check) so the UI
+  remains functional. The notice is informational, not an error.
 
 ### Slow Pipeline Execution
 
@@ -366,4 +392,4 @@ Mathematical primitives draw on:
 
 ---
 
-© 2026 Nishkarsh · [@thebullishvalue](https://twitter.com/thebullishvalue) · v1.2.0
+© 2026 Nishkarsh · [@thebullishvalue](https://twitter.com/thebullishvalue) · v1.3.0

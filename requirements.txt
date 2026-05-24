@@ -1,4 +1,4 @@
-# Nishkarsh v1.1.0 — Unified Nifty 50 Convergence Analysis System
+# Nishkarsh v1.3.0 — Unified Nifty 50 Convergence Analysis System
 # @thebullishvalue Product
 
 # Core Framework

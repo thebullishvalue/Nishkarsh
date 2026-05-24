@@ -1,5 +1,5 @@
 """
-Nishkarsh v1.2.0 — Main Streamlit entrypoint.
+Nishkarsh v1.3.0 — Main Streamlit entrypoint.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
 NISHKARSH — Two systems. One conclusion. Walk-forward valuation + constituent regime intelligence unified by adaptive convergence.
@@ -160,24 +160,30 @@ def _render_landing_page() -> None:
     """, unsafe_allow_html=True)
 
 
-def _render_primary_signal(nishkarsh_result, agreement, aarambh_signal) -> None:
-    """Render unified Nishkarsh convergence signal card."""
-    if nishkarsh_result:
-        conv = nishkarsh_result.nishkarsh_conviction
-        sig = nishkarsh_result.nishkarsh_signal
-        upper = nishkarsh_result.confidence_upper
-        lower = nishkarsh_result.confidence_lower
+def _render_primary_signal(nishkarsh_norm, agreement, aarambh_signal) -> None:
+    """Render the hero Nishkarsh convergence signal card.
+
+    The conviction value now reflects the **normalized convergence** shown in
+    the Unified Signal plot \u2014 i.e. the average of the two systems' z-scored
+    (and clipped) signals, in ``[-1, +1]``. The signal classification and the
+    interpretation paragraph follow the same scale.
+    """
+    if nishkarsh_norm:
+        conv = nishkarsh_norm["value"]
+        sig = nishkarsh_norm["signal"]
+        a_norm = nishkarsh_norm["aarambh_norm"]
+        n_norm = nishkarsh_norm["nirnay_norm"]
         agreement_text = "Strong" if agreement > 0.7 else "Moderate" if agreement > 0.5 else "Weak"
         explanation = (
-            f"Conviction {conv:+.0f} ({sig}). "
-            f"Confidence band: [{lower:.0f}, {upper:.0f}]. "
+            f"Normalized convergence {conv:+.2f} ({sig}). "
+            f"Aarambh contribution: {a_norm:+.2f}; Nirnay contribution: {n_norm:+.2f}. "
             f"Agreement: {agreement:.0%} ({agreement_text}). "
             f"{'Both systems aligned.' if agreement > 0.6 else 'Mixed signals \u2014 wait for clearer convergence.'}"
         )
     else:
-        conv = aarambh_signal.get("conviction_score", 0)
+        conv = float(aarambh_signal.get("conviction_score", 0))
         sig = aarambh_signal.get("signal", "HOLD")
-        explanation = f"Conviction: {conv:+.0f} ({sig})."
+        explanation = f"Conviction: {conv:+.2f} ({sig})."
 
     render_nishkarsh_signal_card(
         signal=sig,
@@ -698,6 +704,15 @@ def main():
         st.session_state["nishkarsh_result"] = results[-1] if results else None
         st.session_state["last_agreement"] = convergence_df["agreement_ratio"].iloc[-1] if not convergence_df.empty else 0
 
+        # ── Normalized Convergence ─────────────────────────────────────────
+        # Single source of truth in convergence/normalization.py — both the
+        # metric cards (here) and the Unified Signal plot (tab_convergence.py)
+        # call into the same module, so the values are guaranteed to match.
+        from convergence.normalization import compute_normalized_convergence
+        st.session_state["nishkarsh_conv_normalized"] = compute_normalized_convergence(
+            aarambh_ts, nirnay_daily
+        )
+
         console.item("Aarambh Engine", "✅ Cached")
         console.item("Nirnay Daily", f"✅ {len(nirnay_daily)} rows")
         console.item("Constituent Results", f"✅ {len(nirnay_constituent_dfs)} stocks")
@@ -740,11 +755,11 @@ def main():
     if "aarambh_ts" not in st.session_state:
         st.session_state["aarambh_ts"] = ts.copy()
 
-    nishkarsh_result = st.session_state.get("nishkarsh_result")
+    nishkarsh_norm = st.session_state.get("nishkarsh_conv_normalized")
     agreement = st.session_state.get("last_agreement", 0)
 
     # ─── Primary Signal (Above Tabs, Always Visible) ───────────────────────
-    _render_primary_signal(nishkarsh_result, agreement, signal)
+    _render_primary_signal(nishkarsh_norm, agreement, signal)
 
     # ─── Sidebar Discovery Hint ─────────────────────────────────────────
     st.markdown(

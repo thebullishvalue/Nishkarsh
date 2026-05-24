@@ -9,6 +9,119 @@ Sections used: **Added · Changed · Deprecated · Removed · Fixed · Security 
 
 ---
 
+## [1.3.0] — 2026-05-25 — *Resilient Convergence*
+
+Production-grade data layer, refactored convergence wiring, and full UI parity
+with the sibling **Pragyam** terminal.
+
+### Added
+- **Smart data layer.** Three production-grade primitives now sit between the
+  app and every external API:
+  - **Circuit breaker** (`data/circuit_breaker.py`) — `CLOSED → OPEN → HALF_OPEN`
+    state machine per service, thread-safe, with two module-level breakers
+    (`yfinance_circuit`, `sheets_circuit`) and a shared `all_circuits()` helper.
+  - **Retry-with-backoff** — exponential decorator (1s → 2s → 4s, capped at 60s,
+    max 3 retries), `@yfinance_circuit.protect` / `@RetryWithBackoff` stack.
+  - **Two-tier cache** (`data/cache.py`, revived from dead code) — memory + disk,
+    TTL expiry, **versioned keys** (`version="v1"` bump invalidates a namespace
+    atomically), `get_stale()` last-good-snapshot fallback used automatically
+    when a fetch fails *and* the circuit is open, full `stats()` snapshot
+    (hits / misses / stale_hits / writes / hit_rate / namespace / TTL).
+- **Data Layer Health diagnostics** — new section in the Diagnostics tab
+  showing per-namespace cache hit rate, disk entry count, last-fetch
+  timestamp, and per-service circuit-breaker state (CLOSED / HALF-OPEN / OPEN).
+- **Global Macro bond-ETF universe.** Ported from the sibling **Sanket**
+  project — 66 yfinance-available bond ETF tickers covering US Treasuries
+  (full curve + raw yields ^IRX / ^FVX / ^TNX / ^TYX), TIPS, aggregate
+  bonds, corporate IG / HY, mortgage-backed, municipals, developed-markets
+  sovereign (Europe + Asia-Pacific), India fixed income, and emerging
+  markets. Replaces the broken Stooq endpoints.
+- **Shared normalisation module** (`convergence/normalization.py`) — single
+  source of truth for the math behind the Convergence Analysis cards *and*
+  the Unified Signal plot. Five small pure functions:
+  `align_aarambh_nirnay`, `compute_norm_params`, `zscore_clip`,
+  `classify_normalized_signal`, `compute_normalized_convergence`.
+- **Pragyam-style UI uplift.** Full port of the *Obsidian Quant Terminal*
+  design system from Pragyam:
+  - `ui/theme.css` expanded from 47KB to 114KB — adds backdrop-filter glass,
+    SVG noise + grid underlays, 11+ entrance / shimmer / gradient-shift
+    keyframes, premium springy easing `cubic-bezier(0.16, 1, 0.3, 1)`,
+    expanded palette (`--orange`, `--slate-warm`, `--card-base` DRY tokens).
+  - `ui/components.py` expanded from 18KB to 27KB — new helpers
+    `get_icon(name, size, stroke_width)` (dynamic-sized SVG), `get_signal_badge`
+    (5-tier conviction badge), `render_conviction_signal`, `render_system_card`,
+    `render_kv_table`. Icon library grew from 18 → 34.
+  - Signal card design language unified with metric cards: corner accent dot
+    + bottom gradient sweep + tinted background gradients per variant.
+  - **Equal-height metric cards** — replaced the brittle `height: 100%` cascade
+    with a `flex: 1 1 auto` propagation that's robust against Streamlit DOM
+    changes (e.g. inserted `stVerticalBlock` wrappers).
+- **System info card** in the sidebar — adopts Pragyam's `system-spec` markup
+  with `.spec-row` / `.spec-label` / `.spec-value` flex layout (replaces the
+  earlier `info-box` paragraph version).
+
+### Changed
+- **Convergence Analysis cards re-wired to the Unified Signal plot.** The four
+  metric cards now show *exactly* what the Unified Signal plot rows display:
+  - **NISHKARSH CONVICTION** ← normalized convergence (`norm_avg[-1]` in
+    `[−1, +1]`), formatted `+0.42`. Signal classification re-thresholded for
+    the new scale (`±0.3` moderate, `±0.5` strong).
+  - **AARAMBH CONVICTION** ← `aarambh_ts["ConvictionRaw"]` (was
+    `ConvictionBounded`), formatted `+0.42`.
+  - **NIRNAY AVG SIGNAL** ← unchanged source, format upgraded from 1 to
+    2 decimal places.
+  - **AGREEMENT** ← unchanged.
+- **Hero signal card** (`_render_primary_signal` in `app.py`) now reads the
+  normalized value too. Interpretation paragraph rewritten to surface
+  Aarambh and Nirnay contributions independently.
+- **`render_nishkarsh_signal_card`** conviction format changed from `:+.0f`
+  to `:+.2f` to render the new `[−1, +1]` scale meaningfully.
+- **Sidebar masthead** typography tightened to match Pragyam exactly
+  (`1.35rem` brand size, `0.04em` letter-spacing, `<hr>` divider instead of
+  `.section-divider`).
+
+### Removed
+- **Stooq direct-yield endpoints.** Stooq started returning HTML error pages
+  instead of CSV in late 2025, causing a cascade of `ParserError` retry
+  loops. Replaced wholesale with the Global Macro yfinance universe.
+- **`MACRO_SYMBOLS_STOOQ`** and dead **`MACRO_COLUMN_MAP`** removed from
+  `core/config.py`.
+- **`stooq_circuit`** breaker removed — no longer reachable.
+
+### Fixed
+- **DataFrame fragmentation `PerformanceWarning`** in `engines/nirnay.py` —
+  two batches of column-by-column assignments (12 + 6 columns) collapsed into
+  single `df.assign(...)` calls. `Series.shift(1)` replaced with
+  `np.concatenate(([nan], arr[:-1]))` to keep behaviour byte-identical
+  (verified on a 5-element test sequence).
+- **Metric tooltip ring/dot misalignment** — the `::before` glow dot and the
+  `.metric-tooltip` help-circle were both anchored at `top: var(--sp-3); right:
+  var(--sp-3)`, but their centres differed by 3px each axis. Tooltip now has
+  explicit `width/height: 12px` and adjusted position so the ring is
+  concentric with the dot.
+- **Header text alignment** inside metric cards — the equal-height flex rule
+  was inadvertently forcing `flex-direction: column` on `<h4>`, which combined
+  with the inherited `align-items: center` to horizontally centre the label.
+  Narrowed the flex propagation selector to `div`-only descendants.
+- **Sanskrit name on the landing page** — `.premium-header h1::after` content
+  was still "प्रज्ञम" (left over from the Pragyam CSS port); corrected to
+  "निष्कर्ष".
+
+### Performance
+- **Macro fetch concurrency** is now driven by yfinance's internal `threads=True`
+  pool — one batch call for all 84 unique macro tickers (66 Global Macro +
+  18 commodities/FX), one circuit hit, no manual `ThreadPoolExecutor` loop.
+
+### Docs
+- Module headers and version constants unified at **`v1.3.0`** across all
+  35 Python files, `requirements.txt`, `README.md`, `LICENSE.md`, and the
+  CHANGELOG.
+- `data/cache.py`, `data/circuit_breaker.py`, and `convergence/normalization.py`
+  carry full module-level docstrings explaining the lifecycle, state machine,
+  and pipeline respectively.
+
+---
+
 ## [1.2.0] — 2026-04-13 — *Obsidian Quant Terminal*
 
 Full standardisation pass: module headers, documentation, and system integrity fixes.
