@@ -1,5 +1,5 @@
 """
-Nishkarsh v1.2.0 — Reusable UI components: metric cards, signal badges, headers, section headers.
+Nishkarsh v1.3.0 — Reusable UI components: metric cards, signal badges, headers, section headers.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
 UI — Obsidian Quant Terminal design language.
@@ -365,7 +365,7 @@ def render_nishkarsh_signal_card(
             <div class="label">NISHKARSH CONVERGENCE SIGNAL &#40;&#x0928;&#x093F;&#x0937;&#x094D;&#x0915;&#x0930;&#x094D;&#x0937;&#41;</div>
             <div class="value">{html_mod.escape(signal)}</div>
             <div class="subtext">
-                Score: <strong style="color:var(--ink-primary)">{conviction:+.0f}</strong> &bull;
+                Score: <strong style="color:var(--ink-primary)">{conviction:+.2f}</strong> &bull;
                 Agreement: <strong style="color:var(--ink-primary)">{agreement:.0%}</strong> ({html_mod.escape(agreement_text)})
             </div>
             <div style="margin-top:var(--sp-6);padding-top:var(--sp-5);border-top:1px solid var(--border);font-size:0.8rem;line-height:1.7;color:var(--ink-secondary);font-family:var(--data);">
