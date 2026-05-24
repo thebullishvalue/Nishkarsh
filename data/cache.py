@@ -2,98 +2,173 @@
 Nishkarsh v1.2.0 — TTL-based memory and disk cache for data fetching.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
-DATA — Provides a simple key-value cache with time-to-live expiry.
+A two-tier (memory + disk) cache with TTL expiry, versioned keys, and a
+last-good-snapshot fallback that returns expired data when a downstream fetch
+fails (so the UI can keep working even if APIs are down).
 
-Provides a simple key-value cache with time-to-live expiry.
-Cache keys are derived from function arguments via MD5 hashing.
+Cache keys are derived from a (version, *args) tuple via MD5 hashing; bumping
+the `version` parameter atomically invalidates a whole namespace.
 """
 
 from __future__ import annotations
 
 import hashlib
-import os
+import logging
 import pickle
+import threading
 import time
 from pathlib import Path
 from typing import Any
+
+log = logging.getLogger(__name__)
 
 DEFAULT_CACHE_DIR = Path.home() / ".cache" / "nishkarsh"
 DEFAULT_TTL_SECONDS = 3600  # 1 hour
 
 
 class Cache:
-    """Time-to-live cache with optional disk persistence.
+    """TTL cache with memory tier, disk tier, and stale-fallback.
 
-    Parameters
-    ----------
-    ttl : int
-        Cache entry lifetime in seconds.
-    disk_dir : Path | None
-        Directory for disk persistence. ``None`` disables disk caching.
+    Args:
+        ttl: entry lifetime in seconds (used for the "fresh" path).
+        disk_dir: directory for disk persistence. ``None`` → use default.
+        version: namespace tag baked into every key (bump to invalidate all).
+        namespace: optional sub-folder under ``disk_dir`` (e.g. "sheets").
     """
 
     def __init__(
         self,
         ttl: int = DEFAULT_TTL_SECONDS,
         disk_dir: Path | None = None,
+        version: str = "v1",
+        namespace: str = "",
     ) -> None:
         self.ttl = ttl
+        self.version = version
         self._memory: dict[str, tuple[Any, float]] = {}
-        self._disk_dir = disk_dir or DEFAULT_CACHE_DIR
-        if disk_dir is not None:
-            self._disk_dir.mkdir(parents=True, exist_ok=True)
+        base = disk_dir or DEFAULT_CACHE_DIR
+        self._disk_dir = base / namespace if namespace else base
+        self._disk_dir.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
 
-    @staticmethod
-    def _key(*args: Any) -> str:
-        """Derive an MD5 cache key from positional arguments."""
-        raw = "|".join(str(a) for a in args)
+        # Stats — exposed to the diagnostics view.
+        self.hits = 0
+        self.misses = 0
+        self.stale_hits = 0   # served from expired snapshot during failure
+        self.writes = 0
+        self.last_fetch_time: float | None = None
+
+    def _key(self, *args: Any) -> str:
+        raw = f"{self.version}|" + "|".join(str(a) for a in args)
         return hashlib.md5(raw.encode()).hexdigest()
 
     def get(self, *args: Any) -> Any | None:
-        """Retrieve a cached value, or ``None`` if expired/missing."""
+        """Return cached value if fresh (within TTL), else None."""
         key = self._key(*args)
-        if key in self._memory:
-            val, ts = self._memory[key]
-            if time.time() - ts < self.ttl:
-                return val
-            del self._memory[key]
+        with self._lock:
+            if key in self._memory:
+                val, ts = self._memory[key]
+                if time.time() - ts < self.ttl:
+                    self.hits += 1
+                    return val
+                del self._memory[key]
 
-        # Try disk
         disk_path = self._disk_dir / f"{key}.pkl"
         if disk_path.exists():
             try:
                 with open(disk_path, "rb") as f:
                     val, ts = pickle.load(f)
                 if time.time() - ts < self.ttl:
-                    self._memory[key] = (val, ts)
+                    with self._lock:
+                        self._memory[key] = (val, ts)
+                        self.hits += 1
                     return val
-                disk_path.unlink()
+            except Exception as e:
+                log.warning("Cache disk read failed for %s: %s", key[:8], e)
+
+        with self._lock:
+            self.misses += 1
+        return None
+
+    def get_stale(self, *args: Any) -> Any | None:
+        """Return last-good value even if expired. Used as fetch-failure fallback."""
+        key = self._key(*args)
+        if key in self._memory:
+            val, _ = self._memory[key]
+            with self._lock:
+                self.stale_hits += 1
+            return val
+        disk_path = self._disk_dir / f"{key}.pkl"
+        if disk_path.exists():
+            try:
+                with open(disk_path, "rb") as f:
+                    val, ts = pickle.load(f)
+                with self._lock:
+                    self._memory[key] = (val, ts)
+                    self.stale_hits += 1
+                return val
             except Exception:
                 pass
         return None
 
     def put(self, *args: Any, value: Any) -> None:
-        """Store a value in the cache with the current timestamp."""
+        """Store value with the current timestamp (both tiers)."""
         key = self._key(*args)
         ts = time.time()
-        self._memory[key] = (value, ts)
-
-        # Persist to disk
+        with self._lock:
+            self._memory[key] = (value, ts)
+            self.writes += 1
+            self.last_fetch_time = ts
         disk_path = self._disk_dir / f"{key}.pkl"
         try:
             with open(disk_path, "wb") as f:
                 pickle.dump((value, ts), f)
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("Cache disk write failed for %s: %s", key[:8], e)
 
     def invalidate(self, *args: Any) -> None:
-        """Remove a specific entry from both memory and disk."""
         key = self._key(*args)
-        self._memory.pop(key, None)
+        with self._lock:
+            self._memory.pop(key, None)
         disk_path = self._disk_dir / f"{key}.pkl"
         if disk_path.exists():
-            disk_path.unlink()
+            try:
+                disk_path.unlink()
+            except Exception:
+                pass
 
     def clear(self) -> None:
-        """Remove all entries from memory."""
-        self._memory.clear()
+        with self._lock:
+            self._memory.clear()
+
+    def stats(self) -> dict[str, Any]:
+        """Snapshot of cache stats for diagnostics."""
+        with self._lock:
+            total = self.hits + self.misses
+            hit_rate = (self.hits / total) if total else 0.0
+            return {
+                "namespace": self._disk_dir.name,
+                "version": self.version,
+                "ttl_seconds": self.ttl,
+                "hits": self.hits,
+                "misses": self.misses,
+                "stale_hits": self.stale_hits,
+                "writes": self.writes,
+                "hit_rate": hit_rate,
+                "memory_entries": len(self._memory),
+                "disk_entries": len(list(self._disk_dir.glob("*.pkl"))),
+                "last_fetch_time": self.last_fetch_time,
+            }
+
+
+# ── Module-level cache instances ─────────────────────────────────────────────
+# One per data source, so namespaces stay isolated and versions are independent.
+
+sheets_cache = Cache(ttl=3600, version="v1", namespace="sheets")
+ohlcv_cache  = Cache(ttl=3600, version="v1", namespace="ohlcv")
+macro_cache  = Cache(ttl=3600, version="v1", namespace="macro")
+
+
+def all_caches() -> list[Cache]:
+    """Return all module-level cache instances for diagnostics."""
+    return [sheets_cache, ohlcv_cache, macro_cache]

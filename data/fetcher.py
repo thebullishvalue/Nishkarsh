@@ -1,65 +1,93 @@
 """
-Nishkarsh v1.2.0 — Unified data fetcher: Google Sheets, yfinance, and Stooq sources.
+Nishkarsh v1.2.0 — Unified data fetcher: Google Sheets + yfinance.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
-DATA — Fetches Aarambh valuation data, Nifty 50 constituent OHLCV, and macro indicators.
+Each external call is wrapped with:
+  1. **Two-tier cache** (memory + disk, TTL + versioned keys) — `data/cache.py`
+  2. **Circuit breaker** (CLOSED → OPEN → HALF_OPEN per service) — `data/circuit_breaker.py`
+  3. **Retry-with-backoff** (1s → 2s → 4s) for transient failures
+  4. **Stale-fallback** — if a fetch fails AND the circuit is open, the last-good
+     snapshot is returned so the UI keeps working through API outages.
 
-Fetches Aarambh valuation data from Google Sheets, Nifty 50 constituent
-OHLCV from yfinance, and macro indicators from Stooq / Yahoo Finance.
-All data is merged into a ``UnifiedDataset`` with aligned date indices.
+Macro data is sourced from Sanket's Global Macro bond-ETF universe via yfinance
+(replaces the broken Stooq direct-yield endpoints, which started returning HTML
+error pages instead of CSV in late 2025).
 """
 
 from __future__ import annotations
 
-import io
 import logging
 import re
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
-import numpy as np
 import pandas as pd
-import requests
-import streamlit as st
 import yfinance as yf
 
 from core.config import (
-    MACRO_SYMBOLS_STOOQ,
+    GLOBAL_MACRO_MAP,
     MACRO_SYMBOLS_YF,
     DEFAULT_SHEET_URL,
 )
 from data.schema import UnifiedDataset
-from data.constituents import fetch_nifty50_constituents
+from data.cache import sheets_cache, ohlcv_cache, macro_cache
+from data.circuit_breaker import (
+    yfinance_circuit,
+    sheets_circuit,
+    CircuitBreakerError,
+    RetryWithBackoff,
+)
+
+log = logging.getLogger(__name__)
 
 
 # ─── Aarambh data (Google Sheets) ────────────────────────────────────────────
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@RetryWithBackoff(max_retries=2, initial_delay=1.0, backoff_factor=2.0)
+def _sheets_download(url: str) -> pd.DataFrame:
+    """Raw Google Sheets CSV fetch — circuit + retry protected internally."""
+    sheet_id_match = re.search(r"/d/([a-zA-Z0-9-_]+)", url)
+    if not sheet_id_match:
+        raise ValueError("Invalid Google Sheets URL")
+    sheet_id = sheet_id_match.group(1)
+    gid_match = re.search(r"gid=(\d+)", url)
+    gid = gid_match.group(1) if gid_match else "0"
+    csv_url = (
+        f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
+    )
+    df = pd.read_csv(csv_url)
+    if df is None or df.empty:
+        raise ValueError("Empty response from Google Sheets")
+    return df
+
+
 def load_google_sheet(url: str) -> tuple[pd.DataFrame | None, str | None]:
-    """Fetch valuation data from a Google Sheet with Streamlit native caching."""
+    """Fetch valuation data from a Google Sheet with cache + circuit + retry."""
     if not url:
         return None, "Empty URL"
+
+    cached = sheets_cache.get(url)
+    if cached is not None:
+        return cached, None
+
     try:
-        sheet_id_match = re.search(r"/d/([a-zA-Z0-9-_]+)", url)
-        if not sheet_id_match:
-            return None, "Invalid Google Sheets URL"
-        sheet_id = sheet_id_match.group(1)
-        gid_match = re.search(r"gid=(\d+)", url)
-        gid = gid_match.group(1) if gid_match else "0"
-        csv_url = (
-            f"https://docs.google.com/spreadsheets/d/"
-            f"{sheet_id}/export?format=csv&gid={gid}"
-        )
-        df = pd.read_csv(csv_url)
-        return (df, None) if df is not None and not df.empty else (None, "Failed to fetch data")
+        df = sheets_circuit.call(_sheets_download, url)
+        sheets_cache.put(url, value=df)
+        return df, None
+    except CircuitBreakerError as e:
+        # Circuit is open — try last-good snapshot before failing.
+        stale = sheets_cache.get_stale(url)
+        if stale is not None:
+            log.warning("Sheets circuit open, serving stale snapshot")
+            return stale, f"Serving last-good snapshot (circuit open): {e}"
+        return None, str(e)
     except Exception as e:
-        logging.error("Failed to load Google Sheets: %s", e)
+        log.error("Google Sheets fetch failed: %s", e)
+        stale = sheets_cache.get_stale(url)
+        if stale is not None:
+            return stale, f"Serving last-good snapshot: {e}"
         return None, str(e)
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def fetch_aarambh_data(
-    source: str = DEFAULT_SHEET_URL,
-) -> pd.DataFrame | None:
+def fetch_aarambh_data(source: str = DEFAULT_SHEET_URL) -> pd.DataFrame | None:
     """Legacy wrapper for component compatibility."""
     df, _ = load_google_sheet(source)
     return df
@@ -67,7 +95,26 @@ def fetch_aarambh_data(
 
 # ─── Constituent OHLCV (yfinance) ────────────────────────────────────────────
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@RetryWithBackoff(max_retries=2, initial_delay=1.5, backoff_factor=2.0)
+def _yfinance_batch_download(
+    symbols_tuple: tuple[str, ...],
+    start_yf: str,
+    end_yf: str,
+) -> pd.DataFrame:
+    """Single raw yfinance batch call — wrapped with retry."""
+    raw = yf.download(
+        list(symbols_tuple),
+        start=start_yf,
+        end=end_yf,
+        progress=False,
+        auto_adjust=True,
+        group_by="ticker",
+    )
+    if raw is None or (hasattr(raw, "empty") and raw.empty):
+        raise ValueError("Empty yfinance batch response")
+    return raw
+
+
 def fetch_constituent_ohlcv(
     symbols: list[str],
     start_date: pd.Timestamp | str,
@@ -75,28 +122,38 @@ def fetch_constituent_ohlcv(
 ) -> dict[str, pd.DataFrame]:
     """Batch-download OHLCV for Nifty 50 constituents via yfinance."""
     start_yf = str(pd.Timestamp(start_date).date())
-    # yfinance treats 'end' as exclusive, so add 1 day to include the last date
     end_yf = str(pd.Timestamp(end_date).date() + pd.Timedelta(days=1))
+    # Sorted tuple → deterministic cache key regardless of input order.
+    sym_key = tuple(sorted(symbols))
+
+    cached = ohlcv_cache.get(sym_key, start_yf, end_yf)
+    if cached is not None:
+        return cached
 
     try:
-        raw = yf.download(
-            symbols,
-            start=start_yf,
-            end=end_yf,
-            progress=False,
-            auto_adjust=True,
-            group_by="ticker",
+        raw = yfinance_circuit.call(
+            _yfinance_batch_download, sym_key, start_yf, end_yf
         )
-    except Exception as e:
-        logging.error("yfinance batch download failed: %s", e)
+    except CircuitBreakerError as e:
+        stale = ohlcv_cache.get_stale(sym_key, start_yf, end_yf)
+        if stale is not None:
+            log.warning("yfinance circuit open, serving stale OHLCV")
+            return stale
+        log.error("yfinance unavailable, no stale snapshot: %s", e)
         return {}
+    except Exception as e:
+        log.error("yfinance batch download failed: %s", e)
+        stale = ohlcv_cache.get_stale(sym_key, start_yf, end_yf)
+        return stale if stale is not None else {}
 
     result: dict[str, pd.DataFrame] = {}
     if isinstance(raw, pd.DataFrame) and isinstance(raw.columns, pd.MultiIndex):
         for sym in symbols:
             try:
                 sub = raw.xs(sym, level=0, axis=1)
-                close_col = sub.get("Close", sub.iloc[:, 0] if len(sub.columns) else pd.Series())
+                close_col = sub.get(
+                    "Close", sub.iloc[:, 0] if len(sub.columns) else pd.Series()
+                )
                 if not sub.empty and not close_col.isnull().all():
                     if isinstance(sub.columns, pd.MultiIndex):
                         sub.columns = [c[0] for c in sub.columns]
@@ -104,89 +161,107 @@ def fetch_constituent_ohlcv(
             except KeyError:
                 pass
 
+    if result:
+        ohlcv_cache.put(sym_key, start_yf, end_yf, value=result)
     return result
 
 
-# ─── Macro data (Stooq + Yahoo Finance) ──────────────────────────────────────
+# ─── Macro data (yfinance Global Macro universe + commodities/FX) ───────────
 
-def _fetch_stooq_symbol(
-    symbol: str, start_date: str, end_date: str
-) -> tuple[str, pd.Series | None]:
-    """Fetch a single yield series from Stooq via HTTP."""
+
+def _fetch_macro_live_uncached(start_str: str, end_str: str) -> pd.DataFrame:
+    """Single yfinance batch for the full macro universe (Sanket-style).
+
+    Combines Sanket's Global Macro bond ETFs (proxy for global yield dynamics)
+    with the existing commodity + FX symbols. One batch call, one circuit hit.
+    """
+    tickers = tuple(sorted(set(GLOBAL_MACRO_MAP.values()) | set(MACRO_SYMBOLS_YF.values())))
+    if not tickers:
+        return pd.DataFrame()
+
     try:
-        url = (
-            f"https://stooq.com/q/d/l/?s={symbol}"
-            f"&d1={start_date}&d2={end_date}"
+        yf_raw = yfinance_circuit.call(
+            _yfinance_batch_download_macro, tickers, start_str, end_str
         )
-        resp = requests.get(url, timeout=10)
-        if resp.status_code == 200 and len(resp.text) > 50:
-            df = pd.read_csv(io.StringIO(resp.text))
-            if "Date" in df.columns and "Close" in df.columns:
-                df["Date"] = pd.to_datetime(df["Date"])
-                return symbol, df.set_index("Date").sort_index()["Close"]
-    except Exception:
-        pass
-    return symbol, None
+    except CircuitBreakerError as e:
+        log.warning("yfinance macro fetch blocked by circuit: %s", e)
+        return pd.DataFrame()
+    except Exception as e:
+        log.warning("Yahoo Finance macro fetch failed: %s", e)
+        return pd.DataFrame()
+
+    if yf_raw is None or yf_raw.empty:
+        return pd.DataFrame()
+
+    if isinstance(yf_raw.columns, pd.MultiIndex):
+        if "Close" in yf_raw.columns.get_level_values(0):
+            combined = yf_raw["Close"]
+        elif "Adj Close" in yf_raw.columns.get_level_values(0):
+            combined = yf_raw["Adj Close"]
+        else:
+            combined = yf_raw
+    else:
+        combined = yf_raw
+
+    if combined.index.tz is not None:
+        combined.index = combined.index.tz_localize(None)
+    combined = combined.sort_index()
+
+    if not combined.empty:
+        combined = combined.ffill()
+    return combined
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@RetryWithBackoff(max_retries=2, initial_delay=1.5, backoff_factor=2.0)
+def _yfinance_batch_download_macro(
+    tickers_tuple: tuple[str, ...], start: str, end: str
+) -> pd.DataFrame:
+    """Macro yfinance batch fetch — separated to allow distinct retry budget.
+
+    Uses ``auto_adjust=True`` and ``threads=True`` (matching Sanket's
+    ``fetch_batch_data``) so the macro universe is pulled in parallel by
+    yfinance's internal pool.
+    """
+    raw = yf.download(
+        list(tickers_tuple),
+        start=start,
+        end=end,
+        progress=False,
+        auto_adjust=True,
+        threads=True,
+    )
+    if raw is None or (hasattr(raw, "empty") and raw.empty):
+        raise ValueError("Empty yfinance macro response")
+    return raw
+
+
 def fetch_macro_live(
     start_date: pd.Timestamp | str,
     end_date: pd.Timestamp | str,
 ) -> pd.DataFrame:
-    """Fetch macro indicators concurrently from Stooq and via batch yfinance."""
+    """Fetch macro indicators with cache + rate-limit + circuit + stale fallback."""
     start_str = str(pd.Timestamp(start_date).date())
-    # yfinance treats 'end' as exclusive, so add 1 day to include the last date
     end_str = str(pd.Timestamp(end_date).date() + pd.Timedelta(days=1))
 
-    # Stooq yields - fetched concurrently
-    stooq_parts: dict[str, pd.Series] = {}
-    with ThreadPoolExecutor(max_workers=6) as executor:
-        futures = {
-            executor.submit(_fetch_stooq_symbol, symbol, start_str, end_str): name
-            for name, symbol in MACRO_SYMBOLS_STOOQ.items()
-        }
-        for future in as_completed(futures):
-            symbol, series = future.result()
-            if series is not None and len(series) > 0:
-                stooq_parts[symbol] = series
+    cached = macro_cache.get(start_str, end_str)
+    if cached is not None:
+        return cached
 
-    stooq_df = pd.DataFrame(stooq_parts).sort_index() if stooq_parts else pd.DataFrame()
-
-    # Yahoo Finance macro (internally batched by yfinance)
-    yf_df = pd.DataFrame()
     try:
-        yf_tickers = list(MACRO_SYMBOLS_YF.values())
-        yf_raw = yf.download(
-            yf_tickers, start=start_str, end=end_str, progress=False
-        )
-        if not yf_raw.empty:
-            if isinstance(yf_raw.columns, pd.MultiIndex):
-                if "Close" in yf_raw.columns.get_level_values(0):
-                    yf_df = yf_raw["Close"]
-                elif "Adj Close" in yf_raw.columns.get_level_values(0):
-                    yf_df = yf_raw["Adj Close"]
-            else:
-                yf_df = yf_raw
-            if yf_df.index.tz is not None:
-                yf_df.index = yf_df.index.tz_localize(None)
-            yf_df = yf_df.sort_index()
+        combined = _fetch_macro_live_uncached(start_str, end_str)
     except Exception as e:
-        logging.warning("Yahoo Finance macro fetch failed: %s", e)
-
-    # Combine
-    if not stooq_df.empty and not yf_df.empty:
-        combined = pd.concat([stooq_df, yf_df], axis=1).sort_index()
-    elif not stooq_df.empty:
-        combined = stooq_df
-    elif not yf_df.empty:
-        combined = yf_df
-    else:
+        log.error("Macro fetch raised unexpectedly: %s", e)
         combined = pd.DataFrame()
 
     if not combined.empty:
-        combined = combined.ffill()
+        macro_cache.put(start_str, end_str, value=combined)
+        return combined
 
+    # Nothing came back this run — try a stale snapshot before returning empty.
+    stale = macro_cache.get_stale(start_str, end_str)
+    if stale is not None:
+        log.warning("Macro fetch empty; serving last-good snapshot")
+        return stale
     return combined
 
 
@@ -229,7 +304,6 @@ def build_unified_dataset(
             if c != target_col and c != date_col
         ]
 
-    # Clean Aarambh data
     cols = [target_col] + feature_cols
     if date_col and date_col in aarambh_df.columns:
         cols.append(date_col)
@@ -257,7 +331,11 @@ def build_unified_dataset(
     nifty50_pe = data[target_col].values
     predictors = data[feature_cols].copy()
 
-    macro_aligned = macro_df.reindex(date_index).ffill() if macro_df is not None and not macro_df.empty else pd.DataFrame()
+    macro_aligned = (
+        macro_df.reindex(date_index).ffill()
+        if macro_df is not None and not macro_df.empty
+        else pd.DataFrame()
+    )
 
     if constituents_ohlcv is None:
         constituents_ohlcv = {}
