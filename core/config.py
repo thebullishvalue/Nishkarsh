@@ -98,31 +98,94 @@ DIV_PERSISTENCE_THRESHOLD = 5
 
 # ─── Column Normalization ────────────────────────────────────────────────────
 
-MACRO_COLUMN_MAP = {
-    "10YINY.B": "IN10Y",
-    "2YINY.B": "IN02Y",
-    "30YINY.B": "IN30Y",
-    "10YUSY.B": "US10Y",
-    "2YUSY.B": "US02Y",
-    "30YUSY.B": "US30Y",
-    "5YUSY.B": "US05Y",
-    "10YUKY.B": "UK10Y",
-    "10YDEY.B": "DE10Y",
-    "10YCNY.B": "CN10Y",
-    "10YJPY.B": "JP10Y",
+# ─── Global Macro Bond ETF Universe ──────────────────────────────────────────
+# Adapted from Sanket — proxy for global yield dynamics via yfinance-available
+# bond ETFs. Replaces the (now-broken) Stooq direct yield endpoints.
+# Yields the same macro signal Stooq did, but via a stable yfinance source.
+
+GLOBAL_MACRO_MAP = {
+    # ── US Treasuries (Full Curve) ─────────────────────────────────────────
+    "US Treasury 1-3 Month":             "BIL",
+    "US Treasury Ultra-Short (0-1Y)":    "SHV",
+    "US Treasury 0-3 Month (SGOV)":      "SGOV",
+    "US Treasury Short (1-3Y)":          "SHY",
+    "US Treasury Short (1-3Y) Vanguard": "VGSH",
+    "US Treasury Intermediate (3-7Y)":   "IEI",
+    "US Treasury Intermediate (7-10Y)":  "IEF",
+    "US Treasury Intermediate Vanguard": "VGIT",
+    "US Treasury Long (10-20Y)":         "TLH",
+    "US Treasury Long (20Y+)":           "TLT",
+    "US Treasury Long Vanguard":         "VGLT",
+    "US Treasury Total Market":          "GOVT",
+    # ── Direct Yield Indices (Raw %) ───────────────────────────────────────
+    "US 13-Week T-Bill Yield":           "^IRX",
+    "US 5-Year Treasury Yield":          "^FVX",
+    "US 10-Year Treasury Yield":         "^TNX",
+    "US 30-Year Treasury Yield":         "^TYX",
+    # ── Inflation-Protected (TIPS) ─────────────────────────────────────────
+    "US TIPS Broad Market":              "TIP",
+    "US TIPS Short-Term":                "VTIP",
+    "International Govt Inflation-Linked": "WIP",
+    # ── Aggregate / Multi-Sector ───────────────────────────────────────────
+    "US Core Aggregate Bond":            "AGG",
+    "US Total Bond Market":              "BND",
+    "US Floating Rate Notes":            "FLOT",
+    "Global Aggregate Bond (Hedged)":    "BNDW",
+    "Total International Bond (ex-US)":  "BNDX",
+    # ── US Corporate: Investment Grade ─────────────────────────────────────
+    "US Corporate Investment Grade":     "LQD",
+    "US Corporate Short-Term (1-5Y)":    "VCSH",
+    "US Corporate Intermediate":         "VCIT",
+    "US Corporate Long-Term":            "VCLT",
+    # ── High Yield & Alternative Credit ────────────────────────────────────
+    "US High Yield Corporate":           "HYG",
+    "US High Yield Corporate SPDR":      "JNK",
+    "Global High Yield Bond":            "GHYG",
+    "Global Green Bond":                 "BGRN",
+    "Preferred Stock (Hybrid)":          "PFF",
+    "Convertible Bonds":                 "CWB",
+    "Fallen Angels (Recent HY)":         "FALN",
+    # ── Structured & Asset-Backed ──────────────────────────────────────────
+    "US Mortgage-Backed Securities":     "MBB",
+    "US Mortgage-Backed Vanguard":       "VMBS",
+    "US Senior Loan (Floating Rate)":    "BKLN",
+    # ── Municipal Bonds ────────────────────────────────────────────────────
+    "US Municipal National":             "MUB",
+    "US Municipal Tax-Exempt Vanguard":  "VTEB",
+    # ── Developed Markets Sovereign (Europe) ───────────────────────────────
+    "International Treasury (ex-US)":    "IGOV",
+    "International Treasury SPDR":       "BWX",
+    "International Corporate Bonds":     "IBND",
+    "Eurozone Government Bond":          "IEGA.L",
+    "Eurozone Corporate Bond (IG)":      "IEAC.L",
+    "Germany Govt Bonds (Bunds/Long)":   "BUNL.L",
+    "Germany Short-Term (Schatz)":       "SDEU.L",
+    "UK Gilts":                          "IGLT.L",
+    "UK Gilts (Inflation-Linked)":       "INXG.L",
+    "UK Corporate Bonds":                "SLXX.L",
+    # ── Developed Markets Sovereign (Asia-Pacific) ─────────────────────────
+    "Japan Government Bonds (Broad)":    "JGBL.L",
+    "Australia Government Bonds":        "VGB.AX",
+    "Canada Broad Aggregate Bond":       "XBB.TO",
+    # ── India Fixed Income ─────────────────────────────────────────────────
+    "India Gov Bonds (LSE Proxy)":       "IIND.L",
+    "India 8-13Y G-Sec":                 "LTGILTBEES.NS",
+    "India 5Y G-Sec":                    "GILT5YBEES.NS",
+    "India AAA PSU Bond (Bharat 2030)":  "EBBETF0430.NS",
+    "India Overnight Rate (Liquid)":     "LIQUIDBEES.NS",
+    # ── Emerging Markets ───────────────────────────────────────────────────
+    "EM Sovereign Debt (USD)":           "EMB",
+    "EM Sovereign Debt USD Invesco":     "PCY",
+    "EM Sovereign (Local Currency)":     "EMLC",
+    "EM High Yield Corporate":           "EMHY",
+    "China Government Bonds":            "CBON",
+    "China CNY Local Bonds":             "CNYB.L",
+    # ── Broad Duration Proxies ─────────────────────────────────────────────
+    "Short-Term Broad Bond":             "BSV",
+    "Long-Term Broad Bond":              "BLV",
 }
 
-# Nirnay Stooq symbols
-MACRO_SYMBOLS_STOOQ = {
-    "India 10Y": "10YINY.B",
-    "India 02Y": "2YINY.B",
-    "US 30Y": "30YUSY.B",
-    "US 10Y": "10YUSY.B",
-    "US 05Y": "5YUSY.B",
-    "US 02Y": "2YUSY.B",
-}
-
-# Nirnay Yahoo Finance macro symbols
+# Yahoo Finance macro symbols — commodities and FX, fetched alongside Global Macro.
 MACRO_SYMBOLS_YF = {
     # Major FX
     "Dollar Index": "DX-Y.NYB",
