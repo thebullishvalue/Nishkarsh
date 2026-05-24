@@ -1,5 +1,5 @@
 """
-Nishkarsh v1.2.0 — Diagnostics tab: ML diagnostics from both engines.
+Nishkarsh v1.3.0 — Diagnostics tab: ML diagnostics from both engines.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
 UI — Model quality assessment: feature importance, residuals, walk-forward performance.

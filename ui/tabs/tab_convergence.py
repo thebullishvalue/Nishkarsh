@@ -1,5 +1,5 @@
 """
-Nishkarsh v1.2.0 — Convergence tab: Unified signal with timeframe filtering.
+Nishkarsh v1.3.0 — Convergence tab: Unified signal with timeframe filtering.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
 UI — Cross-system convergence visualization: conviction scores with DDM filtering.
@@ -15,6 +15,11 @@ from plotly.subplots import make_subplots
 
 from ui.theme import chart_layout, style_axes
 from ui.components import render_metric_card, render_section_header, section_gap
+from convergence.normalization import (
+    align_aarambh_nirnay,
+    compute_norm_params,
+    zscore_clip,
+)
 from core.config import (
     COLOR_GREEN,
     COLOR_RED,
@@ -74,7 +79,7 @@ def _dynamic_range(vals, padding=0.15):
 def render_convergence_tab(ts_filtered=None):
     """Render the convergence dashboard tab with amber-gold system identity."""
     convergence_df = st.session_state.get("convergence_df")
-    nishkarsh_result = st.session_state.get("nishkarsh_result")
+    nishkarsh_norm = st.session_state.get("nishkarsh_conv_normalized")
     aarambh_ts = st.session_state.get("aarambh_ts")
     nirnay_daily = st.session_state.get("nirnay_daily")
 
@@ -100,24 +105,28 @@ def render_convergence_tab(ts_filtered=None):
     col1, col2, col3, col4 = st.columns(4, gap="small")
 
     with col1:
-        if nishkarsh_result:
-            score = nishkarsh_result.nishkarsh_conviction
-            sig = nishkarsh_result.nishkarsh_signal
+        # Mirrors Row 1 of the Unified Signal plot: average of normalized Aarambh
+        # + Nirnay z-scores, in [-1, +1].
+        if nishkarsh_norm:
+            score = nishkarsh_norm["value"]
+            sig = nishkarsh_norm["signal"]
             color = "success" if "BUY" in sig else "danger" if "SELL" in sig else "neutral"
-            render_metric_card("NISHKARSH CONVICTION", f"{score:+.0f}", sig, color, tooltip=TOOLTIPS["nishkarsh_conviction"])
+            render_metric_card("NISHKARSH CONVICTION", f"{score:+.2f}", sig, color, tooltip=TOOLTIPS["nishkarsh_conviction"])
         else:
             render_metric_card("NISHKARSH CONVICTION", "N/A", "Not computed", "neutral")
 
     with col2:
-        if aarambh_ts is not None and "ConvictionBounded" in aarambh_ts.columns:
-            a_conv = aarambh_ts["ConvictionBounded"].iloc[-1]
-            render_metric_card("AARAMBH CONVICTION", f"{a_conv:+.0f}", "Market breadth: oversold vs overbought",
+        # Mirrors Row 2 of the Unified Signal plot: raw Aarambh ConvictionRaw.
+        if aarambh_ts is not None and "ConvictionRaw" in aarambh_ts.columns:
+            a_conv = aarambh_ts["ConvictionRaw"].iloc[-1]
+            render_metric_card("AARAMBH CONVICTION", f"{a_conv:+.2f}", "Market breadth: oversold vs overbought",
                                "success" if a_conv < -UI_CONVICTION_MODERATE else "danger" if a_conv > UI_CONVICTION_MODERATE else "neutral",
                                tooltip=TOOLTIPS["aarambh_conviction"])
         else:
             render_metric_card("AARAMBH CONVICTION", "N/A", "", "neutral")
 
     with col3:
+        # Mirrors Row 3 of the Unified Signal plot: raw Nirnay Avg Signal.
         if nirnay_daily is not None and not nirnay_daily.empty:
             df_n = nirnay_daily[~nirnay_daily.index.duplicated(keep="last")]
             n_avg = 0.0
@@ -125,7 +134,7 @@ def render_convergence_tab(ts_filtered=None):
                 if candidate in df_n.columns:
                     n_avg = df_n[candidate].iloc[-1]
                     break
-            render_metric_card("NIRNAY AVG SIGNAL", f"{n_avg:.1f}", "Bottom-up constituent momentum",
+            render_metric_card("NIRNAY AVG SIGNAL", f"{n_avg:.2f}", "Bottom-up constituent momentum",
                                "success" if n_avg < UI_NIRNAY_BULLISH else "danger" if n_avg > UI_NIRNAY_BEARISH else "neutral",
                                tooltip=TOOLTIPS["nirnay_avg"])
         else:
@@ -158,88 +167,27 @@ def render_convergence_tab(ts_filtered=None):
     else:
         filtered_dates = None
 
-    # Align Aarambh + Nirnay on overlapping dates
-    aligned_dates = []
-    aligned_aarambh_raw = []
-    aligned_nirnay_raw = []
-
-    if nirnay_daily is not None and not nirnay_daily.empty:
-        df_n = nirnay_daily[~nirnay_daily.index.duplicated(keep="last")].copy()
-        col_map = {}
-        for c in df_n.columns:
-            cl = c.lower().replace("-", "_")
-            if cl in ("avg_signal", "avg_unified_osc"):
-                col_map[c] = "Avg_Signal"
-        df_n = df_n.rename(columns=col_map)
-        if "Avg_Signal" not in df_n.columns:
-            df_n["Avg_Signal"] = 0
-
-        nirnay_lookup = {}
-        for idx in df_n.index:
-            key = str(idx.date()) if hasattr(idx, "date") else str(pd.Timestamp(idx).date())
-            nirnay_lookup[key] = float(df_n.loc[idx].get("Avg_Signal", 0))
-
-        if aarambh_ts is not None and "ConvictionRaw" in aarambh_ts.columns:
-            aarambh_ts_dedup = aarambh_ts[~aarambh_ts.index.duplicated(keep="last")].copy()
-            date_series = aarambh_ts_dedup["Date"] if "Date" in aarambh_ts_dedup.columns else aarambh_ts_dedup.index
-
-            for d_val in date_series:
-                ts_key = str(d_val.date()) if hasattr(d_val, "date") else str(pd.Timestamp(d_val).date())
-                if filtered_dates is not None and ts_key not in filtered_dates:
-                    continue
-                if ts_key in nirnay_lookup:
-                    aligned_dates.append(d_val if hasattr(d_val, "date") else pd.Timestamp(ts_key))
-                    aligned_aarambh_raw.append(float(aarambh_ts_dedup.loc[d_val, "ConvictionRaw"]))
-                    aligned_nirnay_raw.append(nirnay_lookup[ts_key])
+    # Align Aarambh + Nirnay on overlapping dates (respecting the user's filter)
+    aligned_dates, aligned_aarambh_raw, aligned_nirnay_raw = align_aarambh_nirnay(
+        aarambh_ts, nirnay_daily, filter_dates=filtered_dates,
+    )
 
     if not aligned_dates:
         st.warning("No overlapping dates between Aarambh and Nirnay data sources.")
         return
 
-    # ── Normalization (computed from full dataset, applied to filtered) ──
+    # ── Normalization params: computed once from the FULL dataset, cached, ──
+    #    then applied to the filtered slice for plotting.
     if "conv_norm_params" not in st.session_state:
-        all_a, all_n = [], []
-        if nirnay_daily is not None and aarambh_ts is not None and "ConvictionRaw" in aarambh_ts.columns:
-            df_n2 = nirnay_daily[~nirnay_daily.index.duplicated(keep="last")].copy()
-            cm2 = {}
-            for c in df_n2.columns:
-                cl = c.lower().replace("-", "_")
-                if cl in ("avg_signal", "avg_unified_osc"):
-                    cm2[c] = "Avg_Signal"
-            df_n2 = df_n2.rename(columns=cm2)
-            if "Avg_Signal" not in df_n2.columns:
-                df_n2["Avg_Signal"] = 0
-            nl_full = {}
-            for idx in df_n2.index:
-                key = str(idx.date()) if hasattr(idx, "date") else str(pd.Timestamp(idx).date())
-                nl_full[key] = float(df_n2.loc[idx].get("Avg_Signal", 0))
-            at_full = aarambh_ts[~aarambh_ts.index.duplicated(keep="last")]
-            for ts_idx in at_full.index:
-                ts_key = str(ts_idx.date()) if hasattr(ts_idx, "date") else str(pd.Timestamp(ts_idx).date())
-                if ts_key in nl_full:
-                    all_a.append(float(at_full.loc[ts_idx, "ConvictionRaw"]))
-                    all_n.append(nl_full[ts_key])
-
-        arr_a_f = np.array(all_a, dtype=np.float64) if all_a else np.array([])
-        arr_n_f = np.array(all_n, dtype=np.float64) if all_n else np.array([])
-        st.session_state["conv_norm_params"] = {
-            "mu_a": np.mean(arr_a_f) if len(arr_a_f) > 0 else 0.0,
-            "sigma_a": max(np.std(arr_a_f), 1e-10) if len(arr_a_f) > 0 else 1.0,
-            "mu_n": np.mean(arr_n_f) if len(arr_n_f) > 0 else 0.0,
-            "sigma_n": max(np.std(arr_n_f), 1e-10) if len(arr_n_f) > 0 else 1.0,
-        }
+        _, full_a, full_n = align_aarambh_nirnay(aarambh_ts, nirnay_daily)
+        st.session_state["conv_norm_params"] = compute_norm_params(full_a, full_n)
 
     params = st.session_state["conv_norm_params"]
 
-    def _norm(x_raw, mu, sigma):
-        if sigma < 1e-10:
-            return np.zeros_like(x_raw)
-        return np.clip((x_raw - mu) / sigma / 3.0, -1.0, 1.0)
-
     arr_a = np.array(aligned_aarambh_raw, dtype=np.float64)
     arr_n = np.array(aligned_nirnay_raw, dtype=np.float64)
-    norm_a = _norm(arr_a, params["mu_a"], params["sigma_a"])
-    norm_n = _norm(arr_n, params["mu_n"], params["sigma_n"])
+    norm_a = zscore_clip(arr_a, params["mu_a"], params["sigma_a"])
+    norm_n = zscore_clip(arr_n, params["mu_n"], params["sigma_n"])
     norm_avg = (norm_a + norm_n) / 2.0
 
     # Pre-compute conviction raw for row 2

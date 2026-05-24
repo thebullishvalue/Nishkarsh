@@ -1,5 +1,5 @@
 """
-Nishkarsh v1.2.0 — Aarambh tab: Walk-forward valuation plots, conviction, breadth, model quality.
+Nishkarsh v1.3.0 — Aarambh tab: Walk-forward valuation plots, conviction, breadth, model quality.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
 UI — AARAMBH engine visualization: ensemble regression outputs with conformal bounds.

@@ -1,5 +1,5 @@
 """
-Nishkarsh v1.2.0 — Data tab: Merged data table + CSV export with search and filtering.
+Nishkarsh v1.3.0 — Data tab: Merged data table + CSV export with search and filtering.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
 UI — Raw data inspection: unified dataset viewer with export capability.
