@@ -1,5 +1,5 @@
 """
-Nishkarsh v1.2.0 — Unified data fetcher: Google Sheets + yfinance.
+Nishkarsh v1.3.0 — Unified data fetcher: Google Sheets + yfinance.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
 Each external call is wrapped with:

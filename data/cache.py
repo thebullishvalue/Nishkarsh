@@ -1,5 +1,5 @@
 """
-Nishkarsh v1.2.0 — TTL-based memory and disk cache for data fetching.
+Nishkarsh v1.3.0 — TTL-based memory and disk cache for data fetching.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
 A two-tier (memory + disk) cache with TTL expiry, versioned keys, and a
