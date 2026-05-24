@@ -1,5 +1,5 @@
 """
-Nishkarsh v1.2.0 — Configuration constants, thresholds, column mappings, and shared defaults.
+Nishkarsh v1.3.0 — Configuration constants, thresholds, column mappings, and shared defaults.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
 CORE — Merged from both Aarambh (correl.py) and Nirnay (nirnay_core.py) monoliths.
@@ -7,7 +7,7 @@ CORE — Merged from both Aarambh (correl.py) and Nirnay (nirnay_core.py) monoli
 
 # ─── Version / Product ───────────────────────────────────────────────────────
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 PRODUCT_NAME = "NISHKARSH"
 COMPANY = "@thebullishvalue"
 
