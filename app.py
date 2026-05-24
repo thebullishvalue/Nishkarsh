@@ -217,14 +217,14 @@ def main():
     with st.sidebar:
         st.markdown(
             """
-        <div style="text-align:center;padding:0.75rem 0 1rem 0;">
-            <div style="font-family:var(--display);font-size:1.5rem;font-weight:700;color:var(--amber);letter-spacing:0.06em;">NISHKARSH</div>
-            <div style="font-family:var(--data);color:var(--ink-tertiary);font-size:0.65rem;margin-top:0.2rem;letter-spacing:0.08em;text-transform:uppercase;">निष्कर्ष | Unified Convergence</div>
+        <div style="text-align:center;padding:0.5rem 0 0.75rem 0;">
+            <div style="font-family:var(--display);font-size:1.35rem;font-weight:700;color:var(--amber);letter-spacing:0.04em;">NISHKARSH</div>
+            <div style="font-family:var(--data);color:var(--ink-tertiary);font-size:0.6rem;margin-top:0.1rem;letter-spacing:0.06em;text-transform:uppercase;">निष्कर्ष | Unified Convergence</div>
         </div>
+        <hr style="margin: 0.5rem 0; opacity: 0.1;">
         """,
             unsafe_allow_html=True,
         )
-        st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
         st.markdown('<div class="sidebar-title">Data Source</div>', unsafe_allow_html=True)
         data_source = st.radio(
@@ -372,16 +372,15 @@ def main():
                 st.session_state.pop("nishkarsh_result", None)
                 st.rerun()
 
-        st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-        st.markdown(f"""
-        <div class='info-box'>
-            <p style='font-size:0.75rem;margin:0;color:var(--ink-tertiary);line-height:1.6;'>
-                <strong style="color:var(--ink-secondary);">Version:</strong> {VERSION}<br>
-                <strong style="color:var(--ink-secondary);">Engine:</strong> Nishkarsh Convergence<br>
-                <strong style="color:var(--ink-secondary);">Data:</strong> Google Sheets + yfinance
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown('<hr style="margin: 3.00rem 0; opacity: 0.05;">', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="system-spec">'
+            f'<div class="spec-row"><span class="spec-label">Version</span><span class="spec-value">{VERSION}</span></div>'
+            '<div class="spec-row"><span class="spec-label">Engine</span><span class="spec-value">Convergence</span></div>'
+            '<div class="spec-row"><span class="spec-label">Data</span><span class="spec-value">Sheets + yfinance</span></div>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
 
     # ─── Resolve active configuration ──────────────────────────────────────
     active_target = st.session_state.get("active_target", target_col)
