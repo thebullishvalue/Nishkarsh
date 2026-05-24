@@ -34,7 +34,36 @@ ICONS = {
     "sun":        '<svg aria-label="Light mode icon" role="img" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>',
     "moon":       '<svg aria-label="Dark mode icon" role="img" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>',
     "download":   '<svg aria-label="Download icon" role="img" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
+    "briefcase":  '<svg aria-label="Portfolio icon" role="img" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>',
+    "compass":    '<svg aria-label="Regime icon" role="img" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>',
+    "rocket":     '<svg aria-label="Strong Bull icon" role="img" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-3 11a22.35 22.35 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4.5c1.62-1.63 5-2.5 5-2.5"/><path d="M12 15v5s3.03-.55 4.5-2c1.63-1.62 2.5-5 2.5-5"/></svg>',
+    "trending-up": '<svg aria-label="Bull icon" role="img" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>',
+    "trending-down": '<svg aria-label="Bear icon" role="img" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 17 13.5 8.5 8.5 13.5 2 7"/><polyline points="16 17 22 17 22 11"/></svg>',
+    "arrow-up-right": '<svg aria-label="Weak Bull icon" role="img" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="7" y1="17" x2="17" y2="7"/><polyline points="7 7 17 7 17 17"/></svg>',
+    "arrow-down-right": '<svg aria-label="Weak Bear icon" role="img" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="7" y1="7" x2="17" y2="17"/><polyline points="17 7 17 17 7 17"/></svg>',
+    "arrow-up":   '<svg aria-label="Up" role="img" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>',
+    "arrow-down": '<svg aria-label="Down" role="img" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>',
+    "move-horizontal": '<svg aria-label="Chop icon" role="img" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 8 22 12 18 16"/><polyline points="6 8 2 12 6 16"/><line x1="2" y1="12" x2="22" y2="12"/></svg>',
+    "alert-triangle": '<svg aria-label="Crisis icon" role="img" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+    "help-circle": '<svg aria-label="Unknown icon" role="img" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+    "circle":     '<svg aria-label="Circle" role="img" viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="12" cy="12" r="10"/></svg>',
+    "check-circle": '<svg aria-label="Check" role="img" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>',
+    "scale":      '<svg aria-label="Weighting icon" role="img" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m16 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"/><path d="m2 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"/><path d="M7 21h10"/><path d="M12 3v18"/><path d="M3 7h18"/></svg>',
 }
+
+
+def get_icon(name: str, size: int = 18, stroke_width: float = 1.5) -> str:
+    """Return an SVG icon string with custom size and stroke width."""
+    import re
+    base_svg = ICONS.get(name, ICONS["chart"])
+
+    # Clean existing attributes to avoid duplicates or stale values
+    base_svg = re.sub(r'\s+width="[^"]*"', '', base_svg)
+    base_svg = re.sub(r'\s+height="[^"]*"', '', base_svg)
+    base_svg = re.sub(r'\s+stroke-width="[^"]*"', '', base_svg)
+
+    # Inject standardized attributes
+    return base_svg.replace('<svg', f'<svg width="{size}" height="{size}" stroke-width="{stroke_width}"')
 
 
 def render_section_header(
@@ -51,7 +80,7 @@ def render_section_header(
         icon: Key from ICONS dict.
         accent: CSS color class — "", "cyan", "emerald", "violet", "rose".
     """
-    svg = ICONS.get(icon, ICONS["chart"])
+    svg = get_icon(icon, size=16, stroke_width=1.8)
     icon_class = f"icon {accent}" if accent else "icon"
     hdr_class = f"section-hdr {accent}" if accent else "section-hdr"
     desc_html = f'<div class="desc">{html_mod.escape(description)}</div>' if description else ""
@@ -78,6 +107,7 @@ def render_metric_card(
     subtext: str = "",
     color_class: str = "neutral",
     tooltip: str = "",
+    icon: str = "",
 ) -> None:
     """Render a terminal-styled metric card with optional tooltip.
 
@@ -87,6 +117,7 @@ def render_metric_card(
         subtext: Optional secondary description below value.
         color_class: Semantic color — "neutral", "success", "danger", "warning", "info", "violet".
         tooltip: Optional hover explanation text.
+        icon: Optional ICONS key — small icon inlined before the label.
     """
     tooltip_html = ""
     if tooltip:
@@ -99,13 +130,109 @@ def render_metric_card(
             f'</div>'
         )
 
+    sub_metric_html = f'<div class="sub-metric">{html_mod.escape(subtext)}</div>' if subtext else ""
+    icon_html = f'<span class="card-icon">{get_icon(icon, size=12, stroke_width=2)}</span> ' if icon else ""
     st.markdown(
         f'<div class="metric-card {html_mod.escape(color_class)}">'
-        f"<h4>{html_mod.escape(label)}</h4>"
+        f"<h4>{icon_html}{html_mod.escape(label)}</h4>"
         f"<h2>{html_mod.escape(value)}</h2>"
-        f'{f"<div class=\"sub-metric\">{html_mod.escape(subtext)}</div>" if subtext else ""}'
+        f"{sub_metric_html}"
         f"{tooltip_html}"
         f"</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def get_signal_badge(score: float, compact: bool = False) -> str:
+    """Return HTML string for a signal badge based on a score (-2 to 2)."""
+    if score >= 1.5:
+        color, bg, text = "#2DD4A8", "rgba(45, 212, 168, 0.15)", "Bullish+"
+    elif score >= 0.5:
+        color, bg, text = "#34D399", "rgba(52, 211, 153, 0.1)", "Bullish"
+    elif score <= -1.5:
+        color, bg, text = "#E8555A", "rgba(232, 85, 90, 0.15)", "Bearish+"
+    elif score <= -0.5:
+        color, bg, text = "#FB7185", "rgba(251, 113, 133, 0.1)", "Bearish"
+    else:
+        color, bg, text = "#8B7E6A", "rgba(139, 126, 106, 0.1)", "Neutral"
+
+    if compact:
+        return f'<span style="color:{color}; font-family:\'Space Grotesk\', sans-serif; font-weight:700;">{score:+.0f}</span>'
+
+    return f'<span style="color:{color}; background:{bg}; padding:2px 6px; border-radius:4px; font-size:10px; font-weight:600; border:1px solid {color}33;">{text}</span>'
+
+
+def render_conviction_signal(
+    symbol: str,
+    conviction: float,
+    rsi: str = "—",
+    osc: str = "—",
+    zscore: str = "—",
+    ma: str = "—",
+) -> None:
+    """Render a conviction signal row for position guide.
+
+    Args:
+        symbol: Stock symbol.
+        conviction: Conviction score (0-100).
+        rsi: RSI value formatted.
+        osc: Oscillator value formatted.
+        zscore: Z-score value formatted.
+        ma: Moving average alignment formatted.
+    """
+    if conviction >= 65:
+        signal_class = "buy"
+        signal_text = "Strong Buy"
+        icon_html = get_icon("check-circle", size=14, stroke_width=2.2)
+        conviction_bar_width = min(100, conviction)
+        conviction_bar_color = "var(--emerald)"
+    elif conviction >= 50:
+        signal_class = "buy"
+        signal_text = "Buy"
+        icon_html = get_icon("circle", size=11)
+        conviction_bar_width = min(100, conviction)
+        conviction_bar_color = "var(--emerald-bright)"
+    elif conviction >= 35:
+        signal_class = "hold"
+        signal_text = "Hold"
+        icon_html = get_icon("circle", size=11)
+        conviction_bar_width = min(100, conviction)
+        conviction_bar_color = "var(--amber)"
+    else:
+        signal_class = "sell"
+        signal_text = "Caution"
+        icon_html = get_icon("alert-triangle", size=13, stroke_width=1.8)
+        conviction_bar_width = min(100, conviction)
+        conviction_bar_color = "var(--rose)"
+
+    st.markdown(
+        f"""
+        <div class="signal-row" style="display:flex; align-items:center; gap:0.75rem; padding:0.75rem 0; border-bottom:1px solid var(--border-subtle); position:relative; overflow:hidden;">
+            <div style="position:absolute; left:0; top:0; bottom:0; width:{conviction_bar_width} * 0.3%; background: linear-gradient(90deg, {conviction_bar_color}08, {conviction_bar_color}03); pointer-events:none;"></div>
+            <div style="flex:1; font-family:var(--data); font-weight:600; color:var(--ink-primary); position:relative; z-index:1;">{html_mod.escape(symbol)}</div>
+            <div style="font-family:var(--data); font-size:0.7rem; color:var(--ink-tertiary); position:relative; z-index:1;">
+                <span style="color:var(--ink-secondary); font-weight:500;">RSI</span> {rsi}
+            </div>
+            <div style="font-family:var(--data); font-size:0.7rem; color:var(--ink-tertiary); position:relative; z-index:1;">
+                <span style="color:var(--ink-secondary); font-weight:500;">Osc</span> {osc}
+            </div>
+            <div style="font-family:var(--data); font-size:0.7rem; color:var(--ink-tertiary); position:relative; z-index:1;">
+                <span style="color:var(--ink-secondary); font-weight:500;">Z</span> {zscore}
+            </div>
+            <div style="font-family:var(--data); font-size:0.7rem; color:var(--ink-tertiary); position:relative; z-index:1;">
+                <span style="color:var(--ink-secondary); font-weight:500;">MA</span> {ma}
+            </div>
+            <div style="position:relative; z-index:1;">
+                <div style="width:60px; height:4px; background:var(--bg-elevated); border-radius:2px; overflow:hidden;">
+                    <div style="width:{conviction_bar_width}%; height:100%; background:{conviction_bar_color}; border-radius:2px; transition:width 0.6s cubic-bezier(0.16, 1, 0.3, 1);"></div>
+                </div>
+            </div>
+            <div style="font-family:var(--data); font-size:0.75rem; font-weight:700; color:var(--ink-primary); min-width:40px; text-align:right; position:relative; z-index:1;">{conviction}</div>
+            <div class="signal-pill {signal_class}" style="display:inline-flex; align-items:center; gap:0.4rem; padding:0.3rem 0.75rem; border-radius:20px; font-size:0.72rem; font-weight:600; position:relative; z-index:1;">
+                {icon_html} {signal_text}
+            </div>
+        </div>
+        """,
         unsafe_allow_html=True,
     )
 
@@ -159,6 +286,43 @@ def render_info_box(title: str, content: str, color: str = "cyan") -> None:
     )
 
 
+def render_system_card(
+    title: str,
+    description: str,
+    specs: list[tuple[str, str]],
+    card_class: str = "aarambh",
+    icon: str = "briefcase"
+) -> None:
+    """Render a system feature card for landing page.
+
+    Args:
+        title: Card title.
+        description: Card description.
+        specs: List of (label, value) tuples for specifications.
+        card_class: CSS class — "aarambh", "nirnay", "convergence" (or Pragyam variants).
+        icon: Key from ICONS dict.
+    """
+    spec_html = "".join(
+        f'<span>{html_mod.escape(label)}</span> {html_mod.escape(value)}<br>'
+        for label, value in specs
+    )
+    svg = get_icon(icon, size=16, stroke_width=1.8)
+
+    st.markdown(
+        f"""
+        <div class='system-card {html_mod.escape(card_class)}'>
+            <h3>
+                {svg}
+                {html_mod.escape(title)}
+            </h3>
+            <p>{html_mod.escape(description)}</p>
+            <div class='spec'>{spec_html}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_interpretation_card(
     title: str,
     body: str,
@@ -168,13 +332,13 @@ def render_interpretation_card(
 
     Args:
         title: Short state label (e.g. "NEUTRAL", "STRONG OVERSOLD").
-        body: One-paragraph explanation.
+        body: One-paragraph explanation (raw HTML allowed — caller is trusted).
         color: Semantic color — "neutral", "success", "danger", "warning", "info".
     """
     st.markdown(
         f'<div class="interp-card {html_mod.escape(color)}">'
         f'<div class="interp-title">{html_mod.escape(title)}</div>'
-        f'<div class="interp-body">{html_mod.escape(body)}</div>'
+        f'<div class="interp-body">{body}</div>'
         f'</div>',
         unsafe_allow_html=True,
     )
@@ -399,3 +563,39 @@ def render_export_button_row(
         mime=mime,
         key=f"export_{file_name}",
     )
+
+
+def render_kv_table(data: dict[str, str], header_left: str = "Setting", header_right: str = "Value") -> None:
+    """Render a professional KV table in Obsidian Quant style.
+
+    Args:
+        data: Dictionary of keys and values to display.
+        header_left: Header for the left column.
+        header_right: Header for the right column.
+    """
+    rows = []
+    for k, v in data.items():
+        rows.append(
+            f'<tr>'
+            f'<td class="key">{html_mod.escape(k)}</td>'
+            f'<td class="value">{html_mod.escape(v)}</td>'
+            f'</tr>'
+        )
+
+    rows_html = "\n".join(rows)
+    table_html = f'''
+    <div class="kv-table-container">
+        <table class="kv-table">
+            <thead>
+                <tr>
+                    <th>{html_mod.escape(header_left)}</th>
+                    <th style="text-align:right;">{html_mod.escape(header_right)}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {rows_html}
+            </tbody>
+        </table>
+    </div>
+    '''
+    st.markdown(table_html, unsafe_allow_html=True)
