@@ -1,5 +1,5 @@
 """
-Nishkarsh v1.2.0 — Regime detection: Kalman Filter, HMM, GARCH, CUSUM.
+Nishkarsh v1.3.0 — Regime detection: Kalman Filter, HMM, GARCH, CUSUM.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
 ANALYTICS — Multi-model regime classification for constituent-level analysis.

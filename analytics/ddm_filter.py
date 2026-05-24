@@ -1,5 +1,5 @@
 """
-Nishkarsh v1.2.0 — Drift-Diffusion Model (DDM) filter with mean-reverting variance.
+Nishkarsh v1.3.0 — Drift-Diffusion Model (DDM) filter with mean-reverting variance.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
 ANALYTICS — Bounded signal filtering with confidence bands via stochastic DDM.
