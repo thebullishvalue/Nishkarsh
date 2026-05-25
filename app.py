@@ -457,7 +457,7 @@ def main():
         console.item("Count", len(constituents))
         console.item("Symbols", f"{constituents[0]}, {constituents[1]}, {constituents[2]}...")
         console.success(f"Fetched {len(constituents)} Nifty 50 constituents")
-        progress_bar(progress_container, 5, "Fetching macro data", "Stooq yields · Yahoo Finance FX · Commodities")
+        progress_bar(progress_container, 5, "Fetching macro data", "yfinance · Global Macro ETFs · FX · Commodities")
 
         console.section("Macro Data")
         end_date = pd.Timestamp.today()
@@ -671,10 +671,23 @@ def main():
         )
         if results:
             latest = results[-1]
-            console.item("Nishkarsh Conviction", f"{latest.nishkarsh_conviction:+.0f}")
-            console.item("Signal", latest.nishkarsh_signal)
-            console.item("Band", f"[{latest.confidence_lower:.0f}, {latest.confidence_upper:.0f}]")
+            # DDM-filtered conviction model output — internal scale [-100, +100]
+            console.item("DDM Conviction", f"{latest.nishkarsh_conviction:+.0f}")
+            console.item("DDM Signal", latest.nishkarsh_signal)
+            console.item("DDM Band", f"[{latest.confidence_lower:.0f}, {latest.confidence_upper:.0f}]")
         console.success(f"Unified conviction: {len(results)} scores computed")
+
+        # Normalized convergence — the value the UI metric cards and hero
+        # signal card display. Computed from the same alignment pipeline that
+        # drives the Unified Signal plot.
+        from convergence.normalization import compute_normalized_convergence
+        _nishkarsh_norm = compute_normalized_convergence(aarambh_ts, nirnay_daily)
+        if _nishkarsh_norm:
+            console.section("Normalized Convergence (UI display)")
+            console.item("Conviction", f"{_nishkarsh_norm['value']:+.2f}")
+            console.item("Signal", _nishkarsh_norm['signal'])
+            console.item("  Aarambh contribution", f"{_nishkarsh_norm['aarambh_norm']:+.2f}")
+            console.item("  Nirnay contribution",  f"{_nishkarsh_norm['nirnay_norm']:+.2f}")
 
         console.section("Divergence Detection")
         progress_bar(progress_container, 88, "Detecting divergences", "Cross-system divergence analysis")
@@ -704,20 +717,23 @@ def main():
         st.session_state["nishkarsh_result"] = results[-1] if results else None
         st.session_state["last_agreement"] = convergence_df["agreement_ratio"].iloc[-1] if not convergence_df.empty else 0
 
-        # ── Normalized Convergence ─────────────────────────────────────────
-        # Single source of truth in convergence/normalization.py — both the
-        # metric cards (here) and the Unified Signal plot (tab_convergence.py)
-        # call into the same module, so the values are guaranteed to match.
-        from convergence.normalization import compute_normalized_convergence
-        st.session_state["nishkarsh_conv_normalized"] = compute_normalized_convergence(
-            aarambh_ts, nirnay_daily
+        # Reuse the normalized convergence computed in the Conviction Model
+        # section above — single source of truth from convergence/normalization.py,
+        # shared with the metric cards and the Unified Signal plot.
+        st.session_state["nishkarsh_conv_normalized"] = _nishkarsh_norm
+
+        # Display signal = what the UI cards show (normalized if available,
+        # else fall back to the DDM-derived signal).
+        display_signal = (
+            _nishkarsh_norm["signal"] if _nishkarsh_norm
+            else (results[-1].nishkarsh_signal if results else "N/A")
         )
 
         console.item("Aarambh Engine", "✅ Cached")
         console.item("Nirnay Daily", f"✅ {len(nirnay_daily)} rows")
         console.item("Constituent Results", f"✅ {len(nirnay_constituent_dfs)} stocks")
         console.item("Convergence DF", f"✅ {len(convergence_df)} rows")
-        console.item("Nishkarsh Result", f"✅ {results[-1].nishkarsh_signal if results else 'N/A'}")
+        console.item("Nishkarsh Result", f"✅ {display_signal}")
 
         console.end_phase("FINAL ASSEMBLY")
 
@@ -737,7 +753,7 @@ def main():
         console.line('═', 70)
         console._write()
 
-        progress_bar(progress_container, 100, "Analysis complete", f"Nishkarsh: {results[-1].nishkarsh_signal if results else 'N/A'}")
+        progress_bar(progress_container, 100, "Analysis complete", f"Nishkarsh: {display_signal}")
         time.sleep(0.25)
         progress_container.empty()
         st.session_state["run_requested"] = True
