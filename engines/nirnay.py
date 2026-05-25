@@ -291,9 +291,11 @@ def run_full_analysis(
         1.0 - 0.1 * agree_strength,
     )
 
-    # Compute all derived columns as local arrays first, then batch-assign in
-    # one shot via df.assign(...). Doing twelve sequential `df[col] = ...`
-    # assignments fragments the internal BlockManager (pandas PerformanceWarning).
+    # Compute all derived columns as local arrays first, then join in ONE
+    # block-build via pd.concat. Note: df.assign() also triggers the
+    # PerformanceWarning on newer pandas because internally it does a per-kwarg
+    # column insert loop. pd.concat with a fresh inner DataFrame builds the
+    # twelve new columns as a single block and merges them in one operation.
     unified = np.asarray((unified_signal * multiplier).clip(-1.0, 1.0))
     unified_osc = unified * 10.0
     msf_osc = df["MSF"].to_numpy() * 10.0
@@ -322,19 +324,28 @@ def run_full_analysis(
         np.where(unified_osc > 5, "Overbought", "Neutral"),
     )
 
-    df = df.assign(
-        Unified=unified,
-        Unified_Osc=unified_osc,
-        MSF_Osc=msf_osc,
-        MMR_Osc=mmr_osc,
-        MSF_Weight=msf_w_norm,
-        MMR_Weight=mmr_w_norm,
-        Agreement=agreement,
-        Buy_Signal=buy_signal,
-        Sell_Signal=sell_signal,
-        Bullish_Div=bullish_div,
-        Bearish_Div=bearish_div,
-        Condition=condition,
+    df = pd.concat(
+        [
+            df,
+            pd.DataFrame(
+                {
+                    "Unified": unified,
+                    "Unified_Osc": unified_osc,
+                    "MSF_Osc": msf_osc,
+                    "MMR_Osc": mmr_osc,
+                    "MSF_Weight": msf_w_norm,
+                    "MMR_Weight": mmr_w_norm,
+                    "Agreement": agreement.to_numpy() if hasattr(agreement, "to_numpy") else np.asarray(agreement),
+                    "Buy_Signal": buy_signal,
+                    "Sell_Signal": sell_signal,
+                    "Bullish_Div": bullish_div,
+                    "Bearish_Div": bearish_div,
+                    "Condition": condition,
+                },
+                index=df.index,
+            ),
+        ],
+        axis=1,
     )
 
     # Regime intelligence loop
@@ -392,16 +403,26 @@ def run_full_analysis(
         confidences.append(max(bull_p, bear_p, hmm_probs["NEUTRAL"]))
         signal_history.append(sig)
 
-    # Batch-assign all six columns in one shot to avoid DataFrame fragmentation
-    # (each `df[col] = ...` triggers an internal block insert; doing six in a
-    # row makes pandas emit a PerformanceWarning).
-    df = df.assign(
-        Regime=regimes,
-        HMM_Bull=hmm_bulls,
-        HMM_Bear=hmm_bears,
-        Vol_Regime=vol_regimes,
-        Change_Point=change_points,
-        Confidence=confidences,
+    # Join the six regime-intelligence columns as ONE block via pd.concat.
+    # df.assign() also fragments under newer pandas because it inserts kwargs
+    # one-by-one internally; pd.concat with a pre-built inner DataFrame avoids
+    # that entirely (single block-build, single merge).
+    df = pd.concat(
+        [
+            df,
+            pd.DataFrame(
+                {
+                    "Regime": regimes,
+                    "HMM_Bull": hmm_bulls,
+                    "HMM_Bear": hmm_bears,
+                    "Vol_Regime": vol_regimes,
+                    "Change_Point": change_points,
+                    "Confidence": confidences,
+                },
+                index=df.index,
+            ),
+        ],
+        axis=1,
     )
 
     return df, drivers
