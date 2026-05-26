@@ -1,5 +1,5 @@
 """
-Nishkarsh v1.3.0 — Diagnostics tab: ML diagnostics from both engines.
+Nishkarsh v1.4.0 — Diagnostics tab: ML diagnostics from both engines.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
 UI — Model quality assessment: feature importance, residuals, walk-forward performance.
@@ -305,3 +305,235 @@ def render_diagnostics_tab(engine, ts_filtered, x_axis, x_title, signal, model_s
                     f"OPEN blocks calls; HALF-OPEN allows 1 test call after recovery timeout."
                 ),
             )
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # 5. INTELLIGENCE CENTER — self-calibration dashboard (Sanket-pattern)
+    # ═══════════════════════════════════════════════════════════════════════
+    section_gap()
+    _render_intelligence_center()
+
+
+def _render_intelligence_center() -> None:
+    """Intelligence Center — read-only diagnostic dashboard.
+
+    Calibration is now automatic during every **Run Analysis** when the
+    Intelligence Mode toggle is ON in the sidebar. This panel surfaces:
+      • Current calibrated state (Train IC, Val IC, Stability, Trials)
+      • Learned weights vs factory defaults (bar chart)
+      • Learned classification thresholds (4 cards)
+      • Optuna fANOVA factor sensitivity (top drivers)
+      • All saved profiles on disk
+
+    There is no calibrate button here — the loop is the single Run
+    Analysis flow. Reset / Import / Export controls live in the sidebar
+    Passport.
+    """
+    from convergence import intelligence as intel
+
+    render_section_header(
+        "Intelligence Center",
+        "Self-Training Convergence Calibration · auto-runs every analysis · diagnostics only",
+        icon="cpu",
+        accent="violet",
+    )
+
+    profile = st.session_state.get("intelligence_active_profile")
+    is_calibrated = bool(profile)
+    intel_enabled = bool(st.session_state.get("intelligence_mode", True))
+
+    # Top-line status banner
+    if not intel_enabled:
+        st.markdown(
+            '<div style="font-family:var(--data); font-size:0.72rem; color:var(--ink-secondary);'
+            'background:rgba(148,163,184,0.05); border:1px solid var(--border);'
+            'border-radius:6px; padding:0.7rem 0.9rem; margin-bottom:1rem;">'
+            '<b>Intelligence Mode is OFF.</b> Toggle it ON in the sidebar Passport to enable '
+            'automatic calibration on the next Run Analysis. The engine is currently using '
+            'factory weights (0.30 / 0.25 / 0.25 / 0.20) and symmetric ±0.3 / ±0.5 thresholds.'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+    elif not is_calibrated:
+        st.markdown(
+            '<div style="font-family:var(--data); font-size:0.72rem; color:var(--amber);'
+            'background:rgba(212,168,83,0.08); border:1px solid rgba(212,168,83,0.22);'
+            'border-radius:6px; padding:0.7rem 0.9rem; margin-bottom:1rem;">'
+            '<b>No profile yet.</b> Intelligence Mode is ON but no calibrated profile exists '
+            'for this universe yet. Click <b>Run Analysis</b> to trigger the first calibration; '
+            'a profile will be saved automatically and used on every subsequent run.'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+    # ── Status summary row ──────────────────────────────────────────────
+    train_ic = float(profile.get("train_ic", 0.0)) if profile else 0.0
+    val_ic   = float(profile.get("val_ic", 0.0)) if profile else 0.0
+    n_trials = int(profile.get("n_trials", 0)) if profile else 0
+    n_train  = int(profile.get("n_train_dates", 0)) if profile else 0
+    n_val    = int(profile.get("n_val_dates", 0)) if profile else 0
+    stability = (val_ic / train_ic * 100) if abs(train_ic) > 1e-9 else 0.0
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        render_metric_card(
+            "STATE",
+            "Calibrated" if is_calibrated else ("Disabled" if not intel_enabled else "Default"),
+            "engine state",
+            "success" if is_calibrated else ("neutral" if not intel_enabled else "warning"),
+        )
+    with c2:
+        render_metric_card(
+            "VAL IC", f"{val_ic:+.3f}" if is_calibrated else "—",
+            "out-of-sample skill",
+            "success" if (is_calibrated and val_ic > 0) else "neutral",
+        )
+    with c3:
+        render_metric_card(
+            "STABILITY",
+            f"{stability:+.0f}%" if (is_calibrated and abs(train_ic) > 1e-9) else "—",
+            "val / train ratio",
+            "success" if (is_calibrated and 50 <= stability <= 110) else "warning",
+        )
+    with c4:
+        render_metric_card(
+            "TRIALS",
+            f"{n_trials}" if is_calibrated else "—",
+            "Optuna iterations · last run",
+            "info" if is_calibrated else "neutral",
+        )
+
+    # ── Calibration diagnostics (when calibrated) ───────────────────────
+    if is_calibrated and profile:
+        section_gap()
+        render_section_header(
+            "Calibration Diagnostics",
+            "Train vs validation scores · split size · last calibration timestamp",
+            icon="bar-chart",
+            accent="violet",
+        )
+        d1, d2, d3, d4 = st.columns(4)
+        with d1:
+            render_metric_card(
+                "TRAIN IC", f"{train_ic:+.3f}", "in-sample IC vs forward PE",
+                "success" if train_ic > 0 else "danger",
+            )
+        with d2:
+            render_metric_card(
+                "VAL IC", f"{val_ic:+.3f}", "out-of-sample IC vs forward PE",
+                "success" if val_ic > 0 else "danger",
+            )
+        with d3:
+            render_metric_card(
+                "TRAIN / VAL",
+                f"{n_train} / {n_val}" if (n_train or n_val) else "—",
+                "chronological 70/30 split", "info",
+            )
+        with d4:
+            render_metric_card(
+                "UPDATED", profile.get("timestamp", "—"),
+                "last calibration", "info",
+            )
+
+        # ── Learned weights ─────────────────────────────────────────────
+        weights = profile.get("weights", {})
+        if weights:
+            section_gap()
+            render_section_header(
+                "Learned Weights",
+                "Calibrated dimension weights vs factory defaults (0.30 / 0.25 / 0.25 / 0.20)",
+                icon="scale",
+                accent="cyan",
+            )
+            from convergence.intelligence import DEFAULT_WEIGHTS, _normalize_weights
+            wkeys   = ["w_direction", "w_breadth", "w_magnitude", "w_regime"]
+            wlabels = ["Direction", "Breadth", "Magnitude", "Regime"]
+            cal_vals = [float(v) for v in _normalize_weights(weights)]
+            def_vals = [float(DEFAULT_WEIGHTS[k]) for k in wkeys]
+            fig_w = go.Figure()
+            fig_w.add_trace(go.Bar(
+                x=wlabels, y=def_vals, name="Default",
+                marker=dict(color="rgba(148,163,184,0.35)"),
+            ))
+            fig_w.add_trace(go.Bar(
+                x=wlabels, y=cal_vals, name="Calibrated",
+                marker=dict(color=AMBER),
+            ))
+            fig_w.update_layout(**chart_layout(height=260), barmode="group")
+            style_axes(fig_w, y_title="Weight share", y_range=[0, max(0.5, max(cal_vals + def_vals) * 1.15)])
+            st.plotly_chart(fig_w, width='stretch', key="intel_weights_plot")
+
+        # ── Learned thresholds ──────────────────────────────────────────
+        thresholds = profile.get("thresholds", {})
+        if thresholds:
+            section_gap()
+            render_section_header(
+                "Learned Thresholds",
+                "Calibrated classification cut-points · normalized [-1, +1] scale · "
+                "calibrated thresholds may be asymmetric",
+                icon="crosshair",
+                accent="amber",
+            )
+            tcols = st.columns(4)
+            for col, (k, label, base) in zip(tcols, [
+                ("buy_strong",    "STRONG BUY ≤", -0.5),
+                ("buy_moderate",  "BUY ≤",         -0.3),
+                ("sell_moderate", "SELL ≥",        +0.3),
+                ("sell_strong",   "STRONG SELL ≥", +0.5),
+            ]):
+                val = float(thresholds.get(k, base))
+                with col:
+                    render_metric_card(
+                        label, f"{val:+.3f}",
+                        f"factory {base:+.2f} → cal {val:+.3f}",
+                        "success" if "BUY" in label else "danger",
+                    )
+
+        # ── Factor sensitivity (Optuna fANOVA) ──────────────────────────
+        sensitivity = profile.get("sensitivity", {})
+        if sensitivity:
+            section_gap()
+            render_section_header(
+                "Factor Sensitivity",
+                "Optuna fANOVA importance — which parameters drove the most variance in the objective",
+                icon="zap",
+                accent="rose",
+            )
+            sorted_items = sorted(sensitivity.items(), key=lambda kv: kv[1], reverse=True)[:10]
+            sens_df = pd.DataFrame(sorted_items, columns=["parameter", "importance_pct"])
+            fig_sens = go.Figure(go.Bar(
+                x=sens_df["importance_pct"], y=sens_df["parameter"],
+                orientation="h", marker=dict(color=CYAN),
+            ))
+            fig_sens.update_layout(**chart_layout(height=max(240, len(sorted_items) * 28), show_legend=False))
+            fig_sens.update_xaxes(title_text="% importance")
+            fig_sens.update_yaxes(showgrid=False)
+            st.plotly_chart(fig_sens, width='stretch', key="intel_sensitivity_plot")
+
+    # ── Saved profiles list ─────────────────────────────────────────────
+    section_gap()
+    saved = intel.list_profiles()
+    if saved:
+        render_section_header(
+            "Saved Profiles",
+            f"{len(saved)} profile(s) on disk · ~/.cache/nishkarsh/intelligence/",
+            icon="database",
+            accent="emerald",
+        )
+        rows = []
+        for p in saved:
+            rows.append({
+                "Universe": p.universe,
+                "Index": p.selected_index or "—",
+                "Train IC": f"{p.train_ic:+.3f}",
+                "Val IC": f"{p.val_ic:+.3f}",
+                "Trials": p.n_trials,
+                "Updated": p.timestamp,
+            })
+        st.dataframe(pd.DataFrame(rows), width='stretch', height=min(200, 60 + 35 * len(rows)))
+    else:
+        render_section_header(
+            "Saved Profiles",
+            "No profiles on disk yet · run an analysis with Intelligence Mode ON to create one",
+            icon="database",
+            accent="emerald",
+        )

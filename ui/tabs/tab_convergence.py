@@ -1,5 +1,5 @@
 """
-Nishkarsh v1.3.0 — Convergence tab: Unified signal with timeframe filtering.
+Nishkarsh v1.4.0 — Convergence tab: Unified signal with timeframe filtering.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
 UI — Cross-system convergence visualization: conviction scores with DDM filtering.

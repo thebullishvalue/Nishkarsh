@@ -1,5 +1,5 @@
 """
-Nishkarsh v1.3.0 — Nirnay tab: Constituent regime intelligence, zone distribution, signals, HMM.
+Nishkarsh v1.4.0 — Nirnay tab: Constituent regime intelligence, zone distribution, signals, HMM.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
 UI — NIRNAY engine visualization: per-constituent MSF + MMR with regime classification.
