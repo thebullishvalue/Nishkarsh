@@ -1,5 +1,5 @@
 """
-Nishkarsh v1.3.0 — Circuit Breaker + Retry-with-Backoff fault tolerance.
+Nishkarsh v1.4.0 — Circuit Breaker + Retry-with-Backoff fault tolerance.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
 Fault-tolerance primitives for external service calls (yfinance, Google Sheets,

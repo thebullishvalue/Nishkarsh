@@ -1,1 +1,1 @@
-"""Nishkarsh v1.3.0 — DATA: Fetchers, caching, schema contracts, and constituent management."""
+"""Nishkarsh v1.4.0 — DATA: Fetchers, caching, schema contracts, and constituent management."""

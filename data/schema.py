@@ -1,5 +1,5 @@
 """
-Nishkarsh v1.3.0 — Data schema contracts: dataclasses defining unified data structures.
+Nishkarsh v1.4.0 — Data schema contracts: dataclasses defining unified data structures.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
 DATA — Only the dataclasses actually consumed by the application are defined here.
