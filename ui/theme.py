@@ -1,5 +1,5 @@
 """
-Nishkarsh v1.3.0 — Shared CSS, chart theming, and color constants for the UI layer.
+Nishkarsh v1.4.0 — Shared CSS, chart theming, and color constants for the UI layer.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
 UI — "Obsidian Quant" Institutional Research Terminal design language.
@@ -36,7 +36,7 @@ from core.config import (
     COLOR_MUTED,
 )
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 PRODUCT_NAME = "Nishkarsh"
 COMPANY = "@thebullishvalue"
 

@@ -1,5 +1,5 @@
 """
-Nishkarsh v1.3.0 — Reusable UI components: metric cards, signal badges, headers, section headers.
+Nishkarsh v1.4.0 — Reusable UI components: metric cards, signal badges, headers, section headers.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
 UI — Obsidian Quant Terminal design language.

@@ -1859,8 +1859,13 @@ footer {
 .section-divider {
     height: 1px;
     background: linear-gradient(90deg, var(--border) 0%, transparent 100%);
-    margin: var(--sp-6) 0;
+    margin: var(--sp-3) 0;
     border: none;
+}
+
+/* Sidebar-scoped: tighter rhythm between consecutive settings groups */
+[data-testid="stSidebar"] .section-divider {
+    margin: var(--sp-2) 0;
 }
 
 /* ================================================================
@@ -1880,7 +1885,7 @@ footer {
     color: var(--ink-tertiary);
     text-transform: uppercase;
     letter-spacing: 0.12em;
-    margin: var(--sp-6) 0 var(--sp-3) 0;
+    margin: var(--sp-3) 0 var(--sp-2) 0;
 }
 
 .stTextInput input,
