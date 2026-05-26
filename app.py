@@ -1,5 +1,5 @@
 """
-Nishkarsh v1.3.0 — Main Streamlit entrypoint.
+Nishkarsh v1.4.0 — Main Streamlit entrypoint.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
 NISHKARSH — Two systems. One conclusion. Walk-forward valuation + constituent regime intelligence unified by adaptive convergence.
@@ -10,6 +10,7 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sys
@@ -194,6 +195,170 @@ def _render_primary_signal(nishkarsh_norm, agreement, aarambh_signal) -> None:
     section_gap()
 
 
+def _render_model_passport_sidebar(current_universe: str, current_index: str | None = None) -> None:
+    """Sidebar Passport — visible in every mode.
+
+    Faithful port of Sanket's `_render_model_passport_sidebar`, adapted to
+    Nishkarsh's (universe, index) keying. Surfaces:
+      • Profile state (Default / Calibrated / Calibrated · ⚠ on mismatch)
+      • Trained-on label · Train IC · Val IC · Updated timestamp
+      • Universe-mismatch warning when the saved profile was fit on a
+        different universe than the active sidebar selection
+      • Import / Export / Reset controls
+
+    Caller must be inside a ``with st.sidebar:`` context.
+    """
+    from convergence import intelligence as intel
+
+    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="sidebar-title">Model Passport</div>', unsafe_allow_html=True)
+
+    # Intelligence-mode toggle. Default ON. When OFF, factory weights are
+    # used regardless of any saved profile.
+    intelligence_mode = st.toggle(
+        "Intelligence Mode",
+        value=bool(st.session_state.get("intelligence_mode", True)),
+        help=(
+            "When ON, Nishkarsh uses the persisted calibrated profile for the "
+            "selected universe (if one exists). When OFF, Nishkarsh runs on "
+            "the factory 0.30 / 0.25 / 0.25 / 0.20 dimension weights and "
+            "symmetric ±0.3 / ±0.5 thresholds."
+        ),
+        key="passport_intel_toggle",
+    )
+    st.session_state["intelligence_mode"] = intelligence_mode
+
+    # What profile (if any) is saved for THIS universe?
+    saved_profile = intel.load_profile_for(current_universe, current_index)
+
+    # Status card values
+    if intelligence_mode and saved_profile is not None:
+        cal_universe = saved_profile.universe
+        cal_index    = saved_profile.selected_index
+        cal_label    = cal_index or cal_universe or "—"
+        cur_label    = current_index or current_universe or "—"
+        universe_mismatch = cal_label != "—" and cur_label != "—" and cal_label != cur_label
+        train_v = float(saved_profile.train_ic or 0.0)
+        val_v   = float(saved_profile.val_ic or 0.0)
+        train_str = f"{train_v:+.3f}"
+        val_str   = f"{val_v:+.3f}"
+        updated   = saved_profile.timestamp or "—"
+        train_color = "var(--emerald)" if train_v > 0 else "var(--rose)"
+        val_color   = "var(--emerald)" if val_v   > 0 else "var(--rose)"
+        if universe_mismatch:
+            profile_label = "Calibrated · ⚠"
+            card_class = "warning"
+        else:
+            profile_label = "Calibrated"
+            card_class = "success" if (val_v > 0 and train_v > 0) else "warning"
+    elif not intelligence_mode:
+        cal_label = "—"
+        profile_label = "Default · Off"
+        train_str = val_str = updated = "—"
+        train_color = val_color = "var(--ink-secondary)"
+        card_class = "neutral"
+        universe_mismatch = False
+    else:
+        cal_label = "—"
+        profile_label = "Default"
+        train_str = val_str = updated = "—"
+        train_color = val_color = "var(--ink-secondary)"
+        card_class = "neutral"
+        universe_mismatch = False
+
+    def _trim(s: str, n: int = 22) -> str:
+        s = str(s)
+        return s if len(s) <= n else s[: n - 1] + "…"
+
+    cal_label_disp = _trim(cal_label)
+
+    st.markdown(f"""
+    <div class="metric-card {card_class}" style="
+            min-height:auto;
+            padding:0.85rem 0.95rem;
+            margin-bottom:0.7rem;
+            animation:none;">
+        <h4 style="margin:0 0 0.3rem 0;">Profile</h4>
+        <h2 style="font-size:1.05rem; margin:0 0 0.7rem 0; letter-spacing:-0.01em;">{profile_label}</h2>
+        <div style="display:flex; flex-direction:column; gap:0.32rem;
+                    padding-top:0.55rem;
+                    border-top:1px solid rgba(255,255,255,0.06);">
+            <div style="display:flex; justify-content:space-between; align-items:baseline; font-family:var(--data); font-size:0.62rem;">
+                <span style="color:var(--ink-tertiary); text-transform:uppercase; letter-spacing:0.1em; font-size:0.58rem;">Trained on</span>
+                <span style="color:var(--ink-secondary); font-weight:500; max-width:62%; text-align:right; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{cal_label_disp}</span>
+            </div>
+            <div style="display:flex; justify-content:space-between; align-items:baseline; font-family:var(--data); font-size:0.65rem;">
+                <span style="color:var(--ink-tertiary); text-transform:uppercase; letter-spacing:0.1em; font-size:0.58rem;">Train IC</span>
+                <span style="color:{train_color}; font-weight:600;">{train_str}</span>
+            </div>
+            <div style="display:flex; justify-content:space-between; align-items:baseline; font-family:var(--data); font-size:0.65rem;">
+                <span style="color:var(--ink-tertiary); text-transform:uppercase; letter-spacing:0.1em; font-size:0.58rem;">Val IC</span>
+                <span style="color:{val_color}; font-weight:600;">{val_str}</span>
+            </div>
+            <div style="display:flex; justify-content:space-between; align-items:baseline; font-family:var(--data); font-size:0.6rem;">
+                <span style="color:var(--ink-tertiary); text-transform:uppercase; letter-spacing:0.1em; font-size:0.58rem;">Updated</span>
+                <span style="color:var(--ink-secondary);">{updated}</span>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if universe_mismatch:
+        st.markdown(f"""
+        <div style="font-family:var(--data); font-size:0.62rem; color:var(--amber);
+                    background:rgba(212,168,83,0.08);
+                    border:1px solid rgba(212,168,83,0.22);
+                    border-radius:6px; padding:0.55rem 0.65rem;
+                    margin-bottom:0.7rem; line-height:1.45;">
+            <span style="font-weight:700;">Profile mismatch — calibrated weights still active.</span><br>
+            Profile fit on <b>{_trim(cal_label, 28)}</b><br>
+            Active universe is <b>{_trim(current_index or current_universe, 28)}</b><br>
+            <span style="color:var(--ink-tertiary);">Weights learned for one universe do not generalise.
+            Reset to defaults or run a new calibration for the current selection.</span>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # Import / Export / Reset controls
+    with st.expander("↑ Import Profile", expanded=False):
+        uploaded = st.file_uploader(
+            " ", type=["json"], label_visibility="collapsed", key="passport_uploader",
+        )
+        if uploaded is not None:
+            try:
+                payload = json.load(uploaded)
+                if isinstance(payload, dict) and "weights" in payload:
+                    imported = intel.IntelligenceProfile.from_dict(payload)
+                    intel.save_profile(imported)
+                    st.toast("Profile imported.", icon="✅")
+                    st.success(f"Profile imported · {imported.universe}")
+                    st.rerun()
+                else:
+                    st.error("Import failed: file is not a valid profile dict (missing 'weights').")
+            except Exception as e:
+                st.error(f"Import failed: {e}")
+
+    if saved_profile is not None:
+        export_payload = saved_profile.to_dict()
+        ts_slug = (saved_profile.timestamp or "").split(" ")[0] or "snapshot"
+        fname = f"nishkarsh_profile_{_trim((saved_profile.selected_index or saved_profile.universe or 'profile').replace(' ', '_'), 30)}_{ts_slug}.json"
+        st.download_button(
+            "↓ Export Profile",
+            data=json.dumps(export_payload, indent=2, default=str),
+            file_name=fname,
+            mime="application/json",
+            use_container_width=True,
+            key="passport_export",
+        )
+        if st.button("↺ Reset to Defaults", use_container_width=True, key="passport_reset"):
+            intel.delete_profile(saved_profile.universe, saved_profile.selected_index)
+            # Streamlit's toast `icon=` only accepts emojis from a curated
+            # whitelist; "↺" (U+21BA, our "Reset" mark used on the button) is
+            # rejected. Drop the icon — the "↺" stays on the button text where
+            # the user actually sees it.
+            st.toast("Profile reset.")
+            st.rerun()
+
+
 def _render_footer() -> None:
     utc_now = datetime.now(timezone.utc)
     ist_now = utc_now + timedelta(hours=5, minutes=30)
@@ -370,7 +535,7 @@ def main():
         st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
         if "run_analysis" in st.session_state and st.session_state.get("run_analysis"):
-            if st.button("Reset Analysis", type="secondary"):
+            if st.button("Reset Analysis", type="secondary", use_container_width=True):
                 st.session_state.pop("data", None)
                 st.session_state.pop("engine", None)
                 st.session_state.pop("engine_cache", None)
@@ -378,7 +543,13 @@ def main():
                 st.session_state.pop("nishkarsh_result", None)
                 st.rerun()
 
-        st.markdown('<hr style="margin: 3.00rem 0; opacity: 0.05;">', unsafe_allow_html=True)
+        # ── Model Passport (Sanket-style) ──────────────────────────────
+        # Surfaces the active calibrated profile (Intelligence Mode).
+        _current_universe = "NIFTY 50"
+        _current_index = st.session_state.get("nishkarsh_index", _current_universe)
+        _render_model_passport_sidebar(_current_universe, _current_index)
+
+        st.markdown('<hr style="margin: 1rem 0 0.75rem 0; opacity: 0.05;">', unsafe_allow_html=True)
         st.markdown(
             '<div class="system-spec">'
             f'<div class="spec-row"><span class="spec-label">Version</span><span class="spec-value">{VERSION}</span></div>'
@@ -449,7 +620,7 @@ def main():
 
         # ── Phase 1: Data Loading ─────────────────────────────────────────
         console.start_phase("DATA ACQUISITION", 1, 5)
-        progress_bar(progress_container, 2, "Fetching constituents", "niftyindices.com · CSV parse")
+        progress_bar(progress_container, 2, "Fetching Constituents", "niftyindices.com · CSV parse")
 
         console.section("Constituent Fetch")
         constituents, src_msg = fetch_nifty50_constituents()
@@ -457,7 +628,7 @@ def main():
         console.item("Count", len(constituents))
         console.item("Symbols", f"{constituents[0]}, {constituents[1]}, {constituents[2]}...")
         console.success(f"Fetched {len(constituents)} Nifty 50 constituents")
-        progress_bar(progress_container, 5, "Fetching macro data", "yfinance · Global Macro ETFs · FX · Commodities")
+        progress_bar(progress_container, 5, "Fetching Macro Data", "yfinance · Global Macro ETFs · FX · Commodities")
 
         console.section("Macro Data")
         end_date = pd.Timestamp.today()
@@ -470,7 +641,7 @@ def main():
             console.success(f"Macro data: {len(macro_df.columns)} symbols × {len(macro_df)} rows")
         else:
             console.warning("No macro data available")
-        progress_bar(progress_container, 10, "Fetching OHLCV data", f"yfinance · {len(constituents)} constituents")
+        progress_bar(progress_container, 10, "Fetching OHLCV Data", f"yfinance · {len(constituents)} constituents")
 
         console.section("Constituent OHLCV")
         constituent_ohlcv = {}
@@ -482,7 +653,7 @@ def main():
                 sample = list(constituent_ohlcv.items())[0]
                 console.item("Sample", f"{sample[0]}: {len(sample[1])} rows")
             console.success(f"OHLCV data for {len(constituent_ohlcv)} constituents")
-        progress_bar(progress_container, 15, "Assembling macro indicators", "Bond yields from Google Sheets")
+        progress_bar(progress_container, 15, "Assembling Macro Indicators", "Bond Yields from Google Sheets")
 
         console.section("Nirnay Macro Assembly")
         nirnay_macro_df = macro_df.copy() if macro_df is not None and not macro_df.empty else pd.DataFrame()
@@ -498,11 +669,11 @@ def main():
             console.success(f"Combined macro: {len(nirnay_macro_df.columns)} indicators × {len(nirnay_macro_df)} rows")
         macro_cols_list = list(nirnay_macro_df.columns) if not nirnay_macro_df.empty else []
         console.end_phase("DATA ACQUISITION")
-        progress_bar(progress_container, 20, "Data acquisition complete", f"{len(constituent_ohlcv)} constituents · {len(nirnay_macro_df.columns)} macros")
+        progress_bar(progress_container, 20, "Data Acquisition Complete", f"{len(constituent_ohlcv)} Constituents · {len(nirnay_macro_df.columns)} Macros")
 
         # ── Phase 2: Aarambh FairValueEngine ─────────────────────────────
         console.start_phase("AARAMBH ENGINE", 2, 5)
-        progress_bar(progress_container, 20, "Running Aarambh engine", f"Walk-forward · {len(active_features)} predictors · {len(data)} rows")
+        progress_bar(progress_container, 20, "Running Aarambh Engine", f"Walk-Forward · {len(active_features)} Predictors · {len(data)} Rows")
 
         console.section("Engine Configuration")
         console.item("Target", active_target)
@@ -513,7 +684,7 @@ def main():
 
         console.section("Walk-Forward Regression")
         engine = FairValueEngine()
-        engine.fit(X, y, feature_names=active_features, progress_callback=lambda pct, msg: progress_bar(progress_container, int(20 + pct * 20), "Running Aarambh engine", msg))
+        engine.fit(X, y, feature_names=active_features, progress_callback=lambda pct, msg: progress_bar(progress_container, int(20 + pct * 20), "Running Aarambh Engine", msg))
 
         sig = engine.get_current_signal()
         stats = engine.get_model_stats()
@@ -527,11 +698,11 @@ def main():
         console.item("Oversold Breadth", f"{sig['oversold_breadth']:.0f}%")
         console.success(f"Aarambh engine complete | {len(engine.ts_data)} output rows")
         console.end_phase("AARAMBH ENGINE")
-        progress_bar(progress_container, 40, "Aarambh engine complete", f"Signal: {sig['signal']} ({sig['strength']}) · Conviction: {sig['conviction_score']:+.0f}")
+        progress_bar(progress_container, 40, "Aarambh Engine Complete", f"Signal: {sig['signal']} ({sig['strength']}) · Conviction: {sig['conviction_score']:+.0f}")
 
         # ── Phase 3: Nirnay Constituent Analysis ──────────────────────────
         console.start_phase("NIRNAY ENGINE", 3, 5)
-        progress_bar(progress_container, 42, "Running Nirnay engine", f"MSF+MMR+Regime · {len(constituent_ohlcv)} constituents")
+        progress_bar(progress_container, 42, "Running Nirnay Engine", f"MSF+MMR+Regime · {len(constituent_ohlcv)} Constituents")
 
         nirnay_daily = pd.DataFrame()
         nirnay_constituent_dfs = {}
@@ -570,7 +741,7 @@ def main():
                     console.detail(f"[{i+1}/{total}] {sym}: osc={osc:+.1f} [{cond}] regime={regime} rows={n_rows} macros={has_macro}")
 
                     pct_val = int(45 + (i + 1) / total * 30)
-                    progress_bar(progress_container, pct_val, f"Analyzing {sym}", f"osc={osc:+.1f} [{cond}] regime={regime}")
+                    progress_bar(progress_container, pct_val, f"Analyzing {sym}", f"Osc={osc:+.1f} [{cond}] Regime={regime}")
 
                 except Exception as e:
                     console.failure(f"{sym}", str(e))
@@ -589,14 +760,47 @@ def main():
                 console.success(f"Nirnay aggregation: {len(nirnay_daily)} trading days")
 
         console.end_phase("NIRNAY ENGINE")
-        progress_bar(progress_container, 75, "Nirnay engine complete", f"{len(nirnay_constituent_dfs)} stocks · {len(nirnay_daily)} trading days")
+        progress_bar(progress_container, 75, "Nirnay Engine Complete", f"{len(nirnay_constituent_dfs)} Stocks · {len(nirnay_daily)} Trading Days")
 
         # ── Phase 4: Convergence ──────────────────────────────────────────
         console.start_phase("CONVERGENCE", 4, 5)
-        progress_bar(progress_container, 78, "Computing convergence", "Cross-validation · DDM filtering")
+        progress_bar(progress_container, 78, "Computing Convergence", "Cross-Validation · DDM Filtering")
 
         console.section("Cross-Validation Setup")
-        validator = CrossValidator()
+        # ── Intelligence Mode — PRIOR profile resolution ─────────────────
+        # The first convergence pass uses the PRIOR profile (saved from a
+        # previous run, if any). After this pass we auto-calibrate on the
+        # fresh data and apply the new weights in-place (see Phase 4.5).
+        # When the Intelligence Mode toggle is OFF, both passes use the
+        # factory defaults — no calibration runs.
+        from convergence import intelligence as _intel_mod
+        _intel_universe = "NIFTY 50"
+        _intel_index = st.session_state.get("nishkarsh_index", _intel_universe)
+        _intel_enabled = bool(st.session_state.get("intelligence_mode", True))
+        if _intel_enabled:
+            _prior_w, _prior_t, _prior_profile = _intel_mod.resolve_active(_intel_universe, _intel_index)
+        else:
+            _prior_w, _prior_t, _prior_profile = (
+                _intel_mod.DEFAULT_WEIGHTS.copy(),
+                _intel_mod.DEFAULT_THRESHOLDS.copy(),
+                None,
+            )
+        if _prior_profile is not None:
+            console.item(
+                "Prior profile",
+                f"✅ {_prior_profile.universe} · val IC {_prior_profile.val_ic:+.3f} · "
+                f"trained {_prior_profile.timestamp}",
+            )
+        else:
+            console.item("Prior profile", "None (first run / no profile)")
+        console.item(
+            "Intelligence Mode",
+            "ON (auto-calibrate after convergence)" if _intel_enabled else "OFF (defaults locked)",
+        )
+
+        # First-pass validator uses prior weights when available.
+        _validator_weights = _prior_w if _prior_profile is not None else None
+        validator = CrossValidator(active_weights=_validator_weights)
         divergence_detector = CrossSystemDivergenceDetector()
 
         aarambh_ts = engine.ts_data.copy()
@@ -655,14 +859,22 @@ def main():
 
             if (i + 1) % 10 == 0 or i == total_dates - 1:
                 pct_val = int(78 + (i + 1) / total_dates * 7)
-                progress_bar(progress_container, pct_val, "Computing convergence", f"{i + 1}/{total_dates} dates scored")
+                progress_bar(progress_container, pct_val, "Computing Convergence", f"{i + 1}/{total_dates} Dates Scored")
 
         console.item("Total Aarambh Dates", len(aarambh_ts))
         console.item("Overlap Dates", overlap_count)
         console.success(f"Convergence scoring complete")
 
-        console.section("Conviction Model")
-        progress_bar(progress_container, 86, "Fitting conviction model", "Unified conviction series")
+        # ── 4a. First-pass conviction model ─────────────────────────────
+        # First-pass DDM filter on the convergence_score from the first
+        # validator pass. Labeled "first-pass" only when Intelligence Mode
+        # is ON (a second pass will follow); just "Conviction Model" otherwise.
+        _first_pass_label = "First-Pass Conviction Model" if _intel_enabled else "Conviction Model"
+        console.section("Conviction Model (initial pass)" if _intel_enabled else "Conviction Model")
+        progress_bar(
+            progress_container, 83, _first_pass_label,
+            "DDM Filter · Prior Weights" if (_intel_enabled and _prior_profile is not None) else "DDM Filter · Default Weights",
+        )
         convergence_df = validator.get_convergence_series()
         conviction_model = UnifiedConvictionModel()
         results = conviction_model.fit(
@@ -671,17 +883,123 @@ def main():
         )
         if results:
             latest = results[-1]
-            # DDM-filtered conviction model output — internal scale [-100, +100]
-            console.item("DDM Conviction", f"{latest.nishkarsh_conviction:+.0f}")
-            console.item("DDM Signal", latest.nishkarsh_signal)
-            console.item("DDM Band", f"[{latest.confidence_lower:.0f}, {latest.confidence_upper:.0f}]")
-        console.success(f"Unified conviction: {len(results)} scores computed")
+            _pre_label = "DDM Conviction (pre-cal)" if _intel_enabled else "DDM Conviction"
+            _sig_label = "DDM Signal (pre-cal)" if _intel_enabled else "DDM Signal"
+            console.item(_pre_label, f"{latest.nishkarsh_conviction:+.0f}")
+            console.item(_sig_label, latest.nishkarsh_signal)
+        console.success(f"Initial conviction: {len(results)} scores computed")
 
-        # Normalized convergence — the value the UI metric cards and hero
-        # signal card display. Computed from the same alignment pipeline that
-        # drives the Unified Signal plot.
+        # ── 4b. AUTO-CALIBRATION (Intelligence Mode) ────────────────────
+        # Runs Optuna TPE on the fresh convergence_df + aarambh_ts. The
+        # search learns optimal (weights, thresholds) for this universe,
+        # persists them to disk, and we immediately re-apply them below
+        # so the user's signals reflect the calibrated state on THIS run.
+        _final_profile: _intel_mod.IntelligenceProfile | None = None
+        if _intel_enabled:
+            console.section("Intelligence Calibration")
+            _n_trials = int(st.session_state.get("intel_n_trials", 50))
+            progress_bar(
+                progress_container, 84,
+                "Intelligence Mode · Setup",
+                f"Building Tuner · 70/30 Chronological Split · {_n_trials} Trials",
+            )
+            try:
+                tuner = _intel_mod.ConvergenceTuner(
+                    convergence_df, aarambh_ts,
+                    universe=_intel_universe, selected_index=_intel_index,
+                )
+                console.item("TPE Trials", _n_trials)
+                console.item("Train / Val Split", f"{int(tuner.train_frac*100)}/{int((1-tuner.train_frac)*100)} chronological")
+                console.item("Horizons", " · ".join(str(h) for h in tuner.horizons))
+                console.item("Train Rows", len(tuner.train_frame))
+                console.item("Val Rows", len(tuner.val_frame))
+
+                def _cal_cb(trial_num: int, total: int, best: float) -> None:
+                    # Map trial progress to 84% → 90% on the global bar.
+                    # Linear interpolation gives smooth motion through the loop.
+                    pct = int(84 + (trial_num / max(1, total)) * 6)
+                    progress_bar(
+                        progress_container, pct,
+                        "Intelligence Mode · Calibrating",
+                        f"Optuna Trial {trial_num}/{total} · Best Score {best:+.4f}",
+                    )
+
+                _final_profile, _ = tuner.optimize(n_trials=_n_trials, progress_callback=_cal_cb)
+                tuner.evaluate_validation()
+                _final_profile = tuner._make_profile()
+                _intel_mod.save_profile(_final_profile)
+
+                progress_bar(
+                    progress_container, 90,
+                    "Intelligence Mode · Profile Saved",
+                    f"Train IC {_final_profile.train_ic:+.3f} · Val IC {_final_profile.val_ic:+.3f}",
+                )
+                console.item("Train IC", f"{_final_profile.train_ic:+.4f}")
+                console.item("Val IC",   f"{_final_profile.val_ic:+.4f}")
+                # Top-3 most important parameters
+                if _final_profile.sensitivity:
+                    _top3 = sorted(_final_profile.sensitivity.items(), key=lambda kv: -kv[1])[:3]
+                    console.item("Top drivers", " · ".join(f"{k} {v:.0f}%" for k, v in _top3))
+                console.success(
+                    f"Calibration complete · val IC {_final_profile.val_ic:+.3f} · "
+                    f"persisted to disk ({_intel_universe} · {_intel_index})"
+                )
+            except Exception as _cal_e:
+                console.warning(f"Calibration failed: {_cal_e} — falling back to prior profile / defaults")
+                _final_profile = _prior_profile
+
+        # ── 4c. APPLY calibrated weights + thresholds to current run ────
+        # Either we just calibrated (use _final_profile) or Intelligence
+        # Mode is OFF (use defaults). Vectorized recomputation of
+        # convergence_score from existing dim_* columns — no need to
+        # re-loop CrossValidator over every date.
+        if _final_profile is not None:
+            progress_bar(
+                progress_container, 91,
+                "Applying Calibrated Profile",
+                "Re-Weighting Convergence · Vectorized Recompute",
+            )
+            convergence_df = _intel_mod.apply_calibrated_weights(
+                convergence_df, _final_profile.weights,
+            )
+            progress_bar(
+                progress_container, 92,
+                "Re-Fitting Conviction Model",
+                "Post-Calibration DDM Pass",
+            )
+            # Re-fit the conviction model with the new convergence_score
+            conviction_model = UnifiedConvictionModel()
+            results = conviction_model.fit(
+                convergence_df["convergence_score"].tolist(),
+                convergence_df.index.tolist(),
+            )
+            console.section("Conviction Model (post-cal)")
+            if results:
+                latest = results[-1]
+                console.item("DDM Conviction", f"{latest.nishkarsh_conviction:+.0f}")
+                console.item("DDM Signal", latest.nishkarsh_signal)
+                console.item("DDM Band", f"[{latest.confidence_lower:.0f}, {latest.confidence_upper:.0f}]")
+            console.success(f"Re-fit complete with calibrated profile")
+            _active_w = _final_profile.weights
+            _active_t = _final_profile.thresholds
+        else:
+            # Intelligence Mode OFF — record the default state.
+            _active_w = _intel_mod.DEFAULT_WEIGHTS.copy()
+            _active_t = _intel_mod.DEFAULT_THRESHOLDS.copy()
+
+        # Publish to session state so the Passport sidebar + Convergence cards
+        # see the calibrated state immediately on the next rerun.
+        st.session_state["intelligence_active_weights"] = _active_w
+        st.session_state["intelligence_active_thresholds"] = _active_t
+        st.session_state["intelligence_active_profile"] = (
+            _final_profile.to_dict() if _final_profile is not None else None
+        )
+
+        # ── 4d. Normalized convergence with calibrated thresholds ───────
         from convergence.normalization import compute_normalized_convergence
-        _nishkarsh_norm = compute_normalized_convergence(aarambh_ts, nirnay_daily)
+        _nishkarsh_norm = compute_normalized_convergence(
+            aarambh_ts, nirnay_daily, thresholds=_active_t,
+        )
         if _nishkarsh_norm:
             console.section("Normalized Convergence (UI display)")
             console.item("Conviction", f"{_nishkarsh_norm['value']:+.2f}")
@@ -690,7 +1008,7 @@ def main():
             console.item("  Nirnay contribution",  f"{_nishkarsh_norm['nirnay_norm']:+.2f}")
 
         console.section("Divergence Detection")
-        progress_bar(progress_container, 88, "Detecting divergences", "Cross-system divergence analysis")
+        progress_bar(progress_container, 93, "Detecting Divergences", "Cross-System Disagreement Analysis")
         events = divergence_detector.get_events()
         console.item("Total Events", len(events))
         if not events.empty:
@@ -700,11 +1018,15 @@ def main():
         console.success(f"Divergence analysis complete")
 
         console.end_phase("CONVERGENCE")
-        progress_bar(progress_container, 90, "Convergence complete", f"{overlap_count} overlap dates · {len(events)} divergence events")
+        _conv_complete_sub = (
+            f"{overlap_count} Overlap Dates · {len(events)} Divergence Events · "
+            f"{'Calibrated Profile Applied' if (_intel_enabled and _final_profile is not None) else 'Factory Defaults'}"
+        )
+        progress_bar(progress_container, 94, "Convergence Phase Complete", _conv_complete_sub)
 
         # ── Phase 5: Final Assembly ───────────────────────────────────────
         console.start_phase("FINAL ASSEMBLY", 5, 5)
-        progress_bar(progress_container, 92, "Storing results", "Session state · Cache")
+        progress_bar(progress_container, 95, "Storing Results", "Session State · Cache")
         console.section("Session State")
 
         st.session_state["engine"] = engine
@@ -753,7 +1075,7 @@ def main():
         console.line('═', 70)
         console._write()
 
-        progress_bar(progress_container, 100, "Analysis complete", f"Nishkarsh: {display_signal}")
+        progress_bar(progress_container, 100, "Analysis Complete", f"Nishkarsh: {display_signal}")
         time.sleep(0.25)
         progress_container.empty()
         st.session_state["run_requested"] = True

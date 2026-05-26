@@ -1,7 +1,7 @@
 # LICENSE
 
 **NISHKARSH (निष्कर्ष) — Unified Quantitative Convergence Engine**
-**Version 1.3.0**
+**Version 1.4.0**
 
 ---
 
@@ -89,6 +89,7 @@ to terminate this licence at any time for breach of terms.
 
 | Version | Date | Description |
 |---------|------|-------------|
+| 1.4.0 | 2026-05-27 | Self-Calibrating Convergence — Intelligence Mode as default + UI polish |
 | 1.3.0 | 2026-05-25 | Resilient Convergence — Smart data layer + Pragyam UI parity |
 | 1.2.0 | 2026-04-13 | Obsidian Quant Terminal — Standardisation pass |
 | 1.1.0 | 2026-04-07 | Nishkarsh Production Release — Unified convergence engine |

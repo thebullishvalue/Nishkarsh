@@ -9,10 +9,118 @@ Sections used: **Added · Changed · Deprecated · Removed · Fixed · Security 
 
 ---
 
-## [1.3.0] — 2026-05-25 — *Resilient Convergence*
+## [1.4.0] — 2026-05-27 — *Self-Calibrating Convergence*
 
-Production-grade data layer, refactored convergence wiring, and full UI parity
-with the sibling **Pragyam** terminal.
+Headline release: **Intelligence Mode** is now the default pipeline path —
+auto-calibrated profiles applied on every Run Analysis in a single flow, with
+the progress bar and sidebar rewritten to expose the new behaviour clearly.
+
+### Added
+- **Intelligence-aware progress bar.** The CONVERGENCE phase now surfaces its
+  sub-stages explicitly so users can see what the calibration loop is doing:
+  - `83%` First-Pass Conviction Model (DDM filter · prior weights)
+  - `84%` Intelligence Mode · Setup (tuner build · 70/30 split · N trials)
+  - `84 → 90%` Intelligence Mode · Calibrating (live Optuna trial counter
+    and best score)
+  - `90%` Intelligence Mode · Profile Saved (Train IC · Val IC)
+  - `91%` Applying Calibrated Profile (vectorized re-weight)
+  - `92%` Re-Fitting Conviction Model (post-calibration DDM pass)
+  - `93%` Detecting Divergences
+  - `94%` Convergence Phase Complete (with `calibrated profile applied`
+    or `factory defaults` suffix so the user can see which path ran)
+  - `95%` Storing Results · `100%` Analysis Complete
+  When Intelligence Mode is OFF, the `84–92%` band is skipped end-to-end.
+
+### Changed
+- **Progress bar typography** — every progress label and subtitle migrated
+  to Title Case for consistency across the pipeline.
+- **Sidebar rhythm tightened.** The vertical gap between consecutive setting
+  groups (Data Source ↔ Model Configuration ↔ Model Passport ↔ System Spec)
+  reduced from `1.5rem` / `3rem` to `0.5–0.75rem` so the right rail reads
+  as a compact toolset rather than three scattered panels:
+  - `.section-divider` margin: `var(--sp-6)` → `var(--sp-3)` (globally);
+    `var(--sp-2)` inside `[data-testid="stSidebar"]`.
+  - `.sidebar-title` margin: `var(--sp-6) 0 var(--sp-3) 0` →
+    `var(--sp-3) 0 var(--sp-2) 0`.
+  - Pre-`system-spec` `<hr>` margin: `3.00rem 0` → `1rem 0 0.75rem 0`.
+- **Reset Analysis** button uses `use_container_width=True` — full-width like
+  Export Profile and Reset to Defaults below it in the Model Passport.
+
+### Docs
+- README now reflects the Intelligence Mode pipeline as the default flow:
+  new `Intelligence Mode` section explaining what gets calibrated, the
+  Optuna-TPE objective, and the per-universe profile persistence path.
+- Pipeline-flow diagram updated to include the **Phase 4 calibration loop**
+  (first-pass → tuner → apply → re-fit).
+- `What You See` table now lists the Intelligence Center and Model Passport.
+- Configuration table notes the Intelligence Mode toggle and trial count.
+- Module headers and version constants unified at **`v1.4.0`** across all
+  Python files, `requirements.txt`, `README.md`, `LICENSE.md`, and CHANGELOG.
+
+---
+
+## [1.3.0] — 2026-05-26 — *Resilient Convergence*
+
+Production-grade data layer, refactored convergence wiring, self-calibrating
+**Intelligence Mode**, and full UI parity with the sibling **Pragyam** terminal.
+
+### Added (Intelligence Mode — new in this release)
+- **Self-calibrating convergence profile.** New module `convergence/intelligence.py`
+  ports Sanket's Bayesian-TPE calibration pattern to Nishkarsh's convergence
+  layer. An Optuna search finds the per-universe optimum for:
+  - Four dimension weights (`w_direction`, `w_breadth`, `w_magnitude`, `w_regime`)
+    used inside `CrossValidator.compute_convergence`, replacing the static
+    `0.30 / 0.25 / 0.25 / 0.20` defaults and the ±10% adaptive shift heuristic.
+  - Four asymmetric classification thresholds (`buy_strong`, `buy_moderate`,
+    `sell_moderate`, `sell_strong`) used inside `convergence/normalization.py`
+    `classify_normalized_signal`, replacing the symmetric ±0.3 / ±0.5 defaults.
+- **Calibration objective:** maximize the Spearman Information Ratio of the
+  composite convergence signal against forward NIFTY-50-PE returns at
+  horizons `[3, 5, 10, 20]` trading days, with L2 regularization toward
+  uniform weights to discourage overfit. Validates via a chronological
+  70/30 train/val split (no shuffling — preserves causality).
+- **Disk persistence** at `~/.cache/nishkarsh/intelligence/profiles.json`,
+  one profile per `(universe · selected_index)` key, with versioning
+  (`PROFILE_VERSION = "v1-nishkarsh-convergence"`).
+- **Sidebar "Model Passport" card** ported faithfully from Sanket
+  (`_render_model_passport_sidebar` in `app.py`). Shows Default / Calibrated
+  / Calibrated · ⚠ profile state, Trained-on label, Train IC, Val IC, last
+  updated timestamp, plus universe-mismatch warnings, an Import / Export /
+  Reset control group, and an **Intelligence Mode toggle** (default ON).
+- **Intelligence Center** section in the Diagnostics tab — read-only
+  diagnostic dashboard surfacing Train IC, Val IC, Stability %, Trials,
+  learned-weights bar chart (calibrated vs default), threshold values,
+  Optuna fANOVA factor sensitivity, and a list of all saved profiles
+  on disk. No calibrate button — calibration is auto-triggered by
+  Run Analysis (see below).
+- **Single-flow auto-calibration.** The `CONVERGENCE` phase of every
+  Run Analysis now runs the full calibration loop end-to-end with no
+  manual user input:
+  1. First-pass `CrossValidator` with the **prior profile** (loaded from
+     disk for this universe, or factory defaults if none exists).
+  2. Initial `UnifiedConvictionModel` fit to populate the convergence
+     time-series (which the calibrator needs as its input).
+  3. **Auto-calibration** — `ConvergenceTuner` runs Optuna TPE on the
+     fresh `convergence_df` + `aarambh_ts`, with live progress on the
+     pipeline progress bar (85% → 90%) and per-trial console output.
+  4. **Apply in same run** — `intelligence.apply_calibrated_weights()`
+     does vectorized recomputation of `convergence_score` and
+     `convergence_zone` from the existing `dim_*` columns and the
+     newly-learned weights (no need to re-loop CrossValidator).
+  5. **Conviction model re-fit** on the recomputed scores, so the
+     final DDM-filtered conviction reflects the calibrated state.
+  6. **Normalized convergence** classified with the calibrated
+     asymmetric thresholds.
+  7. **Profile persisted** to disk so the next run starts from this
+     calibration (warm path), and the **Passport sidebar updates** on
+     the post-analysis rerun to show the freshly-saved profile.
+
+  When the Intelligence Mode toggle is OFF, steps 3–5 are skipped —
+  the system runs on factory defaults end-to-end (this is also the
+  fall-back if calibration raises an exception).
+
+### Dependencies
+- Added `optuna>=3.5.0` to `requirements.txt` for the Bayesian TPE search.
 
 ### Added
 - **Smart data layer.** Three production-grade primitives now sit between the

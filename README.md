@@ -4,13 +4,14 @@
 > Two systems. One conclusion.
 
 **Nishkarsh** is a unified quantitative convergence engine for the Nifty 50.
-It runs two **orthogonal** analytical systems in parallel and treats their
-agreement — and their disagreement — as the signal.
+It runs two **orthogonal** analytical systems in parallel, treats their
+agreement — and their disagreement — as the signal, and **self-calibrates**
+its convergence weights and thresholds against forward returns on every run.
 
 | | |
 |---|---|
-| **Version** | 1.3.0 — *Resilient Convergence* |
-| **Stack** | Python 3.12+ · Streamlit · scikit-learn · statsmodels · Plotly |
+| **Version** | 1.4.0 — *Self-Calibrating Convergence* |
+| **Stack** | Python 3.12+ · Streamlit · scikit-learn · statsmodels · Optuna · Plotly |
 | **Universe** | Nifty 50 (live, fetched from niftyindices.com) |
 | **License** | See `LICENSE.md` |
 
@@ -22,6 +23,8 @@ agreement — and their disagreement — as the signal.
 - [Quick Start](#quick-start)
 - [What You See](#what-you-see)
 - [The Convergence Score](#the-convergence-score)
+- [Intelligence Mode](#intelligence-mode)
+- [Resilient Data Layer](#resilient-data-layer)
 - [Divergence Types](#divergence-types)
 - [Architecture](#architecture)
   - [Directory Structure](#directory-structure)
@@ -116,13 +119,14 @@ data is cached.
 
 ## What You See
 
-| Tab | What It Shows |
+| Surface | What It Shows |
 |---|---|
-| **CONVERGENCE** | Headline conviction, normalised Aarambh-vs-Nirnay overlay, agreement metrics, divergence event timeline |
-| **AARAMBH** | Base conviction with DDM bands, fair-value plot, model quality (R², MAE), breadth distribution, feature-impact evolution |
-| **NIRNAY** | Constituent oversold / overbought distribution, signal counts, HMM regime probabilities, per-stock table |
-| **DIAGNOSTICS** | OU half-life and θ-stability, DFA-Hurst with interpretation, signal-crossover performance, feature importance |
-| **DATA** | Merged time-series table + CSV export |
+| **CONVERGENCE** tab | Headline conviction, normalised Aarambh-vs-Nirnay overlay, agreement metrics, divergence event timeline |
+| **AARAMBH** tab | Base conviction with DDM bands, fair-value plot, model quality (R², MAE), breadth distribution, feature-impact evolution |
+| **NIRNAY** tab | Constituent oversold / overbought distribution, signal counts, HMM regime probabilities, per-stock table |
+| **DIAGNOSTICS** tab | OU half-life and θ-stability, DFA-Hurst, signal-crossover performance, feature importance, **Data Layer Health** (cache + circuit-breaker state), **Intelligence Center** (read-only profile diagnostics — Train/Val IC, learned weights, threshold cards, fANOVA factor sensitivity, saved profiles) |
+| **DATA** tab | Merged time-series table + CSV export |
+| **Sidebar — Model Passport** | Active profile state (Default / Calibrated / Calibrated · ⚠), Trained-on label, Train IC, Val IC, last-updated timestamp, Intelligence Mode toggle, Import / Export / Reset controls |
 
 ---
 
@@ -137,6 +141,108 @@ clarity score; the base weights are shifted up to ±10% in favour of higher-clar
 dimensions, then renormalised. The 4-D composite is mapped to `[−100, +100]`,
 classified into one of nine zones, and finally smoothed by a leaky drift-diffusion
 filter with mean-reverting variance to produce the headline `nishkarsh_conviction`.
+
+---
+
+## Intelligence Mode
+
+Nishkarsh v1.4 ships with **self-calibrating convergence** as the default
+pipeline path. Every Run Analysis runs a single end-to-end flow that learns
+the optimal convergence weights and signal thresholds for the active universe,
+applies them in the same run, and persists them for the next one.
+
+### What gets calibrated
+
+| Parameter | Default | Calibrated range |
+|---|---|---|
+| `w_direction` | `0.30` | `[0.10, 0.50]` |
+| `w_breadth`   | `0.25` | `[0.10, 0.50]` |
+| `w_magnitude` | `0.25` | `[0.10, 0.50]` |
+| `w_regime`    | `0.20` | `[0.10, 0.50]` |
+| `buy_strong`     | `−0.50` | asymmetric long threshold |
+| `buy_moderate`   | `−0.30` | asymmetric long threshold |
+| `sell_moderate`  | `+0.30` | asymmetric short threshold |
+| `sell_strong`    | `+0.50` | asymmetric short threshold |
+
+Weights are renormalised to sum to 1; thresholds are constrained so
+`buy_strong < buy_moderate < 0 < sell_moderate < sell_strong`.
+
+### Calibration objective
+
+Maximise the **Spearman Information Ratio** of the composite convergence
+signal against forward NIFTY-50-PE returns at horizons `[3, 5, 10, 20]`
+trading days, with **L2 regularisation toward uniform weights** to discourage
+overfit. Validates on a **chronological 70/30 train/val split** — no
+shuffling, no leakage.
+
+The optimiser is **Optuna TPE** (Tree-structured Parzen Estimator), with
+configurable trial count (default 50 — sufficient for IC convergence on
+~250-day windows).
+
+### One-flow execution
+
+A single Run Analysis click executes:
+
+```
+1. First-pass CrossValidator  ── prior profile (or factory defaults)
+2. Initial UnifiedConvictionModel fit (populates convergence series)
+3. Optuna TPE calibration on fresh (convergence_df, aarambh_ts)
+4. apply_calibrated_weights() ── vectorized re-weight, no re-loop
+5. Conviction model re-fit on recomputed convergence
+6. Normalised convergence classified with asymmetric thresholds
+7. Profile persisted to ~/.cache/nishkarsh/intelligence/profiles.json
+```
+
+The Passport sidebar updates on the post-analysis rerun to show the
+freshly-saved profile.
+
+### Toggle behaviour
+
+The **Intelligence Mode toggle** (Passport sidebar, default ON) controls
+whether steps 3–6 run. When OFF, the pipeline uses the factory
+`0.30 / 0.25 / 0.25 / 0.20` weights and the symmetric `±0.30 / ±0.50`
+thresholds throughout — useful for A/B baseline comparisons.
+
+### Per-universe profile keying
+
+Profiles are keyed by `(universe · selected_index)` and versioned
+(`PROFILE_VERSION = "v1-nishkarsh-convergence"`). If you switch universes
+between runs, the Passport surfaces a **Profile mismatch — calibrated
+weights still active** warning until you re-run.
+
+### Progress visibility
+
+The pipeline progress bar surfaces every Intelligence Mode sub-stage —
+`Setup → Calibrating (with live trial counter) → Profile Saved → Applying
+Calibrated Profile → Re-Fitting Conviction Model`. Phase completion shows
+either `calibrated profile applied` or `factory defaults` so you always
+know which path ran.
+
+---
+
+## Resilient Data Layer
+
+Every external call sits behind three production-grade primitives:
+
+- **Circuit breaker** (`data/circuit_breaker.py`) — `CLOSED → OPEN → HALF_OPEN`
+  state machine per service, thread-safe. Two module-level breakers protect
+  `yfinance` and Google Sheets respectively.
+- **Retry with backoff** — exponential decorator (1s → 2s → 4s, capped at 60s,
+  max 3 retries).
+- **Two-tier cache** (`data/cache.py`) — memory + disk, TTL expiry, versioned
+  keys (`version="v1"` bump invalidates a namespace atomically), and a
+  `get_stale()` last-good-snapshot fallback used automatically when a fetch
+  fails *and* the circuit is open — the UI keeps working through API outages.
+
+Open the **Diagnostics → Data Layer Health** card for live per-namespace
+cache hit rate, disk entry count, last-fetch timestamp, and per-service
+circuit-breaker state.
+
+The macro universe is **66 yfinance bond ETF tickers** (US Treasury curve,
+TIPS, aggregate bonds, corporate IG / HY, mortgage-backed, municipals,
+developed-markets sovereign, India fixed income, emerging markets) plus
+18 commodity / FX tickers — replacing the broken Stooq endpoints that
+returned HTML errors in late 2025.
 
 ---
 
@@ -186,11 +292,19 @@ engines/                       Stateful orchestrators. Import from analytics/.
   nirnay.py                    Per-constituent MSF + MMR + regime ensemble
 
 convergence/                   Consumes both engines. No IO. No Streamlit.
-  cross_validator.py           4-dimension adaptive convergence scoring
+  cross_validator.py           4-dimension convergence scoring (weights either
+                               from the calibrated profile or factory defaults)
   conviction_model.py          UnifiedConvictionModel — DDM on convergence scores
   divergence_detector.py       Cross-system divergence detection and classification
   normalization.py             Shared z-score / align / classify math for the
-                               Convergence cards + Unified Signal plot (single source)
+                               Convergence cards + Unified Signal plot (single source).
+                               Thresholds either calibrated (asymmetric) or default (±)
+  intelligence.py              Self-calibration layer — Optuna-TPE search for
+                               (weights, thresholds), Spearman-IR objective vs
+                               forward returns, chronological 70/30 train/val,
+                               disk persistence at
+                               ~/.cache/nishkarsh/intelligence/profiles.json,
+                               apply_calibrated_weights() for vectorized re-weight
 
 ui/                            Rendering only. No math.
   theme.py                     Obsidian Quant Terminal CSS + Plotly defaults
@@ -240,9 +354,15 @@ Never upward, never sideways. `data/` is the only IO boundary. `ui/` reads from
 │  └───────────────────────────────────────────────────────────┘  │
 │  ┌───────────────────────────────────────────────────────────┐  │
 │  │  4. CONVERGENCE — Cross-System Validation                 │  │
-│  │     cross_validator.py → 4D adaptive-weighted scoring     │  │
-│  │     conviction_model.py → DDM filtering on convergence    │  │
-│  │     divergence_detector.py → Disagreement classification  │  │
+│  │     ├─ 4a. First-pass CrossValidator (prior profile)      │  │
+│  │     ├─ 4b. Initial UnifiedConvictionModel fit             │  │
+│  │     ├─ 4c. intelligence.py → Optuna-TPE calibration       │  │
+│  │     │       (Spearman-IR · 70/30 chrono · L2 reg)         │  │
+│  │     ├─ 4d. apply_calibrated_weights() vectorized re-weight│  │
+│  │     ├─ 4e. Conviction model re-fit on recomputed scores   │  │
+│  │     ├─ 4f. normalization → asymmetric threshold classify  │  │
+│  │     └─ 4g. divergence_detector → Disagreement events      │  │
+│  │     Profile persisted to disk; Passport sidebar refreshes │  │
 │  └───────────────────────────────────────────────────────────┘  │
 │  ┌───────────────────────────────────────────────────────────┐  │
 │  │  5. UI RENDERING                                          │  │
@@ -268,7 +388,10 @@ All tunable constants live in `core/config.py`. The most consequential ones:
 | `OU_PROJECTION_DAYS` | `90` | Forward path length |
 | `CONVICTION_STRONG / MODERATE / WEAK` | `60 / 40 / 20` | Signal classification |
 | `DIV_PERSISTENCE_THRESHOLD` | `5` | Divergence event flagging |
-| `CONV_WEIGHT_DIRECTION / BREADTH / MAGNITUDE / REGIME` | `0.30 / 0.25 / 0.25 / 0.20` | Convergence base weights |
+| `CONV_WEIGHT_DIRECTION / BREADTH / MAGNITUDE / REGIME` | `0.30 / 0.25 / 0.25 / 0.20` | Convergence base weights (overridden when Intelligence Mode is ON) |
+| **Intelligence Mode toggle** | `ON` | Sidebar Passport — when OFF, factory weights and symmetric thresholds are used |
+| `intel_n_trials` | `50` | Optuna TPE trial count per calibration |
+| `PROFILE_VERSION` | `"v1-nishkarsh-convergence"` | Schema version for persisted profiles |
 
 ---
 
@@ -279,12 +402,16 @@ All tunable constants live in `core/config.py`. The most consequential ones:
 | Data acquisition | 5–10 s | ~0 s |
 | Aarambh walk-forward | 10–20 s | 10–20 s |
 | Nirnay (50 stocks, sequential) | 5–10 s | 5–10 s |
-| Convergence + DDM | ~1 s | ~1 s |
+| Convergence (first pass) + DDM | ~1 s | ~1 s |
+| Intelligence calibration (Optuna 50 trials) | 5–15 s | 5–15 s |
+| Apply + re-fit | <1 s | <1 s |
 | Render | <1 s | <1 s |
-| **Total** | **30–50 s** | **15–30 s** |
+| **Total (Intelligence ON)** | **35–60 s** | **20–40 s** |
+| **Total (Intelligence OFF)** | **30–50 s** | **15–30 s** |
 
 Engine outputs are **not** currently cached; every Streamlit rerun re-runs
-the math.
+the math. Calibration profiles ARE cached to disk and re-used as the
+prior on the next run (warm path).
 
 ---
 
@@ -392,4 +519,4 @@ Mathematical primitives draw on:
 
 ---
 
-© 2026 Nishkarsh · [@thebullishvalue](https://twitter.com/thebullishvalue) · v1.3.0
+© 2026 Nishkarsh · [@thebullishvalue](https://twitter.com/thebullishvalue) · v1.4.0
