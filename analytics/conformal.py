@@ -1,5 +1,5 @@
 """
-Nishkarsh v1.3.0 — Conformal prediction z-scores with fat-tail adjustment.
+Nishkarsh v1.4.0 — Conformal prediction z-scores with fat-tail adjustment.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
 ANALYTICS — Conformal prediction bounds for walk-forward regression residuals.

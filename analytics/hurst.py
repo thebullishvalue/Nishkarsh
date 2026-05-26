@@ -1,5 +1,5 @@
 """
-Nishkarsh v1.3.0 — Hurst exponent via Detrended Fluctuation Analysis (DFA).
+Nishkarsh v1.4.0 — Hurst exponent via Detrended Fluctuation Analysis (DFA).
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
 ANALYTICS — Measures long-term memory and mean-reversion in time series.

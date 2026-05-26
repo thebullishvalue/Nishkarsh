@@ -1,5 +1,5 @@
 """
-Nishkarsh v1.3.0 — Math utilities: pure mathematical functions.
+Nishkarsh v1.4.0 — Math utilities: pure mathematical functions.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
 ANALYTICS — Stateless, side-effect free functions operating on NumPy arrays and pandas structures.

@@ -1,5 +1,5 @@
 """
-Nishkarsh v1.3.0 — Structural break detection via Bai-Perron multiple breakpoint test.
+Nishkarsh v1.4.0 — Structural break detection via Bai-Perron multiple breakpoint test.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
 ANALYTICS — Identifies regime shifts in time series data.
