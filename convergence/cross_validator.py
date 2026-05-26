@@ -1,5 +1,5 @@
 """
-Nishkarsh v1.3.0 — CrossValidator: Cross-referencing Aarambha and Nirnay outputs.
+Nishkarsh v1.4.0 — CrossValidator: Cross-referencing Aarambha and Nirnay outputs.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
 CONVERGENCE — Adaptive-weighted composite of 4 dimensions: Direction, Breadth, Magnitude, Regime — with DDM.
@@ -79,8 +79,17 @@ class CrossValidator:
     ±10% additional weight at the expense of weaker dimensions.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, active_weights: dict[str, float] | None = None) -> None:
+        """Args:
+            active_weights: Optional override for the base dimension weights.
+                Must be a dict with keys ``direction``, ``breadth``,
+                ``magnitude``, ``regime``. Used by Intelligence Mode to
+                inject calibrated weights from a persisted profile. When
+                ``None``, falls back to the static CONV_WEIGHT_* defaults
+                with the heuristic ±10% adaptive shift.
+        """
         self.history: list[ConvergenceSignal] = []
+        self.active_weights = active_weights
 
     def compute_convergence(
         self,
@@ -146,29 +155,45 @@ class CrossValidator:
         else:
             regime_score = 0.2
 
-        # ── Adaptive weighting ──────────────────────────────────────────
-        base_weights: dict[str, float] = {
-            "direction": CONV_WEIGHT_DIRECTION,
-            "breadth": CONV_WEIGHT_BREADTH,
-            "magnitude": CONV_WEIGHT_MAGNITUDE,
-            "regime": CONV_WEIGHT_REGIME,
-        }
-        clarities: dict[str, float] = {
-            "direction": abs(float(aarambh_direction)) * 0.5 + abs(float(nirnay_direction)) * 0.5 + 0.001,
-            "breadth": abs(aarambh_os_breadth - 50) / 50.0 + abs(nirnay_os - 50) / 50.0 + 0.001,
-            "magnitude": (aarambh_mag_norm + nirnay_mag_norm) / 2.0 + 0.001,
-            "regime": abs(nirnay_bull_pct - nirnay_bear_pct) / 100.0 + 0.001,
-        }
-        avg_clarity = np.mean(list(clarities.values()))
-        adaptive_weights: dict[str, float] = {}
-        for key in base_weights:
-            clarity_ratio = clarities[key] / avg_clarity
-            shift = CONV_ADAPTIVE_SHIFT_MAX * (clarity_ratio - 1.0)
-            adaptive_weights[key] = np.clip(base_weights[key] + shift, 0.10, 0.40)
-
-        # Normalize weights
-        total_w = sum(adaptive_weights.values())
-        adaptive_weights = {k: v / total_w for k, v in adaptive_weights.items()}
+        # ── Weighting ───────────────────────────────────────────────────
+        # Two paths:
+        #   (a) Intelligence Mode active → use calibrated weights from the
+        #       persisted profile verbatim. Skip the adaptive shift heuristic
+        #       (the calibration already learned the optimum from data).
+        #   (b) Factory defaults → apply the ±10% adaptive shift heuristic
+        #       on top of the CONV_WEIGHT_* base allocation.
+        if self.active_weights is not None:
+            # Calibrated path: trust the profile.
+            base_weights = {
+                "direction": float(self.active_weights.get("w_direction", CONV_WEIGHT_DIRECTION)),
+                "breadth":   float(self.active_weights.get("w_breadth",   CONV_WEIGHT_BREADTH)),
+                "magnitude": float(self.active_weights.get("w_magnitude", CONV_WEIGHT_MAGNITUDE)),
+                "regime":    float(self.active_weights.get("w_regime",    CONV_WEIGHT_REGIME)),
+            }
+            total_w = sum(base_weights.values()) or 1.0
+            adaptive_weights = {k: v / total_w for k, v in base_weights.items()}
+        else:
+            # Default path: heuristic adaptive shift.
+            base_weights = {
+                "direction": CONV_WEIGHT_DIRECTION,
+                "breadth": CONV_WEIGHT_BREADTH,
+                "magnitude": CONV_WEIGHT_MAGNITUDE,
+                "regime": CONV_WEIGHT_REGIME,
+            }
+            clarities = {
+                "direction": abs(float(aarambh_direction)) * 0.5 + abs(float(nirnay_direction)) * 0.5 + 0.001,
+                "breadth": abs(aarambh_os_breadth - 50) / 50.0 + abs(nirnay_os - 50) / 50.0 + 0.001,
+                "magnitude": (aarambh_mag_norm + nirnay_mag_norm) / 2.0 + 0.001,
+                "regime": abs(nirnay_bull_pct - nirnay_bear_pct) / 100.0 + 0.001,
+            }
+            avg_clarity = np.mean(list(clarities.values()))
+            adaptive_weights = {}
+            for key in base_weights:
+                clarity_ratio = clarities[key] / avg_clarity
+                shift = CONV_ADAPTIVE_SHIFT_MAX * (clarity_ratio - 1.0)
+                adaptive_weights[key] = float(np.clip(base_weights[key] + shift, 0.10, 0.40))
+            total_w = sum(adaptive_weights.values())
+            adaptive_weights = {k: v / total_w for k, v in adaptive_weights.items()}
 
         # Composite convergence score [-100, +100]
         composite = (
@@ -180,7 +205,20 @@ class CrossValidator:
         convergence_score = composite * 100
 
         # Agreement ratio
-        agreement_ratio = (direction_score + breadth_score + magnitude_score + regime_score) / 4.0
+        # When Intelligence Mode injected calibrated weights, the agreement
+        # metric uses those weights too — so the user-visible AGREEMENT
+        # percentage stays semantically consistent with the calibrated
+        # convergence score. When no calibration is active, fall back to
+        # the plain 4-way mean (the historical definition).
+        if self.active_weights is not None:
+            agreement_ratio = (
+                adaptive_weights["direction"] * direction_score
+                + adaptive_weights["breadth"]   * breadth_score
+                + adaptive_weights["magnitude"] * magnitude_score
+                + adaptive_weights["regime"]    * regime_score
+            )
+        else:
+            agreement_ratio = (direction_score + breadth_score + magnitude_score + regime_score) / 4.0
 
         # Lead-lag indicator
         if aarambh_direction != nirnay_direction and abs(aarambh_direction) > abs(nirnay_direction) * 1.5:

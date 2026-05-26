@@ -1,5 +1,5 @@
 """
-Nishkarsh v1.3.0 — UnifiedConvictionModel: DDM filtering on convergence scores.
+Nishkarsh v1.4.0 — UnifiedConvictionModel: DDM filtering on convergence scores.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
 CONVERGENCE — Adaptive-weighted composite of 4 dimensions: Direction, Breadth, Magnitude, Regime — with DDM.

@@ -1,5 +1,5 @@
 """
-Nishkarsh v1.3.0 — Shared normalization math for the Unified Convergence Signal.
+Nishkarsh v1.4.0 — Shared normalization math for the Unified Convergence Signal.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
 Single source of truth for the math behind the Convergence Analysis cards and
@@ -21,20 +21,43 @@ import numpy as np
 import pandas as pd
 
 
-# ── Signal classification thresholds (match plot marker thresholds) ──────────
+# ── Signal classification thresholds (factory defaults) ─────────────────────
+# These match the plot marker thresholds and are also the fallback when
+# Intelligence Mode is not active. The calibrated thresholds in a saved
+# profile may be asymmetric (`buy_strong != -sell_strong`).
 _STRONG = 0.5
 _MODERATE = 0.3
 
+DEFAULT_THRESHOLDS: dict[str, float] = {
+    "buy_strong":     -_STRONG,
+    "buy_moderate":   -_MODERATE,
+    "sell_moderate":  +_MODERATE,
+    "sell_strong":    +_STRONG,
+}
 
-def classify_normalized_signal(v: float) -> str:
-    """Map a normalized convergence value (in ``[-1, +1]``) to a signal label."""
-    if v < -_STRONG:
+
+def classify_normalized_signal(
+    v: float,
+    thresholds: dict[str, float] | None = None,
+) -> str:
+    """Map a normalized convergence value (in ``[-1, +1]``) to a signal label.
+
+    Args:
+        v: the normalized convergence value.
+        thresholds: optional dict with keys ``buy_strong``, ``buy_moderate``,
+            ``sell_moderate``, ``sell_strong``. When ``None``, falls back to
+            the symmetric factory defaults (``±0.3`` / ``±0.5``). Used by
+            Intelligence Mode to apply calibrated thresholds from a saved
+            profile.
+    """
+    t = thresholds or DEFAULT_THRESHOLDS
+    if v <= t["buy_strong"]:
         return "STRONG BUY"
-    if v < -_MODERATE:
+    if v <= t["buy_moderate"]:
         return "BUY"
-    if v > _STRONG:
+    if v >= t["sell_strong"]:
         return "STRONG SELL"
-    if v > _MODERATE:
+    if v >= t["sell_moderate"]:
         return "SELL"
     return "HOLD"
 
@@ -132,11 +155,18 @@ def zscore_clip(arr: np.ndarray, mu: float, sigma: float) -> np.ndarray:
 def compute_normalized_convergence(
     aarambh_ts: pd.DataFrame | None,
     nirnay_daily: pd.DataFrame | None,
+    thresholds: dict[str, float] | None = None,
 ) -> dict | None:
     """Latest normalized convergence value + per-system contributions.
 
     Mirrors what the Unified Signal plot's top row displays at its last point.
     Returns ``None`` if alignment yields no rows.
+
+    Args:
+        aarambh_ts, nirnay_daily: time-series inputs.
+        thresholds: optional calibrated thresholds (from Intelligence Mode).
+            When ``None``, the symmetric factory defaults are used for the
+            ``signal`` label.
     """
     _, raw_a, raw_n = align_aarambh_nirnay(aarambh_ts, nirnay_daily)
     if not raw_a:
@@ -150,7 +180,7 @@ def compute_normalized_convergence(
     latest = float(norm_avg[-1])
     return {
         "value": latest,
-        "signal": classify_normalized_signal(latest),
+        "signal": classify_normalized_signal(latest, thresholds),
         "aarambh_norm": float(norm_a[-1]),
         "nirnay_norm": float(norm_n[-1]),
         "aarambh_raw": float(arr_a[-1]),
