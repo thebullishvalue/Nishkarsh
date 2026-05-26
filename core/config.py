@@ -14,14 +14,14 @@ COMPANY = "@thebullishvalue"
 # ─── Aarambh Engine Defaults ─────────────────────────────────────────────────
 
 LOOKBACK_WINDOWS = (5, 10, 20, 50, 100)
-MIN_TRAIN_SIZE = 15
+MIN_TRAIN_SIZE = 20
 MAX_TRAIN_SIZE = 30
 REFIT_INTERVAL = 2
 RIDGE_ALPHAS = (0.01, 0.1, 1.0, 10.0, 100.0)
 HUBER_EPSILON = 1.35
 HUBER_MAX_ITER = 500
 OU_PROJECTION_DAYS = 90
-MIN_DATA_POINTS = 500
+MIN_DATA_POINTS = 1500
 
 # Signal thresholds (conviction score → signal mapping)
 CONVICTION_STRONG = 60
