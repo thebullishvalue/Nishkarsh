@@ -1,5 +1,5 @@
 """
-Nishkarsh v1.3.0 — Logger configuration: direct console output system.
+Nishkarsh v1.4.0 — Logger configuration: direct console output system.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
 CORE — Bypasses Python logging, writes colored output to stdout for clean terminal analysis pipeline.
