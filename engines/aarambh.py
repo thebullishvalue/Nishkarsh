@@ -1,5 +1,5 @@
 """
-Nishkarsh v1.3.0 — FairValueEngine: Walk-forward ensemble regression for Nifty 50 PE fair value.
+Nishkarsh v1.4.0 — FairValueEngine: Walk-forward ensemble regression for Nifty 50 PE fair value.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
 AARAMBH — Walk-forward ensemble regression on Nifty 50 PE ratio with conformal z-scores and DDM filtering.
@@ -140,7 +140,7 @@ class FairValueEngine:
         self._compute_hurst()
 
         if progress_callback:
-            progress_callback(1.0, "Done.")
+            progress_callback(1.0, "Done")
 
         return self
 
@@ -310,7 +310,7 @@ class FairValueEngine:
                 logging.warning("Walk-forward chunk failed [%d:%d]: %s", t_start, t_end, e)
 
             if progress_callback:
-                progress_callback((i + 1) / total_chunks, f"Walking forward... ({t_end}/{n})")
+                progress_callback((i + 1) / total_chunks, f"Walking Forward... ({t_end}/{n})")
 
         self._compute_feature_impacts(last_models, valid_cols, n - 1)
 

@@ -1,5 +1,5 @@
 """
-Nishkarsh v1.3.0 — Nirnay Engine: Per-stock MSF + MMR with regime intelligence.
+Nishkarsh v1.4.0 — Nirnay Engine: Per-stock MSF + MMR with regime intelligence.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
 NIRNAY — Per-constituent MSF + MMR analysis with HMM/GARCH/CUSUM regime intelligence aggregation.
