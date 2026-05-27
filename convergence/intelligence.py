@@ -347,8 +347,8 @@ def _spearman_ic(x: np.ndarray, y: np.ndarray) -> float:
     """Spearman rank correlation. Returns NaN on degenerate input."""
     if len(x) < 5 or len(x) != len(y):
         return float("nan")
-    rx = pd.Series(x).rank().to_numpy()
-    ry = pd.Series(y).rank().to_numpy()
+    rx = pd.Series(x).rank().to_numpy(dtype=np.float64, copy=True)
+    ry = pd.Series(y).rank().to_numpy(dtype=np.float64, copy=True)
     rx -= rx.mean()
     ry -= ry.mean()
     denom = np.sqrt((rx * rx).sum() * (ry * ry).sum())
