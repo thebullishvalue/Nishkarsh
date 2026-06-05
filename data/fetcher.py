@@ -311,7 +311,7 @@ def build_unified_dataset(
     data = aarambh_df[valid_cols].copy()
 
     if date_col and date_col in data.columns:
-        data[date_col] = pd.to_datetime(data[date_col], errors="coerce")
+        data[date_col] = pd.to_datetime(data[date_col], errors="coerce", dayfirst=True)
         data = data.dropna(subset=[date_col]).sort_values(date_col)
 
     for col in [target_col] + feature_cols:
