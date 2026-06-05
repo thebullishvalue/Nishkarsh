@@ -567,7 +567,7 @@ def main():
     # ─── Data staleness warning ────────────────────────────────────────────
     if active_date != "None" and active_date in df.columns:
         try:
-            dates = pd.to_datetime(df[active_date], errors="coerce").dropna()
+            dates = pd.to_datetime(df[active_date], errors="coerce", dayfirst=True).dropna()
             if len(dates) > 0:
                 latest_date = dates.max().to_pydatetime()
                 if latest_date.tzinfo is not None:
@@ -586,7 +586,7 @@ def main():
     cols = [active_target] + active_features + ([active_date] if active_date != "None" and active_date in df.columns else [])
     data = df[[c for c in cols if c in df.columns]].copy()
     if active_date != "None" and active_date in data.columns:
-        data[active_date] = pd.to_datetime(data[active_date], errors="coerce")
+        data[active_date] = pd.to_datetime(data[active_date], errors="coerce", dayfirst=True)
         data = data.dropna(subset=[active_date]).sort_values(active_date)
     for col in [active_target] + active_features:
         data[col] = pd.to_numeric(data[col], errors="coerce")
@@ -662,7 +662,7 @@ def main():
         if available_bond_cols:
             bond_data = df[available_bond_cols].copy()
             if "DATE" in df.columns:
-                bond_data.index = pd.to_datetime(df["DATE"])
+                bond_data.index = pd.to_datetime(df["DATE"], dayfirst=True)
             nirnay_macro_df = nirnay_macro_df.join(bond_data, how="outer").sort_index().ffill()
             console.item("YF Symbols", len(macro_df.columns) if not macro_df.empty else 0)
             console.item("Bond Yields", f"{len(available_bond_cols)} ({', '.join(available_bond_cols)})")
