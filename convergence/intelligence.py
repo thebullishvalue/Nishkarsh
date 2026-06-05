@@ -271,7 +271,7 @@ def _build_calibration_frame(
 
     a_dedup = aarambh_ts[~aarambh_ts.index.duplicated(keep="last")].copy()
     if "Date" in a_dedup.columns:
-        a_dedup["Date"] = pd.to_datetime(a_dedup["Date"], errors="coerce")
+        a_dedup["Date"] = pd.to_datetime(a_dedup["Date"], errors="coerce", dayfirst=True)
         a_dedup = a_dedup.dropna(subset=["Date"]).set_index("Date")
     else:
         a_dedup.index = pd.to_datetime(a_dedup.index, errors="coerce")
