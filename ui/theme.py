@@ -23,6 +23,7 @@ from pathlib import Path
 import streamlit as st
 
 from core.config import (
+    VERSION,
     CHART_BG,
     CHART_GRID,
     CHART_ZEROLINE,
@@ -36,7 +37,8 @@ from core.config import (
     COLOR_MUTED,
 )
 
-VERSION = "1.4.0"
+# VERSION is single-sourced from core.config (imported above) so the masthead,
+# footer, system-spec panel and terminal header never drift out of sync again.
 PRODUCT_NAME = "Nishkarsh"
 COMPANY = "@thebullishvalue"
 
