@@ -7,21 +7,105 @@ CORE — Merged from both Aarambh (correl.py) and Nirnay (nirnay_core.py) monoli
 
 # ─── Version / Product ───────────────────────────────────────────────────────
 
-VERSION = "1.4.0"
+VERSION = "1.4.22"
 PRODUCT_NAME = "NISHKARSH"
 COMPANY = "@thebullishvalue"
 
 # ─── Aarambh Engine Defaults ─────────────────────────────────────────────────
 
 LOOKBACK_WINDOWS = (5, 10, 20, 50, 100)
-MIN_TRAIN_SIZE = 15
-MAX_TRAIN_SIZE = 30
-REFIT_INTERVAL = 2
+# Walk-forward training window (trading days). The engine fits a ~14-feature
+# regularized ensemble, so the window must be >> feature count to stay
+# well-conditioned. MIN bootstraps the expanding window at one trading year;
+# MAX caps it at three years so the model stays adaptive to regime drift.
+# (Previously 15/30 — degenerate p/n for a 14-feature fit.)
+MIN_TRAIN_SIZE = 1500
+MAX_TRAIN_SIZE = 2000
+REFIT_INTERVAL = 10
 RIDGE_ALPHAS = (0.01, 0.1, 1.0, 10.0, 100.0)
 HUBER_EPSILON = 1.35
 HUBER_MAX_ITER = 500
 OU_PROJECTION_DAYS = 90
 MIN_DATA_POINTS = 1500
+
+# When True, Aarambh trains on causal-PCA factors of (sheet predictors + the
+# full macro panel) instead of the raw sheet predictors. Combines everything,
+# pushes it through the same expanding-window PCA gate as MMR, and feeds the
+# orthogonal factors to the walk-forward. NOTE: the macro panel only has ~5y of
+# real history (yfinance), so for older dates the macro columns are flat-filled
+# and the factors are effectively driven by the sheet predictors alone.
+# Empirically OFF: feeding macros into Aarambh degraded it in every form tested
+# — raw (R²=−4), combined-PCA unstationarized (R²=−47), combined-PCA
+# stationarized (R²=−0.78, signal INVERTED). Macros add no fair-value signal for
+# PE and actively harm the model. Kept as a toggle for A/B, default off.
+# (Also INERT in predictive mode — the combined-PCA gate is bypassed there — so
+# False is the safe default in both modes: neutral when forward-on, correct when
+# forward-off. Verified: app PCA=True fwd IC +0.131 ≈ standalone no-PCA +0.128.)
+AARAMBH_PCA_PREDICTORS = False
+AARAMBH_PCA_N_COMPONENTS = 9
+
+# When True, the 44 custom engineered predictors (yield spreads, real rates,
+# credit/commodity ratios, FX momentum, cross-asset composites — see
+# CUSTOM_PREDICTORS.md / analytics/custom_features.py) are computed and fed
+# into both engines via the causal PCA gate (all 44 → MMR; 41 → Aarambh, with
+# the 3 PE/PB/DY-embedding ones excluded to avoid target leakage). Toggle off
+# to A/B against the base feature set. All features are causal & non-repainting.
+CUSTOM_PREDICTORS_ENABLED = True
+
+# Predictors RESERVED as passthrough — kept as their own raw, named columns in
+# the feed and NOT compressed into the PCA factors, so their direct India
+# rate/inflation signal isn't diluted across the orthogonal components. Applied
+# to both the Aarambh combined PCA and the MMR macro-factor PCA. Still causal
+# (raw data is point-in-time).
+#   PCA_PASSTHROUGH_ENABLED — master on/off toggle (like AARAMBH_PCA_PREDICTORS).
+#   PCA_PASSTHROUGH         — which columns to reserve when enabled.
+PCA_PASSTHROUGH_ENABLED = True
+PCA_PASSTHROUGH = ("IN10Y", "IN02Y", "IN30Y")
+
+# What forward series the Intelligence layer (ConvergenceTuner calibration AND
+# the directional convergence test) is optimized to predict. Drives BOTH so the
+# whole pipeline stays coherent with the selected engine target.
+#   "target" — the SELECTED target's forward change (e.g. NIFTY50_PE). Coherent
+#              with what Aarambh models; over the 3–20d calibration horizons
+#              earnings are ~flat, so ΔlogPE ≈ price return anyway.
+#   "nsei"   — NIFTY 50 index (^NSEI) forward PRICE return: the true,
+#              survivorship-correct benchmark. Use when you want a tradeable
+#              price signal regardless of the engine target.
+#   "basket" — equal-weighted constituent basket return (a real return, but
+#              survivorship-biased — built from TODAY's members).
+# "nsei"/"basket" fall back to each other, then to "target", if data is missing.
+#
+# DATA-BACKED DEFAULT = "nsei" (2026-06-15 study, real ConvergenceTuner, 50
+# trials each, predictive mode). Calibrating the convergence weights against the
+# forward label gave:
+#     label      val IC   fold-stab   walk-forward (re-cal, purged OOS)
+#     target=PE  +0.148   100%        100% durable  (+0.156)
+#     nsei       +0.133   100%        100% durable  (+0.137)
+#     basket     +0.038    80%         67% NOT durable
+# The survivorship-biased BASKET poisons the calibration (train IC 0.163 ≫ val
+# 0.038 — it overfits survivor drift), which is what produced every prior run's
+# "walk-forward NOT durable" verdict. ^NSEI and PE both give a barely-fit,
+# strongly-generalizing, fully-durable calibration. ^NSEI is chosen as default:
+# it is the survivorship-correct PRICE return — the asset actually traded — and
+# is ~as strong as PE (which is marginally higher but a valuation proxy, not
+# tradeable). NEVER default to "basket". In predictive mode "target" now uses the
+# real target LEVEL (not the basket fallback) — see app.py label resolution.
+CALIBRATION_RETURN_LABEL = "nsei"
+
+# ── Experimental: predictive returns mode for Aarambh (default OFF) ──────────
+# When True, Aarambh stops regressing the PE *level* (a near-tautological fit
+# with no forward edge — see FINDINGS.md) and instead FORECASTS the forward
+# AARAMBH_FWD_HORIZON-day change of the target from trailing AARAMBH_FWD_MOM_K-day
+# momentum of the predictors (an ex-ante setup). Conviction becomes the forecast
+# itself (−prediction → bullish pole), and R²-vs-RW / IC then measure genuine
+# out-of-sample forecast skill rather than persistence. This is a research head:
+# every levels sweep shows no edge, so this tests whether a returns forecast
+# carries IC the levels model structurally cannot. Bypasses the combined-PCA
+# predictor gate (uses raw momentum features). Off by default — it changes the
+# engine's thesis from mean-reversion-to-fair-value to momentum forecasting.
+AARAMBH_FORWARD_SIGNAL = True
+AARAMBH_FWD_HORIZON = 10   # forecast horizon (trading days)
+AARAMBH_FWD_MOM_K = 20     # trailing momentum window for the predictor features
 
 # Signal thresholds (conviction score → signal mapping)
 CONVICTION_STRONG = 60
@@ -158,7 +242,6 @@ GLOBAL_MACRO_MAP = {
     "International Corporate Bonds":     "IBND",
     "Eurozone Government Bond":          "IEGA.L",
     "Eurozone Corporate Bond (IG)":      "IEAC.L",
-    "Germany Govt Bonds (Bunds/Long)":   "BUNL.L",
     "Germany Short-Term (Schatz)":       "SDEU.L",
     "UK Gilts":                          "IGLT.L",
     "UK Gilts (Inflation-Linked)":       "INXG.L",
