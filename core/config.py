@@ -7,7 +7,7 @@ CORE — Merged from both Aarambh (correl.py) and Nirnay (nirnay_core.py) monoli
 
 # ─── Version / Product ───────────────────────────────────────────────────────
 
-VERSION = "1.4.22"
+VERSION = "1.4.23"
 PRODUCT_NAME = "NISHKARSH"
 COMPANY = "@thebullishvalue"
 
@@ -24,7 +24,10 @@ MAX_TRAIN_SIZE = 2000
 REFIT_INTERVAL = 10
 RIDGE_ALPHAS = (0.01, 0.1, 1.0, 10.0, 100.0)
 HUBER_EPSILON = 1.35
-HUBER_MAX_ITER = 500
+# 200 is bit-identical to 500 here: on real data the walk-forward Huber fits
+# converge well before the cap (0 of 140 chunks hit 150 iters), and OOS R²/IC
+# are unchanged from max_iter 200→500. Trimmed purely to drop wasted headroom.
+HUBER_MAX_ITER = 200
 OU_PROJECTION_DAYS = 90
 MIN_DATA_POINTS = 1500
 
@@ -46,7 +49,7 @@ AARAMBH_PCA_N_COMPONENTS = 9
 
 # When True, the 44 custom engineered predictors (yield spreads, real rates,
 # credit/commodity ratios, FX momentum, cross-asset composites — see
-# CUSTOM_PREDICTORS.md / analytics/custom_features.py) are computed and fed
+# docs/CUSTOM_PREDICTORS.md / analytics/custom_features.py) are computed and fed
 # into both engines via the causal PCA gate (all 44 → MMR; 41 → Aarambh, with
 # the 3 PE/PB/DY-embedding ones excluded to avoid target leakage). Toggle off
 # to A/B against the base feature set. All features are causal & non-repainting.
@@ -94,7 +97,7 @@ CALIBRATION_RETURN_LABEL = "nsei"
 
 # ── Experimental: predictive returns mode for Aarambh (default OFF) ──────────
 # When True, Aarambh stops regressing the PE *level* (a near-tautological fit
-# with no forward edge — see FINDINGS.md) and instead FORECASTS the forward
+# with no forward edge — see docs/FINDINGS.md) and instead FORECASTS the forward
 # AARAMBH_FWD_HORIZON-day change of the target from trailing AARAMBH_FWD_MOM_K-day
 # momentum of the predictors (an ex-ante setup). Conviction becomes the forecast
 # itself (−prediction → bullish pole), and R²-vs-RW / IC then measure genuine
