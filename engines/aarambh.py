@@ -556,7 +556,11 @@ class FairValueEngine:
                 # random_state pins the "random" coordinate-descent selection and
                 # the CV folds — without it the engine is non-deterministic and the
                 # signal flickers run-to-run on identical data.
-                enet = ElasticNetCV(l1_ratio=[0.5, 0.9, 1.0], n_alphas=10, cv=2, max_iter=2000, tol=1e-2, selection="random", random_state=42, n_jobs=1)
+                # `alphas=10` (integer) replaces the old `n_alphas=10`, which was
+                # deprecated in scikit-learn 1.7 and removed in 1.9. Passing an
+                # integer to `alphas` auto-generates that many path values and is
+                # behaviour-identical, while working on 1.7+ (including the cloud's 1.9).
+                enet = ElasticNetCV(l1_ratio=[0.5, 0.9, 1.0], alphas=10, cv=2, max_iter=2000, tol=1e-2, selection="random", random_state=42, n_jobs=1)
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
                     enet.fit(X_scaled, y_train, sample_weight=weights)
