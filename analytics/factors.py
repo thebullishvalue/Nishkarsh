@@ -115,37 +115,61 @@ def build_causal_macro_factors(
     factors = np.full((n, k), np.nan)
     prev_comp: np.ndarray | None = None
 
-    # Refit at each block boundary on the expanding window, then transform the
-    # whole block in one call. Rows in [t, t+refit_every) use a PCA trained only
-    # on rows < t, so every factor value is causal; block boundaries are
-    # deterministic, so the series is prefix-invariant (backtest-safe).
+    # Causal expanding-window PCA, computed INCREMENTALLY. The factor at row t is
+    # produced by a fit trained only on rows < t; refits happen on block
+    # boundaries so the series is prefix-invariant (backtest-safe). Rather than
+    # re-fit sklearn on the whole window every block — O(refits · window · m²) —
+    # we carry running sufficient statistics (Σx and Σxxᵀ) and extend them by one
+    # block per step, making the whole pass O(n · m²). The window correlation
+    # matrix is eigendecomposed directly; this reproduces the previous
+    # StandardScaler + PCA(covariance_eigh) output to ~1e-13 while being far
+    # cheaper on a weak single-thread CPU, and it is deterministic and
+    # independent of sklearn's solver/sign internals (its own sign convention is
+    # applied below). Covariance is translation-invariant, so we accumulate
+    # around a fixed CAUSAL shift (the first-window mean) purely for
+    # floating-point stability — it changes nothing and uses no future data.
+    shift = X[:min_train].mean(axis=0)
+    Xs = X - shift
+    s1 = np.zeros(m)
+    s2 = np.zeros((m, m))
+    _seed = Xs[:min_train]
+    s1 += _seed.sum(axis=0)
+    s2 += _seed.T @ _seed
+
     t = min_train
     while t < n:
-        x_train = X[:t]  # rows 0..t-1 only → causal
-        scaler = StandardScaler().fit(x_train)
-        # svd_solver="covariance_eigh" eigendecomposes the m×m covariance — for a
-        # tall panel (n rows >> m macros) this is exactly equivalent to the full
-        # SVD (components match to ~1e-13) but ~3-4x faster, since this PCA is
-        # refit on the expanding window ~n/refit_every times. It is deterministic,
-        # so it keeps the guarantee the old svd_solver="full" was chosen for: the
-        # default "auto" switches to a RANDOMIZED solver for wide panels, which
-        # (without a seed) breaks determinism and prefix-invariance — the factor
-        # series would change run-to-run and leak under truncation.
-        pca = PCA(n_components=k, svd_solver="covariance_eigh", random_state=42).fit(
-            scaler.transform(x_train)
-        )
-        comp = pca.components_.copy()
+        # Population moments over rows < t (true window mean = mean_s + shift).
+        mean_s = s1 / t
+        cov = s2 / t - np.outer(mean_s, mean_s)
+        scale = np.sqrt(np.maximum(np.diag(cov), 0.0))
+        scale[scale == 0.0] = 1.0  # match StandardScaler's handle_zeros_in_scale
+        corr = cov / np.outer(scale, scale)
+        eigvals, eigvecs = np.linalg.eigh(corr)  # ascending; corr is symmetric
+        top = np.argsort(eigvals)[::-1][:k]
+        comp = eigvecs[:, top].T.copy()  # (k, m) — top-k components
+        # Deterministic sign: make the largest-magnitude loading positive.
+        for r in range(comp.shape[0]):
+            j = int(np.argmax(np.abs(comp[r])))
+            if comp[r, j] < 0:
+                comp[r] = -comp[r]
         if prev_comp is not None:
             # Align signs to the previous fit so the factor series doesn't flip
-            # at refit boundaries (PCA component sign is arbitrary).
+            # at refit boundaries (component sign is otherwise arbitrary).
             for j in range(min(len(comp), len(prev_comp))):
                 if float(np.dot(comp[j], prev_comp[j])) < 0:
                     comp[j] = -comp[j]
-            pca.components_ = comp
         prev_comp = comp
 
         block_end = min(t + refit_every, n)
-        factors[t:block_end] = pca.transform(scaler.transform(X[t:block_end]))[:, :k]
+        # z-score the block on the window's mean/scale, then project. The PCA mean
+        # of the standardized training data is exactly 0, so there is no extra
+        # centering term: factors = ((X[block] − window_mean) / scale) · compᵀ.
+        z_block = (X[t:block_end] - (mean_s + shift)) / scale
+        factors[t:block_end] = z_block @ comp.T
+
+        _blk = Xs[t:block_end]
+        s1 += _blk.sum(axis=0)
+        s2 += _blk.T @ _blk
         t = block_end
 
     cols = [f"MACRO_PC{i + 1}" for i in range(k)]
