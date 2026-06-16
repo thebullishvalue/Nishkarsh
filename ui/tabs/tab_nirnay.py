@@ -208,7 +208,34 @@ def _render_individual_constituents(nirnay_constituent_dfs):
 #  MAIN RENDER FUNCTION
 # ═══════════════════════════════════════════════════════════════════════
 
-def render_nirnay_tab() -> None:
+def _filter_timeframe(df_n: pd.DataFrame, selected_tf: str) -> pd.DataFrame:
+    """Restrict the daily Nirnay frame to the globally-selected time range.
+
+    Mirrors the window math the other tabs apply (3M/6M/1Y/2Y/ALL) so the
+    Nirnay charts respond to the same top-of-page selector buttons. The frame
+    is date-indexed; we slice on the start so the latest snapshot (the metric
+    cards' ``.iloc[-1]``) is unaffected.
+    """
+    if selected_tf == "ALL" or df_n.empty:
+        return df_n
+    idx = pd.to_datetime(pd.Index(df_n.index), errors="coerce")
+    if idx.isna().all():
+        # Non-datetime index — fall back to a trading-day tail count.
+        from core.config import TIMEFRAME_TRADING_DAYS
+        n_days = TIMEFRAME_TRADING_DAYS.get(selected_tf, 252)
+        return df_n.iloc[max(0, len(df_n) - n_days):]
+    offsets = {
+        "3M": pd.DateOffset(months=3), "6M": pd.DateOffset(months=6),
+        "1Y": pd.DateOffset(years=1), "2Y": pd.DateOffset(years=2),
+    }
+    off = offsets.get(selected_tf)
+    if off is None:
+        return df_n
+    cutoff = idx.max() - off
+    return df_n[np.asarray(idx >= cutoff)]
+
+
+def render_nirnay_tab(selected_tf: str = "ALL") -> None:
     """Nirnay tab — constituent regime intelligence with cyan system identity.
 
     Analytical flow:
@@ -259,6 +286,13 @@ def render_nirnay_tab() -> None:
     ]:
         if col not in df_n.columns:
             df_n[col] = default
+
+    # Apply the global time-range selector so every chart below honors the
+    # 3M/6M/1Y/2Y/ALL buttons (was previously always full-history).
+    df_n = _filter_timeframe(df_n, selected_tf)
+    if df_n.empty:
+        st.info("No Nirnay data in the selected time range.")
+        return
 
     dates = list(df_n.index)
 
