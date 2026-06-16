@@ -10,23 +10,26 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
-from numba import njit
 from analytics.utils import MathUtils
 
-@njit(cache=True)
-def _njit_forward_step(transition_matrix: np.ndarray, state_probabilities: np.ndarray,
-                       emissions: np.ndarray) -> np.ndarray:
+
+def _hmm_forward_step(transition_matrix: np.ndarray, state_probabilities: np.ndarray,
+                      emissions: np.ndarray) -> np.ndarray:
+    """One forward-algorithm step (vectorized NumPy).
+
+    Kept as plain NumPy: the operation is a 3×3 matrix-vector product invoked
+    once per bar per constituent. Numba JIT warm-up cost exceeded the per-call
+    saving at this size and added a compile-time dependency for no benefit.
+    """
     predicted = transition_matrix.T @ state_probabilities
     updated = emissions * predicted
     total = np.sum(updated)
     if total > 1e-10:
-        updated = updated / total
-    else:
-        updated = np.array([0.33, 0.34, 0.33])
-    return updated
+        return updated / total
+    return np.array([0.33, 0.34, 0.33])
 
-@njit(cache=True)
-def _njit_gaussian_pdf(x: float, mean: float, std: float) -> float:
+
+def _gaussian_pdf(x: float, mean: float, std: float) -> float:
     var = std ** 2
     denom = (2 * np.pi * var) ** 0.5
     num = np.exp(-(x - mean) ** 2 / (2 * var))
@@ -178,7 +181,7 @@ class AdaptiveHMM:
     def _emission_prob(self, observation: float, state_idx: int) -> float:
         """Emission probability for a given state with static epsilon shrinkage."""
         std = self.state.emission_stds[state_idx] + 1e-4  # Epsilon diagonal penalty
-        return _njit_gaussian_pdf(
+        return _gaussian_pdf(
             observation,
             self.state.emission_means[state_idx],
             std
@@ -187,7 +190,7 @@ class AdaptiveHMM:
     def _forward_step(self, observation: float) -> np.ndarray:
         """Single step of the forward algorithm vectorized via Numba."""
         emissions = np.array([self._emission_prob(observation, s) for s in range(3)])
-        updated = _njit_forward_step(
+        updated = _hmm_forward_step(
             self.state.transition_matrix,
             self.state.state_probabilities,
             emissions

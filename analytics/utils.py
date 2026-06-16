@@ -114,6 +114,64 @@ def adaptive_threshold(history: np.ndarray, percentile: float) -> float:
     return float(np.percentile(history, percentile))
 
 
+def causal_gram_schmidt_orthogonalize(matrix: np.ndarray) -> np.ndarray:
+    """Causal, unique-magnitude Gram-Schmidt orthogonalization of columns.
+
+    Two deliberate properties, both fixing defects that a naive in-sample,
+    unit-renormalized Gram-Schmidt has when used to build a *signal*:
+
+    1. **Causal basis.** The projection coefficient of column ``j`` onto an
+       earlier orthogonal component ``p`` at row ``t`` is estimated only from
+       rows ``< t`` (expanding cumulative dot-products, shifted by one). No
+       future information enters the value at ``t``, so historical composite
+       values do not change as new bars arrive — the series is backtest-safe.
+
+    2. **No renormalization.** Each orthogonal column keeps its *natural*
+       magnitude, i.e. the size of its unique contribution. A column that is
+       largely redundant with earlier ones collapses to a small residual and
+       therefore contributes little to the composite — instead of being
+       rescaled back up to unit RMS, which would promote its noise to full
+       weight. The composite ``Σ uⱼ`` is thus a genuine sum of *independent*
+       contributions at their true scale.
+
+    Parameters
+    ----------
+    matrix : np.ndarray
+        Shape ``(n_obs, k)``. Columns ordered by decreasing primacy (the first
+        is preserved). Non-finite entries are treated as 0.
+
+    Returns
+    -------
+    np.ndarray
+        Same shape; column ``0`` unchanged, each later column the causal
+        residual after removing its projection onto earlier components.
+    """
+    M = np.asarray(matrix, dtype=np.float64)
+    if M.ndim != 2:
+        raise ValueError("causal_gram_schmidt_orthogonalize expects a 2-D matrix")
+    M = np.where(np.isfinite(M), M, 0.0)
+    n, k = M.shape
+    U = np.zeros_like(M)
+    if k == 0:
+        return U
+    U[:, 0] = M[:, 0]
+    eps = 1e-12
+    for i in range(1, k):
+        resid = M[:, i].copy()
+        for p in range(i):
+            up = U[:, p]
+            cross = np.cumsum(M[:, i] * up)
+            denom = np.cumsum(up * up)
+            # Shift by one row → coefficient at t uses only rows < t (causal).
+            cross_sh = np.concatenate(([0.0], cross[:-1]))
+            denom_sh = np.concatenate(([0.0], denom[:-1]))
+            safe_denom = np.where(denom_sh > eps, denom_sh, 1.0)
+            beta = np.where(denom_sh > eps, cross_sh / safe_denom, 0.0)
+            resid = resid - beta * up
+        U[:, i] = resid
+    return U
+
+
 def gaussian_pdf(x: float, mean: float, std: float) -> float:
     """Gaussian probability density function.
 
