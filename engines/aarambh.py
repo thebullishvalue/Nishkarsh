@@ -94,12 +94,23 @@ class FairValueEngine:
         self.pivots: dict = {}
         self.residual_stats: dict = {}
         self.hurst: float = 0.5
+        # Conviction bands — empirical, recomputed per fit from the realized
+        # conviction distribution (market-led). Config constants are the
+        # cold-start prior used until enough history exists.
+        self.conviction_levels: dict = {
+            "weak": float(CONVICTION_WEAK),
+            "moderate": float(CONVICTION_MODERATE),
+            "strong": float(CONVICTION_STRONG),
+        }
         self.latest_feature_impacts: dict = {}
+        # Ground-truth forward-edge assessment (set in fit). Empty until then.
+        self.signal_edge: dict = {}
         self.feature_impact_history: list[dict] = []
         self.theta_history: list[float] = []
         self.break_dates: list[int] = []
         self.feature_names: list[str] = []
         self.n_samples: int = 0
+        self.forward_signal: bool = False
         self.y: np.ndarray = np.array([])
         self.predictions: np.ndarray = np.array([])
         self.model_spread: np.ndarray = np.array([])
@@ -113,13 +124,24 @@ class FairValueEngine:
         y: np.ndarray,
         feature_names: list[str] | None = None,
         progress_callback: Callable | None = None,
+        forward_signal: bool = False,
     ) -> "FairValueEngine":
-        """Run the full walk-forward pipeline."""
+        """Run the full walk-forward pipeline.
+
+        forward_signal: when True (PREDICTIVE mode), ``y`` is a FORWARD return
+            (target change t→t+h) forecast from lagged features, so the tradeable
+            signal is the model's PREDICTION (expected forward return), not the
+            fair-value residual. The conviction stack is driven by ``-prediction``
+            so a positive expected forward return maps to the engine's bullish
+            (oversold) pole. R²/R²-vs-RW still measure forecast skill (prediction
+            vs realized forward return).
+        """
         start_time = time.time()
 
         self.feature_names = feature_names or [f"X{i}" for i in range(X.shape[1])]
         self.n_samples = len(y)
         self.y = y.copy()
+        self.forward_signal = forward_signal
 
         # Detect structural breaks
         self.break_dates = detect_structural_breaks(y)
@@ -127,9 +149,15 @@ class FairValueEngine:
         # Walk-forward regression
         self._walk_forward_regression(X, y, progress_callback)
 
-        # Compute all downstream analytics
+        # Per-period residual = realized − predicted; model stats are computed on
+        # the raw target (returns in forward mode) so R²/R²-vs-RW stay honest.
         self.residuals = self.y - self.predictions
         self._compute_model_stats()
+        if forward_signal:
+            # Predictive mode: the signal IS the forecast. Drive the conviction
+            # stack with -prediction so a positive expected forward return maps
+            # to the bullish (oversold) pole — instead of the fair-value residual.
+            self.residuals = -np.nan_to_num(self.predictions, nan=0.0)
         self._compute_multi_lookback_signals()
         self._compute_breadth_metrics()
         self._compute_ddm_conviction()
@@ -138,11 +166,46 @@ class FairValueEngine:
         self._compute_forward_changes()
         self._compute_ou_diagnostics()
         self._compute_hurst()
+        self._compute_signal_edge()
 
         if progress_callback:
             progress_callback(1.0, "Done")
 
         return self
+
+    def _compute_signal_edge(self) -> None:
+        """Ground-truth forward-edge test from realized signal performance.
+
+        Independent of R²/Hurst (which only describe the *level*, not whether
+        the signal works). Asks the only question that matters: when the engine
+        said BUY (undervalued → expect PE to rise), did PE actually rise — with
+        statistical significance? And symmetrically for SELL. If neither
+        direction shows significant *correct* forward movement, there is no
+        tradeable edge; if a direction shows significant *wrong* movement, the
+        signal is inverted (anti-predictive). Sets ``self.signal_edge``.
+        """
+        perf = self.get_signal_performance()
+        has_edge = False
+        inverted = False
+        best_horizon: int | None = None
+        for p in (5, 10, 20):
+            r = perf.get(p, {})
+            bc, sc = r.get("buy_count", 0), r.get("sell_count", 0)
+            # BUY should precede a rise (buy_avg > 0); SELL is stored as -fwd,
+            # so a correct SELL also has sell_avg > 0.
+            if bc >= 20 and r.get("buy_avg", 0) > 0 and r.get("buy_p_value", 1) < 0.10:
+                has_edge, best_horizon = True, p
+            if sc >= 20 and r.get("sell_avg", 0) > 0 and r.get("sell_p_value", 1) < 0.10:
+                has_edge, best_horizon = True, p
+            if bc >= 20 and r.get("buy_avg", 0) < 0 and r.get("buy_p_value", 1) < 0.05:
+                inverted = True
+            if sc >= 20 and r.get("sell_avg", 0) < 0 and r.get("sell_p_value", 1) < 0.05:
+                inverted = True
+        self.signal_edge = {
+            "has_forward_edge": bool(has_edge),
+            "inverted": bool(inverted),
+            "best_horizon": best_horizon,
+        }
 
     def get_current_signal(self) -> dict:
         """Derive the current composite signal from the latest observation."""
@@ -155,22 +218,32 @@ class FairValueEngine:
                 "model_spread": 0, "has_bullish_div": False, "has_bearish_div": False,
                 "ou_half_life": 0, "adf_pvalue": 1.0, "kpss_pvalue": 0.0, "hurst": 0.5,
                 "theta_stable": True, "break_detected": False,
+                "conviction_levels": dict(self.conviction_levels),
+                "tradeable": False, "edge_assessment": "N/A — no data",
+                "forecast_skill_vs_rw": 0.0, "mean_reverting": False,
+                "random_walk_regime": True, "half_life_meaningful": False,
+                "display_strength": "NEUTRAL",
+                "has_forward_edge": False, "inverted": False,
             }
 
         current = self.ts_data.iloc[-1]
         conviction_bounded = current["ConvictionBounded"]
 
-        if conviction_bounded < -CONVICTION_STRONG:
+        lvl_strong = self.conviction_levels["strong"]
+        lvl_moderate = self.conviction_levels["moderate"]
+        lvl_weak = self.conviction_levels["weak"]
+
+        if conviction_bounded < -lvl_strong:
             signal, strength = "BUY", "STRONG"
-        elif conviction_bounded < -CONVICTION_MODERATE:
+        elif conviction_bounded < -lvl_moderate:
             signal, strength = "BUY", "MODERATE"
-        elif conviction_bounded < -CONVICTION_WEAK:
+        elif conviction_bounded < -lvl_weak:
             signal, strength = "BUY", "WEAK"
-        elif conviction_bounded > CONVICTION_STRONG:
+        elif conviction_bounded > lvl_strong:
             signal, strength = "SELL", "STRONG"
-        elif conviction_bounded > CONVICTION_MODERATE:
+        elif conviction_bounded > lvl_moderate:
             signal, strength = "SELL", "MODERATE"
-        elif conviction_bounded > CONVICTION_WEAK:
+        elif conviction_bounded > lvl_weak:
             signal, strength = "SELL", "WEAK"
         else:
             signal, strength = "HOLD", "NEUTRAL"
@@ -184,12 +257,54 @@ class FairValueEngine:
             confidence = "HIGH" if overbought_breadth >= 80 else "MEDIUM" if overbought_breadth >= 60 else "LOW"
         else:
             conviction_abs = abs(conviction_bounded)
-            confidence = "HIGH" if conviction_abs < 10 else "MEDIUM" if conviction_abs < 20 else "LOW"
+            confidence = "HIGH" if conviction_abs < lvl_weak * 0.5 else "MEDIUM" if conviction_abs < lvl_weak else "LOW"
 
         theta_stable = True
         if len(self.theta_history) >= 10:
             theta_cv = np.std(self.theta_history[-10:]) / max(np.mean(self.theta_history[-10:]), 1e-6)
             theta_stable = theta_cv < 0.5
+
+        # ── Forecast-edge assessment ──────────────────────────────────────
+        # The verdict is driven by REALIZED FORWARD PERFORMANCE (does a BUY
+        # actually precede a rise, significantly?), not by R²/Hurst — those
+        # describe the level, not whether the signal works, and a Hurst cutoff
+        # is brittle at the boundary (0.552 vs 0.55). R²-vs-RW and the
+        # random-walk regime are kept as supporting context only.
+        r2_vs_rw = float(self.model_stats.get("r2_vs_rw", 0.0))
+        adf_p = float(self.ou_params.get("adf_pvalue", 1.0))
+        mean_reverting = (adf_p < 0.05) and (self.hurst < 0.5)
+        random_walk_regime = (0.45 <= self.hurst <= 0.58) or (adf_p > 0.05)
+
+        edge = self.signal_edge or {}
+        has_forward_edge = bool(edge.get("has_forward_edge", False))
+        inverted = bool(edge.get("inverted", False))
+        best_h = edge.get("best_horizon")
+
+        tradeable = has_forward_edge and not inverted
+        if inverted:
+            edge_assessment = (
+                "INVERTED — signal historically anti-predictive "
+                "(BUY/SELL preceded the wrong direction, p<0.05)"
+            )
+        elif has_forward_edge:
+            edge_assessment = f"EDGE — signal predicted the correct direction at {best_h}d (p<0.10)"
+        elif random_walk_regime:
+            edge_assessment = "NO EDGE — random-walk regime; no significant forward predictive power"
+        else:
+            edge_assessment = "NO EDGE — no significant forward predictive power on history"
+
+        # OU half-life is meaningful only if residuals actually mean-revert.
+        half_life_meaningful = bool(mean_reverting)
+
+        # On a no-edge / inverted series, never show a confident directional
+        # call — collapse the displayed strength. In PREDICTIVE mode the
+        # conviction IS the directional forecast, so show its strength rather
+        # than the level-test "NO EDGE" label (the directional verdict lives in
+        # the convergence IC, not this magnitude flag).
+        if self.forward_signal:
+            display_strength = strength
+        else:
+            display_strength = strength if tradeable else ("INVERTED" if inverted else "NO EDGE")
 
         return {
             "signal": signal,
@@ -214,6 +329,22 @@ class FairValueEngine:
             "hurst": self.hurst,
             "theta_stable": theta_stable,
             "break_detected": len(self.break_dates) > 0,
+            "conviction_levels": dict(self.conviction_levels),
+            "tradeable": tradeable,
+            "edge_assessment": edge_assessment,
+            "forecast_skill_vs_rw": r2_vs_rw,
+            "mean_reverting": bool(mean_reverting),
+            "random_walk_regime": bool(random_walk_regime),
+            "half_life_meaningful": half_life_meaningful,
+            "display_strength": display_strength,
+            "has_forward_edge": has_forward_edge,
+            "inverted": inverted,
+            # In predictive mode, tradeable/edge_assessment/inverted reflect the
+            # LEVEL/magnitude forward-edge test, which is NOT the verdict — the
+            # tradeable edge is DIRECTIONAL (graded by the convergence IC). UI/log
+            # consumers branch on this flag to avoid the "valuation context"
+            # framing, which only applies to fair-value (levels) mode.
+            "forward_signal": bool(self.forward_signal),
         }
 
     def get_model_stats(self) -> dict:
@@ -240,6 +371,14 @@ class FairValueEngine:
         for period in (5, 10, 20):
             buy_changes: list[float] = []
             sell_changes: list[float] = []
+            # Enforce NON-OVERLAPPING forward windows: consecutive included
+            # signals must be ≥ `period` bars apart. Overlapping h-day forward
+            # returns sampled at nearby signal dates are heavily autocorrelated,
+            # which violates the t-test's independence assumption and inflates
+            # significance by ~√h (a spurious t≈4.8 at 20d collapses to ≈1.1
+            # once the ~h-fold redundancy is removed).
+            last_buy = -(10 ** 9)
+            last_sell = -(10 ** 9)
 
             for i in range(burn_in, len(ts) - period):
                 score = ts["ConvictionScore"].iloc[i]
@@ -249,10 +388,12 @@ class FairValueEngine:
                 fwd_val = fwd.iloc[i]
                 if pd.isna(fwd_val):
                     continue
-                if score < -CONVICTION_MODERATE:
+                if score < -CONVICTION_MODERATE and (i - last_buy) >= period:
                     buy_changes.append(fwd_val)
-                if score > CONVICTION_MODERATE:
+                    last_buy = i
+                if score > CONVICTION_MODERATE and (i - last_sell) >= period:
                     sell_changes.append(-fwd_val)
+                    last_sell = i
 
             buy_stats = _compute_significance(buy_changes)
             sell_stats = _compute_significance(sell_changes)
@@ -285,6 +426,10 @@ class FairValueEngine:
         n = self.n_samples
         self.predictions = np.full(n, np.nan)
         self.model_spread = np.zeros(n)
+        # Track how often a chunk had to fall back to the train-mean because no
+        # ensemble member fit — surfaced as model_coverage in model_stats.
+        self._wf_chunks_total = 0
+        self._wf_chunks_fallback = 0
 
         for t in range(MIN_TRAIN_SIZE):
             self.predictions[t] = float(np.mean(y[:t])) if t > 0 else float(y[0])
@@ -318,7 +463,12 @@ class FairValueEngine:
         self, t_start: int, t_end: int, X: np.ndarray, y: np.ndarray,
         global_weights: np.ndarray,
     ) -> tuple[int, int, np.ndarray, np.ndarray, dict, np.ndarray]:
-        valid_breaks = [b for b in self.break_dates if b < t_start]
+        # Detect breaks causally on data available up to this chunk only.
+        # Using the globally-detected self.break_dates would leak the future:
+        # whether (and where) a break exists before t_start was decided using
+        # data after t_start, which shifts the historical training window and
+        # makes the backtest non-reproducible under truncation.
+        valid_breaks = detect_structural_breaks(y[:t_start])
         last_break = valid_breaks[-1] if valid_breaks else 0
         max_lookback = max(0, t_start - MAX_TRAIN_SIZE)
 
@@ -333,6 +483,7 @@ class FairValueEngine:
             X[start_idx:t_start], y[start_idx:t_start], t_start, global_weights
         )
 
+        self._wf_chunks_total += 1
         X_chunk = X[t_start:t_end]
         if len(X_chunk) == 0:
             return t_start, t_end, np.array([]), np.array([]), models, valid_cols
@@ -360,6 +511,7 @@ class FairValueEngine:
                     preds[nans] = float(np.mean(y[start_idx:t_start]))
                     spreads[nans] = 1e-6
         else:
+            self._wf_chunks_fallback += 1
             fallback = float(np.mean(y[start_idx:t_start]))
             preds = np.full(t_end - t_start, fallback)
             spreads = np.full(t_end - t_start, 1e-6)
@@ -401,7 +553,10 @@ class FairValueEngine:
                 logging.warning("Huber fit failed at t=%d: %s", t, e)
 
             try:
-                enet = ElasticNetCV(l1_ratio=[0.5, 0.9, 1.0], n_alphas=10, cv=2, max_iter=2000, tol=1e-2, selection="random", n_jobs=1)
+                # random_state pins the "random" coordinate-descent selection and
+                # the CV folds — without it the engine is non-deterministic and the
+                # signal flickers run-to-run on identical data.
+                enet = ElasticNetCV(l1_ratio=[0.5, 0.9, 1.0], n_alphas=10, cv=2, max_iter=2000, tol=1e-2, selection="random", random_state=42, n_jobs=1)
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
                     enet.fit(X_scaled, y_train, sample_weight=weights)
@@ -426,44 +581,71 @@ class FairValueEngine:
         valid_cols: np.ndarray, t_start: int,
         X_val: np.ndarray | None = None, y_val: np.ndarray | None = None,
     ) -> tuple[list[np.ndarray], list[float]]:
+        """Predict the forward chunk with each ensemble member and weight by
+        honest out-of-sample accuracy.
+
+        Each member's weight is the inverse MAE of *that member's* predictions
+        on the held-out validation rows ``(X_val, y_val)`` — i.e. the same
+        model is asked to predict the validation window, and members that fit
+        the recent past better get more weight. (The previous implementation
+        compared ``y_val`` against the forward-chunk predictions, an unrelated
+        time slice, making every weight meaningless.)
+        """
         preds_list: list[np.ndarray] = []
         weights: list[float] = []
 
-        def _add_safe_pred(arr_pred: np.ndarray) -> None:
-            arr_clean = np.where(np.isfinite(arr_pred) & (np.abs(arr_pred) < 1e10), arr_pred, np.nan)
-            if not np.all(np.isnan(arr_clean)):
-                preds_list.append(arr_clean)
-                if X_val is not None and len(X_val) > 0 and scaler is not None and _HAS_SKLEARN:
-                    try:
-                        from sklearn.metrics import mean_absolute_error
-                        val_scaled = scaler.transform(X_val[:, valid_cols])
-                        val_pred = arr_pred  # simplified: use same model
-                        mae = mean_absolute_error(y_val, val_pred[:len(y_val)]) if len(val_pred) >= len(y_val) else 1.0
-                        weights.append(max(1.0 / max(mae, 1e-6), 0.01))
-                    except Exception:
-                        weights.append(0.05)
-                else:
-                    weights.append(1.0)
+        if not (_HAS_SKLEARN and scaler is not None):
+            return preds_list, weights
 
         X_pred_clean = X_pred[:, valid_cols]
-        if _HAS_SKLEARN and scaler is not None:
+        try:
+            X_pred_scaled = scaler.transform(X_pred_clean)
+        except Exception:
+            return preds_list, weights
+
+        # Scale the validation window once for honest per-member weighting.
+        X_val_scaled: np.ndarray | None = None
+        if X_val is not None and len(X_val) > 0 and y_val is not None and len(y_val) > 0:
             try:
-                X_scaled = scaler.transform(X_pred_clean)
-                for key in ["ridge", "huber", "elasticnet"]:
-                    m = models.get(key)
-                    if m is not None:
-                        try:
-                            _add_safe_pred(m.predict(X_scaled))
-                        except Exception:
-                            pass
-                if models.get("ols") is not None and models.get("pca_wls") is not None:
-                    try:
-                        X_pca_pred = models["pca_wls"].transform(X_scaled)
-                        _add_safe_pred(models["ols"].predict(X_pca_pred))
-                    except Exception:
-                        pass
+                X_val_scaled = scaler.transform(X_val[:, valid_cols])
             except Exception:
-                pass
+                X_val_scaled = None
+
+        def _member_predict(key: str, X_scaled: np.ndarray) -> np.ndarray | None:
+            m = models.get(key)
+            if m is None:
+                return None
+            try:
+                if key == "ols":  # PCA → OLS pipeline
+                    pca = models.get("pca_wls")
+                    if pca is None:
+                        return None
+                    return m.predict(pca.transform(X_scaled))
+                return m.predict(X_scaled)
+            except Exception:
+                return None
+
+        for key in ("ridge", "huber", "elasticnet", "ols"):
+            chunk_pred = _member_predict(key, X_pred_scaled)
+            if chunk_pred is None:
+                continue
+            chunk_clean = np.where(
+                np.isfinite(chunk_pred) & (np.abs(chunk_pred) < 1e10), chunk_pred, np.nan
+            )
+            if np.all(np.isnan(chunk_clean)):
+                continue
+            preds_list.append(chunk_clean)
+
+            # Inverse-MAE weight from the SAME model on the validation window.
+            weight = 1.0
+            if X_val_scaled is not None:
+                val_pred = _member_predict(key, X_val_scaled)
+                if val_pred is not None and len(val_pred) == len(y_val) and np.all(np.isfinite(val_pred)):
+                    mae = float(mean_absolute_error(y_val, val_pred))
+                    weight = max(1.0 / max(mae, 1e-6), 0.01)
+                else:
+                    weight = 0.05
+            weights.append(weight)
 
         return preds_list, weights
 
@@ -519,10 +701,19 @@ class FairValueEngine:
         else:
             r2_vs_rw = 0.0
 
+        total_chunks = max(getattr(self, "_wf_chunks_total", 0), 1)
+        fallback_chunks = getattr(self, "_wf_chunks_fallback", 0)
+        model_coverage = 1.0 - fallback_chunks / total_chunks
+
         self.model_stats = {
             "r2_oos": r2, "r2_vs_rw": r2_vs_rw, "rmse_oos": rmse,
             "mae_oos": mae, "n_obs": len(y_v), "n_features": len(self.feature_names),
             "avg_model_spread": float(np.mean(self.model_spread[oos_mask])),
+            # Fraction of walk-forward chunks where ≥1 ensemble member fit
+            # (vs. silently falling back to the train mean). < 1.0 means the
+            # "fair value" line is partly a moving average — surface it.
+            "model_coverage": float(model_coverage),
+            "n_fallback_chunks": int(fallback_chunks),
         }
 
     def _compute_multi_lookback_signals(self) -> None:
@@ -605,19 +796,63 @@ class FairValueEngine:
         self.ts_data["ConvictionUpper"] = _apply_conviction_bounds(filtered + 1.96 * ddm_std)
         self.ts_data["ConvictionLower"] = _apply_conviction_bounds(filtered - 1.96 * ddm_std)
 
+        # Derive market-led conviction bands from the realized distribution,
+        # causally (each bar's band uses only prior history).
+        weak_arr, moderate_arr, strong_arr = self._compute_causal_conviction_levels(
+            np.asarray(bounded)
+        )
+
         regimes = []
-        for score_bounded in bounded:
-            if score_bounded < -CONVICTION_STRONG:
+        for i, score_bounded in enumerate(bounded):
+            if score_bounded < -strong_arr[i]:
                 regimes.append("STRONGLY OVERSOLD")
-            elif score_bounded < -CONVICTION_WEAK:
+            elif score_bounded < -weak_arr[i]:
                 regimes.append("OVERSOLD")
-            elif score_bounded > CONVICTION_STRONG:
+            elif score_bounded > strong_arr[i]:
                 regimes.append("STRONGLY OVERBOUGHT")
-            elif score_bounded > CONVICTION_WEAK:
+            elif score_bounded > weak_arr[i]:
                 regimes.append("OVERBOUGHT")
             else:
                 regimes.append("NEUTRAL")
         self.ts_data["Regime"] = regimes
+
+        # Latest band (expanding through the final bar) → used by
+        # get_current_signal for today's decision. Using all history up to now
+        # is causal for the live point estimate.
+        if len(weak_arr):
+            self.conviction_levels = {
+                "weak": float(weak_arr[-1]),
+                "moderate": float(moderate_arr[-1]),
+                "strong": float(strong_arr[-1]),
+            }
+
+    @staticmethod
+    def _compute_causal_conviction_levels(
+        bounded: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Per-row conviction bands from the EXPANDING |conviction| distribution.
+
+        Replaces the fixed 60/40/20 cutoffs *and* the earlier full-sample
+        percentile version (which leaked future information into historical
+        labels). Each band at bar ``t`` is an expanding quantile of
+        ``|conviction|`` over rows ``< t`` (shifted), so "STRONG" means strong
+        relative to this market's own *prior* history and the historical Regime
+        track is backtest-safe. Percentile knots (50/75/90) are structural
+        choices, not magnitude thresholds. Config CONVICTION_* is the cold-start
+        prior until ≥50 observations exist; a small floor and row-wise ordering
+        keep the bands well-formed.
+        """
+        abs_b = pd.Series(np.abs(np.asarray(bounded, dtype=np.float64)))
+        weak = abs_b.expanding(min_periods=50).quantile(0.50).shift(1)
+        moderate = abs_b.expanding(min_periods=50).quantile(0.75).shift(1)
+        strong = abs_b.expanding(min_periods=50).quantile(0.90).shift(1)
+        weak_a = weak.fillna(float(CONVICTION_WEAK)).clip(lower=5.0).to_numpy()
+        moderate_a = moderate.fillna(float(CONVICTION_MODERATE)).to_numpy()
+        strong_a = strong.fillna(float(CONVICTION_STRONG)).to_numpy()
+        # Enforce weak < moderate < strong row-wise.
+        moderate_a = np.maximum(moderate_a, weak_a + 1.0)
+        strong_a = np.maximum(strong_a, moderate_a + 1.0)
+        return weak_a, moderate_a, strong_a
 
     def _compute_divergences(self) -> None:
         n = len(self.ts_data)
@@ -721,6 +956,14 @@ class FairValueEngine:
 
             theta_std = np.std(self.theta_history) if len(self.theta_history) > 1 else 0.0
             dynamic_theta = self.theta_history[-1] if self.theta_history else theta
+            # If the rolling θ is unstable (its dispersion exceeds the stable
+            # base θ), the last-window estimate is unreliable — it produced an
+            # implausible sub-day half-life (1.7d) in real runs. Fall back to a
+            # robust estimate: the median rolling θ, or the base θ.
+            if theta_std > theta and len(self.theta_history) >= 5:
+                dynamic_theta = float(np.median(self.theta_history))
+                if abs(dynamic_theta - theta) > 3.0 * max(theta, 1e-4):
+                    dynamic_theta = theta
         else:
             theta, mu, sigma = 0.05, 0.0, max(float(np.std(r)), 1e-6)
             adf_pvalue, kpss_pvalue, vol_multiplier = 1.0, 0.0, 1.0

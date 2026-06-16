@@ -18,6 +18,13 @@ from analytics.regime import (
     GARCHDetector,
     CUSUMDetector,
 )
+from analytics.utils import causal_gram_schmidt_orthogonalize
+from core.config import (
+    NIRNAY_OVERSOLD,
+    NIRNAY_OVERBOUGHT,
+    NIRNAY_STRONG_BUY,
+    NIRNAY_STRONG_SELL,
+)
 
 
 # ─── Utility functions ───────────────────────────────────────────────────────
@@ -60,16 +67,26 @@ def calculate_msf(
 ) -> tuple[pd.Series, pd.Series, pd.Series, pd.Series]:
     """Calculate Market Strength Factor from OHLCV data.
 
-    Combines four orthogonal components:
-    - **Momentum**: Rate of change z-score
-    - **Microstructure**: Volume-weighted direction vs impact
+    Combines four components that are **explicitly orthogonalized via
+    Gram-Schmidt** before being summed, so the composite does not double-count
+    the inputs they share (momentum, trend and vol-adjusted momentum are all
+    functions of ``close.diff(5)``):
+
+    - **Momentum**: Rate of change z-score (primary; preserved unchanged)
     - **Trend**: Multi-timeframe composite (trend diff + momentum accel
-      + volume-adjusted momentum + mean reversion)
-    - **Flow**: Accumulation/distribution ratio + regime counting
+      + volume-adjusted momentum + mean reversion), less its momentum overlap
+    - **Microstructure**: Volume-weighted direction vs impact, residualized
+    - **Flow**: Accumulation/distribution ratio + volatility-adaptive regime
+      counting, residualized
+
+    Each component's significant-bar and band logic is volatility-adaptive
+    (no fixed percentage cut-offs).
 
     Returns
     -------
     msf_signal, micro_norm, momentum_norm, accum_norm
+        The diagnostic component series returned are the *pre*-orthogonalization
+        values (for display); ``msf_signal`` is the orthogonalized composite.
     """
     close = df["Close"]
 
@@ -116,20 +133,40 @@ def calculate_msf(
     accum_ratio = accum_ratio.fillna(0.5)
     accum_norm = 2.0 * (accum_ratio - 0.5)
     pct_change = close.pct_change(fill_method=None)
+    # Significant-bar threshold is volatility-adaptive, not a fixed 0.33%: a bar
+    # counts as up/down only if it exceeds a quarter of the stock's own recent
+    # daily sigma (causal, shifted). This adapts per-name and per-regime instead
+    # of applying one hardcoded percentage to every constituent.
+    bar_vol = (
+        pct_change.rolling(length, min_periods=5).std().shift(1).bfill()
+    )
+    bar_vol = bar_vol.fillna(pct_change.std()).replace(0, np.nan)
+    bar_cut = (0.25 * bar_vol).fillna(0.0)
     regime_signals = np.select(
-        [pct_change > 0.0033, pct_change < -0.0033], [1, -1], default=0
+        [pct_change > bar_cut, pct_change < -bar_cut], [1, -1], default=0
     )
     regime_count = pd.Series(regime_signals, index=df.index).cumsum()
     regime_raw = regime_count - regime_count.rolling(length).mean()
     regime_z = _zscore_clipped(regime_raw, length, clip)
     regime_norm = _sigmoid(regime_z, 1.5)
 
-    # Combine
-    osc_momentum = momentum_norm
-    osc_structure = (micro_norm + composite_trend_norm) / np.sqrt(2.0)
-    osc_flow = (accum_norm + regime_norm) / np.sqrt(2.0)
-    msf_raw = (osc_momentum + osc_structure + osc_flow) / np.sqrt(3.0)
-    msf_signal = _sigmoid(msf_raw * np.sqrt(3.0), 1.0)
+    # Combine — causal Gram-Schmidt orthogonalize the four components first.
+    # They share inputs (momentum, trend and vol-adjusted momentum are all
+    # functions of close.diff(5)), so a plain weighted sum double-counts that
+    # overlap. The causal variant (a) estimates the decorrelation basis from
+    # past rows only — historical MSF is backtest-safe — and (b) keeps each
+    # residual at its natural magnitude, so a redundant component contributes
+    # little instead of having its noise rescaled to full weight.
+    flow_norm = (accum_norm + regime_norm) / np.sqrt(2.0)
+    comp_matrix = np.column_stack([
+        momentum_norm.fillna(0.0).to_numpy(),          # primary: raw momentum
+        composite_trend_norm.fillna(0.0).to_numpy(),   # trend, less the momentum overlap
+        micro_norm.fillna(0.0).to_numpy(),             # microstructure residual
+        flow_norm.fillna(0.0).to_numpy(),              # flow residual
+    ])
+    ortho = causal_gram_schmidt_orthogonalize(comp_matrix)
+    msf_raw = ortho.sum(axis=1)
+    msf_signal = pd.Series(_sigmoid(msf_raw, 1.0), index=df.index)
 
     return msf_signal, micro_norm, momentum_norm, accum_norm
 
@@ -193,34 +230,42 @@ def calculate_mmr(
     
     n_rows = len(df)
     y_predicted = np.empty(n_rows, dtype=np.float64)
-    model_r2_arr = np.empty(n_rows, dtype=np.float64)
-    
+
     for i in range(n_rows):
         row_r2 = all_r2_arr[i]
         valid_mask = ~np.isnan(row_r2)
         if np.sum(valid_mask) < num_vars:
             y_predicted[i] = y_mean.iloc[i]
-            model_r2_arr[i] = 0.0
             continue
-            
+
         top_indices = np.argsort(row_r2[valid_mask])[-num_vars:]
         top_real_indices = np.where(valid_mask)[0][top_indices]
-        
+
         r2_sel = row_r2[top_real_indices]
         preds_sel = all_preds_arr[i, top_real_indices]
-        
+
         r2_sum = np.sum(r2_sel)
         if r2_sum > 1e-6:
             y_predicted[i] = np.sum(preds_sel * r2_sel) / r2_sum
-            model_r2_arr[i] = np.sum(r2_sel**2) / r2_sum
         else:
             y_predicted[i] = y_mean.iloc[i]
-            model_r2_arr[i] = 0.0
 
     deviation = target - pd.Series(y_predicted, index=df.index)
     mmr_z = _zscore_clipped(deviation, length, 3.0)
     mmr_signal = _sigmoid(mmr_z, 1.5)
-    mmr_quality = pd.Series(np.sqrt(model_r2_arr), index=df.index).fillna(0)
+
+    # Rolling out-of-sample skill of the composite fair-value model, benchmarked
+    # against a RANDOM WALK (naive last-value predictor) rather than the raw
+    # price-level variance. R² vs price-level is dominated by trend and inflates
+    # toward 1 for any model that merely tracks the drift; R² vs random walk
+    # asks the honest question — does the macro model beat "tomorrow ≈ today"?
+    #   R²_rw = 1 - Var(target - ŷ) / Var(target - target₋₁)
+    min_p = max(length // 2, 5)
+    resid_var = deviation.rolling(length, min_periods=min_p).var()
+    rw_resid = target.diff()
+    rw_var = rw_resid.rolling(length, min_periods=min_p).var().replace(0, np.nan)
+    r2_roll = (1.0 - resid_var / rw_var).clip(lower=0.0, upper=1.0)
+    mmr_quality = np.sqrt(r2_roll.fillna(0.0))
 
     # For display purposes (not trading logic), get the trailing global top drivers
     driver_details = []
@@ -258,6 +303,14 @@ def run_full_analysis(
     """
     if macro_columns is None:
         macro_columns = []
+
+    # Guarantee a unique, sorted DatetimeIndex. A duplicate date (yfinance
+    # occasionally returns one; a join against a duplicated macro index can also
+    # introduce them) would make every downstream `.loc[date]` return a frame
+    # instead of a row, corrupting the daily aggregation.
+    if df.index.duplicated().any():
+        df = df[~df.index.duplicated(keep="last")]
+    df = df.sort_index()
 
     df["MSF"], df["Micro"], df["Momentum"], df["Flow"] = calculate_msf(df, length, roc_len)
     df["MMR"], drivers, df["MMR_Quality"] = calculate_mmr(
@@ -303,9 +356,35 @@ def run_full_analysis(
     close_arr = df["Close"].to_numpy()
 
     agreement_arr = agreement.to_numpy() if hasattr(agreement, "to_numpy") else np.asarray(agreement)
-    strong_agreement = agreement_arr > 0.3
-    buy_signal = strong_agreement & (unified_osc < -5)
-    sell_signal = strong_agreement & (unified_osc > 5)
+
+    # Market-led, CAUSAL oscillator bands: expanding-window quantiles of THIS
+    # name's own oscillator / agreement history, shifted one bar so the cut-point
+    # at t uses only information available *before* t — no look-ahead, so the
+    # historical Condition / Buy / Sell / Divergence flags are backtest-safe.
+    # Config NIRNAY_* / 0.3 are the cold-start prior until ≥50 (20) bars exist.
+    osc_s = pd.Series(unified_osc, index=df.index)
+    os_cut_arr = (
+        osc_s.expanding(min_periods=50).quantile(0.30).shift(1)
+        .fillna(float(NIRNAY_OVERSOLD)).to_numpy()
+    )
+    ob_cut_arr = (
+        osc_s.expanding(min_periods=50).quantile(0.70).shift(1)
+        .fillna(float(NIRNAY_OVERBOUGHT)).to_numpy()
+    )
+    # Guard degenerate (flat) windows where the band would collapse.
+    _flat = (ob_cut_arr - os_cut_arr) < 1e-6
+    os_cut_arr = np.where(_flat, float(NIRNAY_OVERSOLD), os_cut_arr)
+    ob_cut_arr = np.where(_flat, float(NIRNAY_OVERBOUGHT), ob_cut_arr)
+
+    agree_s = pd.Series(agreement_arr, index=df.index)
+    agree_cut_arr = (
+        agree_s.expanding(min_periods=20).quantile(0.75).shift(1)
+        .fillna(0.3).clip(lower=0.05).to_numpy()
+    )
+
+    strong_agreement = agreement_arr > agree_cut_arr
+    buy_signal = strong_agreement & (unified_osc < os_cut_arr)
+    sell_signal = strong_agreement & (unified_osc > ob_cut_arr)
 
     # Divergence detection (shift(1) ↔ prepend NaN, drop last)
     prev_unified_osc = np.concatenate(([np.nan], unified_osc[:-1]))
@@ -315,13 +394,13 @@ def run_full_analysis(
         price_falling = close_arr < prev_close
         osc_falling = unified_osc < prev_unified_osc
         price_rising = close_arr > prev_close
-    bullish_div = osc_rising & price_falling & (unified_osc < -5)
-    bearish_div = osc_falling & price_rising & (unified_osc > 5)
+    bullish_div = osc_rising & price_falling & (unified_osc < os_cut_arr)
+    bearish_div = osc_falling & price_rising & (unified_osc > ob_cut_arr)
 
     condition = np.where(
-        unified_osc < -5,
+        unified_osc < os_cut_arr,
         "Oversold",
-        np.where(unified_osc > 5, "Overbought", "Neutral"),
+        np.where(unified_osc > ob_cut_arr, "Overbought", "Neutral"),
     )
 
     df = pd.concat(
@@ -364,6 +443,14 @@ def run_full_analysis(
 
     unified_vals = df["Unified"].values
 
+    # HMM confidence cuts tied to the model's uniform baseline (3 states → 1/3
+    # each) rather than magic 0.6/0.4: "strong" = twice the uniform prior,
+    # "weak" = a margin above it. Structural to the state space, not a market
+    # magnitude threshold.
+    uniform_p = 1.0 / 3.0
+    strong_p = 2.0 * uniform_p
+    weak_p = uniform_p + 0.07
+
     for i in range(len(df)):
         sig = unified_vals[i] if not np.isnan(unified_vals[i]) else 0.0
 
@@ -384,13 +471,13 @@ def run_full_analysis(
 
         if change:
             regime = "TRANSITION"
-        elif bull_p > 0.6:
+        elif bull_p > strong_p:
             regime = "BULL"
-        elif bear_p > 0.6:
+        elif bear_p > strong_p:
             regime = "BEAR"
-        elif bull_p > 0.4:
+        elif bull_p > weak_p:
             regime = "WEAK_BULL"
-        elif bear_p > 0.4:
+        elif bear_p > weak_p:
             regime = "WEAK_BEAR"
         else:
             regime = "NEUTRAL"
@@ -479,8 +566,14 @@ def aggregate_constituent_timeseries(
                 continue
             try:
                 row = df.loc[date]
+                # A duplicate date in a constituent's index makes .loc return a
+                # DataFrame; row.get() would then yield a Series, turning
+                # Signal_Sum (→ Avg_Signal) into a Series and crashing the
+                # downstream convergence loop. Collapse to the last row.
+                if isinstance(row, pd.DataFrame):
+                    row = row.iloc[-1]
                 day_stats["Total_Analyzed"] += 1
-                day_stats["Signal_Sum"] += row.get("Unified_Osc", 0.0)
+                day_stats["Signal_Sum"] += float(row.get("Unified_Osc", 0.0))
 
                 cond = row.get("Condition", "Neutral")
                 if cond == "Oversold":
