@@ -11,6 +11,10 @@ Sections used: **Added · Changed · Deprecated · Removed · Fixed · Security 
 
 ## [Unreleased]
 
+---
+
+## [1.4.23] — 2026-06-17 — *Performance pass & deploy hardening*
+
 ### Added
 - `CALIBRATION_RETURN_LABEL` config toggle (`"target"` | `"nsei"` | `"basket"`)
   controlling what forward series the Intelligence layer — both the
@@ -102,6 +106,44 @@ Sections used: **Added · Changed · Deprecated · Removed · Fixed · Security 
   count), labels them as `N`-day momentum in predictive mode, and — when the
   combined-PCA gate is on — flags that the names are orthogonal `MACRO_PC*`
   factors (not raw predictors) so the section is never silently cryptic.
+
+### Performance
+- **Causal macro-factor PCA** (`analytics/factors.py`) rewritten from a per-block
+  `StandardScaler` + `PCA` refit to an **incremental Σx / Σxxᵀ covariance** pass —
+  `O(n·m²)` instead of `O(refits·n·m²)`. Cuts the Phase-1 factor build from
+  minutes to sub-second on a constrained CPU; output bit-identical (~1e-13).
+  Results memoized via `st.cache_data` keyed on the panel, so identical re-runs
+  are instant.
+- **Nirnay daily aggregation** (`aggregate_constituent_timeseries`) vectorized
+  with a single `concat` + `groupby`, replacing an `O(dates × stocks)` per-cell
+  `.loc` loop — ~50× faster (≈13 s → ≈0.25 s locally), bit-identical output.
+- **Data acquisition** now downloads the macro and constituent-OHLCV yfinance
+  batches **concurrently** (the circuit breaker releases its lock during the
+  network call; cache + breaker are lock-guarded), overlapping the two
+  cold-cache fetches.
+- **`HUBER_MAX_ITER`** trimmed 500 → 200: a real-data study showed the
+  walk-forward Huber fits converge well before the cap (0/140 chunks hit 150
+  iters), so the output is bit-identical with less headroom.
+
+### Fixed
+- **scikit-learn 1.9 compatibility** — `ElasticNetCV(n_alphas=…)` crashed on
+  scikit-learn ≥ 1.9 (the parameter was deprecated in 1.7, removed in 1.9).
+  Switched to the integer-`alphas` form (`alphas=10`, behaviour-identical);
+  `requirements.txt` floor raised to `scikit-learn>=1.7`.
+- **Nirnay tab time-range selector** — the Nirnay charts ignored the global
+  3M/6M/1Y/2Y/ALL buttons and always rendered full history. The tab was the only
+  one not receiving the filtered window; it now honors the selected range.
+
+### Docs
+- An A/B study on cached PE data confirmed `HuberRegressor` is the **best**
+  ensemble member (OOS R² 0.67 / IC 0.83 vs OLS/Ridge ≈0.17), so it was kept
+  rather than replaced — recorded for future reference.
+- Moved research/spec notes `FINDINGS.md` and `CUSTOM_PREDICTORS.md` into
+  `docs/`; updated the README and in-code references.
+- New [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) — phase wall-clock breakdown,
+  the optimizations (with bit-identical verification), the Huber A/B study, and
+  the deliberate non-optimizations (genuine compute floors), so the perf
+  decisions aren't re-litigated.
 
 ---
 

@@ -10,7 +10,7 @@ its convergence weights and thresholds against forward returns on every run.
 
 | | |
 |---|---|
-| **Version** | 1.4.14 — *Edge-Honest Convergence* |
+| **Version** | 1.4.23 — *Performance pass & deploy hardening* |
 | **Stack** | Python 3.12+ · Streamlit · scikit-learn · statsmodels · Optuna · Plotly |
 | **Universe** | Nifty 50 (live, fetched from niftyindices.com) |
 | **License** | See `LICENSE.md` |
@@ -23,7 +23,7 @@ its convergence weights and thresholds against forward returns on every run.
 > **says so**, in the UI and the run log (edge verdicts, `INVERTED` / `NO-EDGE`
 > flags). Read it as a rigorous **valuation / breadth / regime / divergence context**
 > instrument, not a return-signal generator. The full, evidence-based conclusions are
-> in [`FINDINGS.md`](FINDINGS.md); the iteration history is in [`CHANGELOG.md`](CHANGELOG.md).
+> in [`FINDINGS.md`](docs/FINDINGS.md); the iteration history is in [`CHANGELOG.md`](CHANGELOG.md).
 
 ---
 
@@ -321,6 +321,7 @@ ui/                            Rendering only. No math.
   components.py                Reusable widgets (metric cards, signal badges, headers)
   tabs/                        One file per tab (aarambh, nirnay, convergence, diagnostics, data)
 
+docs/                          Research notes & specs (FINDINGS, PERFORMANCE, CUSTOM_PREDICTORS)
 CHANGELOG.md                   Version history (Keep-a-Changelog 1.1.0)
 LICENSE.md                     Proprietary license — @thebullishvalue
 requirements.txt               Dependency specifications
@@ -435,7 +436,7 @@ Nishkarsh is honest about what it does not yet do:
   robust forecasting edge (the Aarambh signal is historically *inverted*; the
   convergence score is an *agreement* metric, not a directional one). The system
   surfaces this honestly rather than hiding it. Full detail in
-  [`FINDINGS.md`](FINDINGS.md). Treat the output as context, not alpha.
+  [`FINDINGS.md`](docs/FINDINGS.md). Treat the output as context, not alpha.
 - **No regression tests.** Pure-function primitives in `analytics/` are
   testable in isolation; a test harness is not yet implemented.
 - **No engine output caching.** Streamlit reruns recompute the full pipeline.
@@ -536,4 +537,4 @@ Mathematical primitives draw on:
 
 ---
 
-© 2026 Nishkarsh · [@thebullishvalue](https://twitter.com/thebullishvalue) · v1.4.0
+© 2026 Nishkarsh · [@thebullishvalue](https://twitter.com/thebullishvalue) · v1.4.23

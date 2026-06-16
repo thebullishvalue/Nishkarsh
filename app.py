@@ -16,6 +16,7 @@ import os
 import sys
 import time
 import warnings
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
@@ -721,7 +722,19 @@ def main():
         _HISTORY_YEARS = 7
         end_date = pd.Timestamp.today()
         start_date = end_date - pd.Timedelta(days=365 * _HISTORY_YEARS)
-        macro_df = fetch_macro_live(start_date, end_date)
+        # The macro and constituent-OHLCV pulls are independent yfinance batches.
+        # Fire them concurrently: the circuit breaker releases its lock during the
+        # network call and the disk cache is lock-guarded, so the two cold fetches
+        # overlap instead of running back-to-back (saves the macro fetch's wall
+        # time on a cache-miss run; warm-cache runs are unaffected). Results are
+        # collected via .result() below, preserving the original logging order.
+        _io_pool = ThreadPoolExecutor(max_workers=2)
+        _macro_future = _io_pool.submit(fetch_macro_live, start_date, end_date)
+        _ohlcv_future = (
+            _io_pool.submit(fetch_constituent_ohlcv, constituents, start_date, end_date)
+            if constituents else None
+        )
+        macro_df = _macro_future.result()
         console.item("History Window", f"{_HISTORY_YEARS}y ({start_date.date()} → {end_date.date()}) · ⚠ survivorship-biased to current constituents")
         console.item("Date Range", f"{start_date.date()} to {end_date.date()}")
         if not macro_df.empty:
@@ -734,14 +747,15 @@ def main():
 
         console.section("Constituent OHLCV")
         constituent_ohlcv = {}
-        if constituents:
-            constituent_ohlcv = fetch_constituent_ohlcv(constituents, start_date, end_date)
+        if _ohlcv_future is not None:
+            constituent_ohlcv = _ohlcv_future.result()  # started concurrently above
             console.item("Requested", len(constituents))
             console.item("Downloaded", len(constituent_ohlcv))
             if constituent_ohlcv:
                 sample = list(constituent_ohlcv.items())[0]
                 console.item("Sample", f"{sample[0]}: {len(sample[1])} rows")
             console.success(f"OHLCV data for {len(constituent_ohlcv)} constituents")
+        _io_pool.shutdown(wait=False)  # both fetches collected; release the pool
         progress_bar(progress_container, 15, "Assembling Macro Indicators", "Bond Yields from Google Sheets")
 
         console.section("Nirnay Macro Assembly")
@@ -766,7 +780,7 @@ def main():
         # ── Custom engineered predictors ─────────────────────────────────
         # Yield spreads, real rates, credit/commodity ratios, FX momentum,
         # cross-asset composites — all causal & stationary (see
-        # CUSTOM_PREDICTORS.md). Built from the macro panel + the sheet's
+        # docs/CUSTOM_PREDICTORS.md). Built from the macro panel + the sheet's
         # rate/breadth/valuation columns, then appended to the macro panel so
         # BOTH the MMR factor gate and Aarambh's combined PCA ingest them. The
         # PE/PB/DY-embedding features are dropped from Aarambh only (they embed
@@ -1913,7 +1927,7 @@ def main():
         _safe_render("Aarambh", lambda: render_aarambh_tab(engine, ts_filtered, x_axis, x_title, signal, model_stats, regime_stats, ts, active_target))
     with tab3:
         st.session_state.rendered_tabs.add(2)
-        _safe_render("Nirnay", lambda: render_nirnay_tab())
+        _safe_render("Nirnay", lambda: render_nirnay_tab(selected_tf))
     with tab4:
         st.session_state.rendered_tabs.add(3)
         _safe_render("Diagnostics", lambda: render_diagnostics_tab(engine, ts_filtered, x_axis, x_title, signal, model_stats))
