@@ -10,10 +10,20 @@ its convergence weights and thresholds against forward returns on every run.
 
 | | |
 |---|---|
-| **Version** | 1.4.0 — *Self-Calibrating Convergence* |
+| **Version** | 1.4.14 — *Edge-Honest Convergence* |
 | **Stack** | Python 3.12+ · Streamlit · scikit-learn · statsmodels · Optuna · Plotly |
 | **Universe** | Nifty 50 (live, fetched from niftyindices.com) |
 | **License** | See `LICENSE.md` |
+
+> **A note on rigor.** Nishkarsh is built to be *honest about its own edge*. Every
+> signal is evaluated causally (no look-ahead, deterministic), with persistence-aware
+> reporting (`R² vs RW`, not just OOS R²), **non-overlapping** significance tests,
+> and fold-stability gating on the self-calibration. Under that scrutiny it has **not**
+> found a robust, tradeable forecasting edge on the Nifty-50 PE target — and it
+> **says so**, in the UI and the run log (edge verdicts, `INVERTED` / `NO-EDGE`
+> flags). Read it as a rigorous **valuation / breadth / regime / divergence context**
+> instrument, not a return-signal generator. The full, evidence-based conclusions are
+> in [`FINDINGS.md`](FINDINGS.md); the iteration history is in [`CHANGELOG.md`](CHANGELOG.md).
 
 ---
 
@@ -419,6 +429,13 @@ prior on the next run (warm path).
 
 Nishkarsh is honest about what it does not yet do:
 
+- **No demonstrated tradeable edge on PE.** This is the headline empirical
+  finding, not a caveat to bury: under causal, non-overlapping, fold-gated
+  evaluation, neither the Aarambh PE model nor the convergence signal shows a
+  robust forecasting edge (the Aarambh signal is historically *inverted*; the
+  convergence score is an *agreement* metric, not a directional one). The system
+  surfaces this honestly rather than hiding it. Full detail in
+  [`FINDINGS.md`](FINDINGS.md). Treat the output as context, not alpha.
 - **No regression tests.** Pure-function primitives in `analytics/` are
   testable in isolation; a test harness is not yet implemented.
 - **No engine output caching.** Streamlit reruns recompute the full pipeline.

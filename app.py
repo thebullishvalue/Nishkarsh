@@ -14,7 +14,6 @@ import json
 import logging
 import os
 import sys
-import time
 import warnings
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -71,7 +70,18 @@ from convergence.divergence_detector import CrossSystemDivergenceDetector
 
 # ── Logger & Config ──────────────────────────────────────────────────────────
 from core.logger_config import console, generate_run_id, Colors
-from core.config import LOOKBACK_WINDOWS, MIN_DATA_POINTS, STALENESS_DAYS, COLOR_RED
+from core.config import (
+    LOOKBACK_WINDOWS, MIN_DATA_POINTS, MIN_TRAIN_SIZE, MAX_TRAIN_SIZE,
+    STALENESS_DAYS, COLOR_RED,
+    AARAMBH_PCA_PREDICTORS, AARAMBH_PCA_N_COMPONENTS,
+    CUSTOM_PREDICTORS_ENABLED, PCA_PASSTHROUGH, PCA_PASSTHROUGH_ENABLED,
+    CALIBRATION_RETURN_LABEL,
+    AARAMBH_FORWARD_SIGNAL, AARAMBH_FWD_HORIZON, AARAMBH_FWD_MOM_K,
+)
+
+# Effective passthrough columns — empty when the master toggle is off, so all
+# downstream call sites and the cache key stay in sync with one switch.
+_PASSTHROUGH = tuple(PCA_PASSTHROUGH) if PCA_PASSTHROUGH_ENABLED else ()
 
 
 # ── Secret Management ────────────────────────────────────────────────────────
@@ -329,8 +339,7 @@ def _render_model_passport_sidebar(current_universe: str, current_index: str | N
                 if isinstance(payload, dict) and "weights" in payload:
                     imported = intel.IntelligenceProfile.from_dict(payload)
                     intel.save_profile(imported)
-                    st.toast("Profile imported.", icon="✅")
-                    st.success(f"Profile imported · {imported.universe}")
+                    st.toast(f"Profile imported · {imported.universe}", icon="✅")
                     st.rerun()
                 else:
                     st.error("Import failed: file is not a valid profile dict (missing 'weights').")
@@ -346,10 +355,10 @@ def _render_model_passport_sidebar(current_universe: str, current_index: str | N
             data=json.dumps(export_payload, indent=2, default=str),
             file_name=fname,
             mime="application/json",
-            use_container_width=True,
+            width="stretch",
             key="passport_export",
         )
-        if st.button("↺ Reset to Defaults", use_container_width=True, key="passport_reset"):
+        if st.button("↺ Reset to Defaults", width="stretch", key="passport_reset"):
             intel.delete_profile(saved_profile.universe, saved_profile.selected_index)
             # Streamlit's toast `icon=` only accepts emojis from a curated
             # whitelist; "↺" (U+21BA, our "Reset" mark used on the button) is
@@ -485,6 +494,22 @@ def main():
 
         date_col = st.selectbox("Date Column", ["None"] + all_cols, index=(["None"] + all_cols).index(active_date_state))
 
+        # Target / Date changes apply IMMEDIATELY (no staging). Changing the
+        # target and seeing nothing happen — because the Apply button was buried
+        # in the collapsed Predictor expander — was a discoverability trap.
+        # Predictor edits still stage behind Apply (you toggle several at once).
+        if target_col != active_target_state or date_col != active_date_state:
+            st.session_state["active_target"] = target_col
+            st.session_state["active_date_col"] = date_col
+            # A column can't be both the target and a predictor.
+            if "active_features" in st.session_state:
+                st.session_state["active_features"] = tuple(
+                    f for f in st.session_state["active_features"] if f != target_col
+                )
+            st.session_state.pop("engine", None)
+            st.session_state.pop("engine_cache", None)
+            st.rerun()
+
         available = [c for c in numeric_cols if c != target_col]
         valid_defaults = [p for p in ("AD_RATIO", "COUNT", "REL_AD_RATIO", "REL_BREADTH", "IN10Y", "IN02Y", "IN30Y", "INIRYY", "REPO", "US02Y", "US10Y", "US30Y", "NIFTY50_DY", "NIFTY50_PB") if p in available]
 
@@ -492,11 +517,21 @@ def main():
             st.session_state["active_features"] = tuple(valid_defaults or available[:3])
 
         with st.expander("Predictor Columns", expanded=False):
-            st.caption("Select predictors, then click Apply to recompute.")
+            st.caption("Showing the predictors this run used — select, then Apply to recompute.")
+            # Key the widget to the ACTIVE (run) predictor set. Streamlit
+            # persists widget state across reruns and ignores `default=`, so
+            # when active_features changes programmatically (e.g. a target
+            # change drops a predictor), a plain multiselect would keep showing
+            # its stale selection. Re-keying on the active set forces the widget
+            # to re-sync to what the system actually ran with, while local
+            # staging edits (which don't change active_features until Apply)
+            # keep a stable key and persist.
+            _pred_key = "pred_select::" + "|".join(sorted(st.session_state["active_features"]))
             staging_features = st.multiselect(
                 "Predictor Columns", options=available,
                 default=[f for f in st.session_state["active_features"] if f in available],
                 label_visibility="collapsed",
+                key=_pred_key,
             )
             if not staging_features:
                 st.warning("Select at least one predictor.")
@@ -505,8 +540,6 @@ def main():
             staging_set = set(staging_features)
             active_set = set(st.session_state["active_features"])
             has_pred_changes = staging_set != active_set
-            has_other_changes = (target_col != active_target_state) or (date_col != active_date_state)
-            has_changes = has_pred_changes or has_other_changes
 
             if has_pred_changes:
                 added = staging_set - active_set
@@ -517,14 +550,10 @@ def main():
                 if removed:
                     parts.append(f"−{len(removed)} removed")
                 st.caption(f"Pending: {', '.join(parts)}")
-            elif has_other_changes:
-                st.caption("Pending: Target/Date changes")
 
-            if st.button("Apply Configuration" if has_changes else "No changes", disabled=not has_changes, type="primary" if has_changes else "secondary"):
-                if has_changes:
-                    st.session_state["active_target"] = target_col
+            if st.button("Apply Predictors" if has_pred_changes else "No changes", disabled=not has_pred_changes, type="primary" if has_pred_changes else "secondary"):
+                if has_pred_changes:
                     st.session_state["active_features"] = tuple(staging_features)
-                    st.session_state["active_date_col"] = date_col
                     st.session_state.pop("engine", None)
                     st.session_state.pop("engine_cache", None)
                     st.rerun()
@@ -535,7 +564,7 @@ def main():
         st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
         if "run_analysis" in st.session_state and st.session_state.get("run_analysis"):
-            if st.button("Reset Analysis", type="secondary", use_container_width=True):
+            if st.button("Reset Analysis", type="secondary", width="stretch"):
                 st.session_state.pop("data", None)
                 st.session_state.pop("engine", None)
                 st.session_state.pop("engine_cache", None)
@@ -600,8 +629,33 @@ def main():
         st.error("No valid features found after data cleaning.")
         return
 
-    X, y = data[active_features].values, data[active_target].values
-    cache_key = f"{active_target}|{'|'.join(sorted(active_features))}|{len(data)}"
+    if AARAMBH_FORWARD_SIGNAL:
+        # ── Predictive representation (experimental) ──────────────────────
+        # Features X[t] = trailing AARAMBH_FWD_MOM_K-day CHANGE of each predictor
+        # (momentum, known at t). Target y[t] = forward AARAMBH_FWD_HORIZON-day
+        # log-change of the target (t→t+h). The last h rows have no realized
+        # future — kept as live forecasts (target filled 0 so the regression
+        # doesn't choke; the signal there IS the prediction). Drop only the
+        # warmup head with unformed momentum.
+        #
+        # NOTE: predictor momentum uses a sign-agnostic K-day difference (NOT a
+        # log return) because Nishkarsh predictors include breadth ratios and
+        # rate spreads that can be ≤0 — log would be invalid and wipe the panel.
+        # The engine's StandardScaler normalizes the differing feature scales.
+        # The target (PE) is strictly positive, so its forward return is a clean
+        # log change.
+        _lvl = data[[active_target] + active_features].astype(float)
+        _tlog = np.log(_lvl[active_target].where(_lvl[active_target] > 0))
+        _fwd = _tlog.shift(-AARAMBH_FWD_HORIZON) - _tlog
+        _mom = _lvl[active_features].diff(AARAMBH_FWD_MOM_K).replace([np.inf, -np.inf], np.nan)
+        _valid = _mom.notna().all(axis=1).to_numpy()
+        data = data.loc[_valid].reset_index(drop=True)
+        X = _mom.loc[_valid].to_numpy(dtype=np.float64)
+        y = np.nan_to_num(_fwd.loc[_valid].to_numpy(dtype=np.float64), nan=0.0)
+        cache_key = f"fwd{AARAMBH_FWD_HORIZON}m{AARAMBH_FWD_MOM_K}|{active_target}|{'|'.join(sorted(active_features))}|{len(data)}"
+    else:
+        X, y = data[active_features].values, data[active_target].values
+        cache_key = f"{active_target}|{'|'.join(sorted(active_features))}|{len(data)}|pca{int(AARAMBH_PCA_PREDICTORS)}|cf{int(CUSTOM_PREDICTORS_ENABLED)}|pt{'-'.join(_PASSTHROUGH)}"
     if st.session_state.get("engine_cache") != cache_key:
         if "engine" in st.session_state:
             del st.session_state["engine"]
@@ -631,9 +685,18 @@ def main():
         progress_bar(progress_container, 5, "Fetching Macro Data", "yfinance · Global Macro ETFs · FX · Commodities")
 
         console.section("Macro Data")
+        # History window for the yfinance side (constituents + macro). A longer
+        # window grows the Aarambh↔Nirnay overlap (was 2y → ~10%; 5y → ~25%),
+        # which stabilizes the calibration sample. NOTE: the constituent set is
+        # TODAY's index membership, so a longer window adds survivorship bias —
+        # 7y is the deliberate ceiling. It will NOT create edge (PE/convergence
+        # are non-forecastable here); it only tightens the calibration readout.
+        # Beyond ~7y, survivorship distortion outweighs the marginal sample gain.
+        _HISTORY_YEARS = 7
         end_date = pd.Timestamp.today()
-        start_date = end_date - pd.Timedelta(days=365 + 365)
+        start_date = end_date - pd.Timedelta(days=365 * _HISTORY_YEARS)
         macro_df = fetch_macro_live(start_date, end_date)
+        console.item("History Window", f"{_HISTORY_YEARS}y ({start_date.date()} → {end_date.date()}) · ⚠ survivorship-biased to current constituents")
         console.item("Date Range", f"{start_date.date()} to {end_date.date()}")
         if not macro_df.empty:
             console.item("YF Columns", f"{len(macro_df.columns)} symbols")
@@ -667,7 +730,81 @@ def main():
             console.item("YF Symbols", len(macro_df.columns) if not macro_df.empty else 0)
             console.item("Bond Yields", f"{len(available_bond_cols)} ({', '.join(available_bond_cols)})")
             console.success(f"Combined macro: {len(nirnay_macro_df.columns)} indicators × {len(nirnay_macro_df)} rows")
+        # Guarantee a unique macro index — an outer-join against a duplicated
+        # bond-yield date (or a tz-duplicated yfinance row) would otherwise
+        # multiply rows when this panel is left-joined into each constituent.
+        if not nirnay_macro_df.empty and nirnay_macro_df.index.duplicated().any():
+            nirnay_macro_df = nirnay_macro_df[~nirnay_macro_df.index.duplicated(keep="last")]
         macro_cols_list = list(nirnay_macro_df.columns) if not nirnay_macro_df.empty else []
+
+        # ── Custom engineered predictors ─────────────────────────────────
+        # Yield spreads, real rates, credit/commodity ratios, FX momentum,
+        # cross-asset composites — all causal & stationary (see
+        # CUSTOM_PREDICTORS.md). Built from the macro panel + the sheet's
+        # rate/breadth/valuation columns, then appended to the macro panel so
+        # BOTH the MMR factor gate and Aarambh's combined PCA ingest them. The
+        # PE/PB/DY-embedding features are dropped from Aarambh only (they embed
+        # its target → leakage); they stay in MMR (target = stock price).
+        _leakage_cols: frozenset = frozenset()
+        if CUSTOM_PREDICTORS_ENABLED:
+            try:
+                from analytics.custom_features import build_custom_features, AARAMBH_LEAKAGE_EXCLUDE
+                _leakage_cols = AARAMBH_LEAKAGE_EXCLUDE
+                _feat_src = nirnay_macro_df.copy() if not nirnay_macro_df.empty else pd.DataFrame()
+                _sheet_extra = ["REPO", "INIRYY", "AD_RATIO", "REL_AD_RATIO", "REL_BREADTH",
+                                "NIFTY50_PE", "NIFTY50_DY", "NIFTY50_PB",
+                                "IN10Y", "IN02Y", "IN30Y", "US10Y", "US02Y", "US30Y"]
+                # Only the sheet columns NOT already in the macro panel — the bond
+                # yields (IN10Y…) are in both, and joining duplicates raises.
+                _avail_extra = [
+                    c for c in _sheet_extra
+                    if c in df.columns and c not in getattr(_feat_src, "columns", [])
+                ]
+                if _avail_extra and "DATE" in df.columns:
+                    _extra = df[_avail_extra].copy()
+                    _extra.index = pd.to_datetime(df["DATE"], dayfirst=True, errors="coerce")
+                    _extra = _extra[~_extra.index.isna()]
+                    _extra = _extra[~_extra.index.duplicated(keep="last")].sort_index()
+                    _feat_src = _feat_src.join(_extra, how="outer").sort_index().ffill() if not _feat_src.empty else _extra
+                _custom_df = build_custom_features(_feat_src)
+                if not _custom_df.empty and not nirnay_macro_df.empty:
+                    _custom_on_macro = _custom_df.reindex(nirnay_macro_df.index, method="ffill")
+                    _new_cols = [c for c in _custom_on_macro.columns if c not in nirnay_macro_df.columns]
+                    if _new_cols:
+                        nirnay_macro_df = nirnay_macro_df.join(_custom_on_macro[_new_cols], how="left")
+                        macro_cols_list = list(nirnay_macro_df.columns)
+                        _n_leak = len([c for c in _new_cols if c in _leakage_cols])
+                        console.item(
+                            "Custom Predictors",
+                            f"{len(_new_cols)} engineered (causal, stationary) — "
+                            f"all → MMR · {len(_new_cols) - _n_leak} → Aarambh ({_n_leak} PE-leakage excluded)",
+                        )
+            except Exception as _cf_e:
+                console.warning(f"custom features failed: {_cf_e}")
+        else:
+            console.item("Custom Predictors", "disabled (CUSTOM_PREDICTORS_ENABLED = False)")
+
+        # Compress the wide, collinear macro panel into a few ORTHOGONAL causal
+        # factors (expanding-window PCA). MMR then selects from de-duplicated
+        # drivers instead of 90 near-identical bond/FX series — cuts selection
+        # variance and the spurious "top correlated macro" problem. Falls back
+        # to the raw panel if PCA is unavailable or the panel is small.
+        # Keep a reference to the FULL raw macro panel before MMR-factor
+        # replacement — Aarambh's combined-predictor PCA (below) uses it.
+        _raw_macro_panel = nirnay_macro_df.copy() if not nirnay_macro_df.empty else pd.DataFrame()
+        _n_raw_macros = len(macro_cols_list)
+        if _n_raw_macros > 12:
+            from analytics.factors import build_causal_macro_factors
+            _macro_factors = build_causal_macro_factors(nirnay_macro_df, n_components=8, passthrough=_PASSTHROUGH)
+            if not _macro_factors.empty and _macro_factors.shape[1] >= 2:
+                nirnay_macro_df = _macro_factors
+                macro_cols_list = list(_macro_factors.columns)
+                _pt = [c for c in _PASSTHROUGH if c in macro_cols_list]
+                console.item("Macro Factors", f"{len(macro_cols_list) - len(_pt)} causal PCA factors"
+                             + (f" + {len(_pt)} passthrough ({', '.join(_pt)})" if _pt else "")
+                             + f" ← {_n_raw_macros} raw macros")
+            else:
+                console.item("Macro Factors", f"PCA unavailable — using {_n_raw_macros} raw macros")
         console.end_phase("DATA ACQUISITION")
         progress_bar(progress_container, 20, "Data Acquisition Complete", f"{len(constituent_ohlcv)} Constituents · {len(nirnay_macro_df.columns)} Macros")
 
@@ -679,23 +816,117 @@ def main():
         console.item("Target", active_target)
         console.item("Features", f"{len(active_features)}: {', '.join(active_features[:5])}...")
         console.item("Observations", f"{len(data)} rows")
-        console.item("Min Train Size", MIN_DATA_POINTS)
+        # MIN_DATA_POINTS is the data *requirement*, not the training window —
+        # the walk-forward actually trains on a MIN_TRAIN_SIZE→MAX_TRAIN_SIZE
+        # expanding window. Report both honestly (the old "Min Train Size: 1500"
+        # label conflated the two).
+        console.item("Min Data Required", MIN_DATA_POINTS)
+        console.item("Train Window", f"{MIN_TRAIN_SIZE}→{MAX_TRAIN_SIZE} (expanding, capped)")
         console.item("Lookback Windows", f"{LOOKBACK_WINDOWS}")
+
+        # ── Combined-predictor PCA gate ─────────────────────────────────
+        # Push (sheet predictors + the full macro panel) through the same causal
+        # expanding-window PCA as MMR and train Aarambh on the orthogonal
+        # factors. Macro columns reindexed onto the Aarambh dates; pre-yfinance
+        # history is flat-filled, so old-date factors are sheet-driven.
+        _aar_feature_names = active_features
+        if (AARAMBH_PCA_PREDICTORS and not AARAMBH_FORWARD_SIGNAL and not _raw_macro_panel.empty
+                and active_date != "None" and active_date in data.columns):
+            try:
+                from analytics.factors import build_causal_macro_factors
+                _dates = pd.to_datetime(data[active_date])
+                _sheet = data[active_features].reset_index(drop=True)
+                _macro_al = (
+                    _raw_macro_panel.sort_index()
+                    .reindex(_dates.values, method="ffill")
+                    .reset_index(drop=True)
+                )
+                _combined = pd.concat([_sheet, _macro_al], axis=1)
+                # The bond yields (IN10Y, IN30Y, US10Y…) live in BOTH the sheet
+                # predictors and the macro panel — drop the duplicate columns so
+                # they aren't double-counted in the PCA.
+                _combined = _combined.loc[:, ~_combined.columns.duplicated()]
+                # Drop PE/PB/DY-embedding custom features from Aarambh — they
+                # contain the target (PE) → leakage. (They remain in MMR.)
+                _drop_leak = [c for c in _combined.columns if c in _leakage_cols]
+                if _drop_leak:
+                    _combined = _combined.drop(columns=_drop_leak)
+                _combined.index = pd.RangeIndex(len(_combined))
+                _ncomp = int(min(AARAMBH_PCA_N_COMPONENTS, _combined.shape[1]))
+                # stationarize=True: the macro panel holds non-stationary price
+                # levels; without rolling-z + clip they make the level regression
+                # extrapolate (R² → −47). Stationarizing bounds every input.
+                _aar_factors, _aar_loadings = build_causal_macro_factors(
+                    _combined, n_components=_ncomp, stationarize=True, return_loadings=True,
+                    passthrough=_PASSTHROUGH,
+                )
+                if not _aar_factors.empty and _aar_factors.shape[1] >= 2:
+                    X = _aar_factors.fillna(0.0).to_numpy(dtype=np.float64)
+                    _aar_feature_names = list(_aar_factors.columns)
+                    _macro_start = _raw_macro_panel.dropna(how="all").index.min()
+                    _ptA = [c for c in _PASSTHROUGH if c in _aar_feature_names]
+                    console.item(
+                        "Predictor PCA",
+                        f"{X.shape[1] - len(_ptA)} causal factors"
+                        + (f" + {len(_ptA)} passthrough ({', '.join(_ptA)})" if _ptA else "")
+                        + f" ← {len(active_features)} sheet + {_raw_macro_panel.shape[1]} macro predictors (stationarized)",
+                    )
+                    console.item(
+                        "  Macro real-history",
+                        f"from {pd.Timestamp(_macro_start).date() if pd.notna(_macro_start) else 'n/a'} "
+                        f"(earlier dates: sheet-driven, macros flat-filled)",
+                    )
+                    # Name each top factor by its dominant inputs (interpretability)
+                    if not _aar_loadings.empty:
+                        for _pc in list(_aar_loadings.index)[:5]:
+                            _top = _aar_loadings.loc[_pc].abs().sort_values(ascending=False).head(3)
+                            console.item(f"  {_pc} ≈", ", ".join(str(c) for c in _top.index))
+            except Exception as _pe:
+                console.warning(f"predictor PCA failed: {_pe} — using raw {len(active_features)} predictors")
+
+        if AARAMBH_FORWARD_SIGNAL:
+            console.item(
+                "Mode",
+                f"PREDICTIVE · forecast {AARAMBH_FWD_HORIZON}d forward Δ{active_target} "
+                f"from {AARAMBH_FWD_MOM_K}d momentum ({len(active_features)} raw predictors, PCA gate bypassed)",
+            )
 
         console.section("Walk-Forward Regression")
         engine = FairValueEngine()
-        engine.fit(X, y, feature_names=active_features, progress_callback=lambda pct, msg: progress_bar(progress_container, int(20 + pct * 20), "Running Aarambh Engine", msg))
+        engine.fit(X, y, feature_names=_aar_feature_names, forward_signal=AARAMBH_FORWARD_SIGNAL, progress_callback=lambda pct, msg: progress_bar(progress_container, int(20 + pct * 20), "Running Aarambh Engine", msg))
 
         sig = engine.get_current_signal()
         stats = engine.get_model_stats()
         console.section("Engine Results")
-        console.item("Signal", f"{sig['signal']} ({sig['strength']})")
+        console.item("Signal", f"{sig['signal']} ({sig['display_strength']})")
         console.item("Conviction", f"{sig['conviction_score']:+.0f}")
-        console.item("OOS R²", f"{stats['r2_oos']:.3f}")
-        console.item("R² vs RW", f"{stats['r2_vs_rw']:+.3f}")
-        console.item("OU Half-Life", f"{sig['ou_half_life']:.0f}d")
+        # Lead with the honest skill metric, not the persistence-inflated R².
+        if AARAMBH_FORWARD_SIGNAL:
+            console.item("Mode", f"PREDICTIVE · forecasting {AARAMBH_FWD_HORIZON}d forward Δlog({active_target})")
+            console.item("R² vs RW (skill)", f"{stats['r2_vs_rw']:+.3f}  ← forecast vs naive; the magnitude metric")
+            console.item("OOS R² (forecast)", f"{stats['r2_oos']:.3f}  (returns forecast — magnitude R²≈0 is NORMAL; the edge is in IC → see Intelligence / Walk-Forward IC below)")
+        else:
+            console.item("Mode", "FAIR-VALUE · regressing the target level (mean-reversion)")
+            console.item("R² vs RW (skill)", f"{stats['r2_vs_rw']:+.3f}  ← negative = worse than naive forecast")
+            console.item("OOS R² (vs mean)", f"{stats['r2_oos']:.3f}  ⚠ persistence-inflated on PE")
+        if AARAMBH_FORWARD_SIGNAL:
+            # The engine's edge_assessment/tradeable come from the level/magnitude
+            # forward-edge test, which is not the verdict in predictive mode (the
+            # tradeable edge is DIRECTIONAL — measured downstream by IC).
+            console.item("Magnitude Edge", f"{sig['edge_assessment']}  (level test — NOT the predictive verdict)")
+            console.item("Directional verdict", "→ Directional Convergence Test + Walk-Forward IC (below)")
+        else:
+            console.item("EDGE", sig['edge_assessment'])
+            console.item("Tradeable", sig['tradeable'])
+        console.item("OU Half-Life", f"{sig['ou_half_life']:.0f}d" + ("" if sig['half_life_meaningful'] else "  ⚠ not meaningful (residuals not mean-reverting)"))
         console.item("Hurst", f"{sig['hurst']:.2f}")
         console.item("Oversold Breadth", f"{sig['oversold_breadth']:.0f}%")
+        if AARAMBH_FORWARD_SIGNAL:
+            console.item("Note", "Predictive mode — magnitude forecast is weak by nature (R²≈0 is expected); the tradeable edge is DIRECTIONAL, graded by the IC sections below.")
+        elif sig.get('inverted'):
+            console.warning("Aarambh: signal is INVERTED on history (BUY/SELL preceded the WRONG direction, p<0.05) — do NOT trade as-is")
+        elif not sig['tradeable']:
+            console.warning("Aarambh: NO FORECAST EDGE on this series — signal is valuation context, not a tradeable call")
         console.success(f"Aarambh engine complete | {len(engine.ts_data)} output rows")
         console.end_phase("AARAMBH ENGINE")
         progress_bar(progress_container, 40, "Aarambh Engine Complete", f"Signal: {sig['signal']} ({sig['strength']}) · Conviction: {sig['conviction_score']:+.0f}")
@@ -895,6 +1126,11 @@ def main():
         # persists them to disk, and we immediately re-apply them below
         # so the user's signals reflect the calibrated state on THIS run.
         _final_profile: _intel_mod.IntelligenceProfile | None = None
+        _cal_frame = None  # tuner.full_frame, captured for the walk-forward IC diagnostic
+        # Default label description for the diagnostics directional test, which
+        # runs even when intelligence is OFF (calibration block below overrides).
+        _label_src = (f"Target fwd change ({active_target})"
+                      if CALIBRATION_RETURN_LABEL == "target" else CALIBRATION_RETURN_LABEL)
         if _intel_enabled:
             console.section("Intelligence Calibration")
             _n_trials = int(st.session_state.get("intel_n_trials", 50))
@@ -904,12 +1140,79 @@ def main():
                 f"Building Tuner · 70/30 Chronological Split · {_n_trials} Trials",
             )
             try:
+                # Calibration return label — what the convergence signal is
+                # optimized to predict. Driven by CALIBRATION_RETURN_LABEL
+                # (core/config.py) so the calibration AND the directional test
+                # below stay coherent with the selected engine target:
+                #   "target" → the selected target's (e.g. NIFTY50_PE) fwd change
+                #   "nsei"   → NIFTY 50 index (^NSEI) forward price return
+                #   "basket" → EW constituent basket (survivorship-biased)
+                # "nsei"/"basket" degrade to each other, then to "target".
+                _ret_levels = None
+                _label_src = "PE proxy (fallback)"
+
+                def _basket_levels():
+                    _b = _intel_mod.build_index_return_levels(constituent_ohlcv)
+                    return _b if (_b is not None and len(_b)) else None
+
+                if CALIBRATION_RETURN_LABEL == "nsei":
+                    try:
+                        _idx_ohlcv = fetch_constituent_ohlcv(["^NSEI"], start_date, end_date)
+                        _idx_df = _idx_ohlcv.get("^NSEI") if _idx_ohlcv else None
+                        if _idx_df is not None and len(_idx_df) and "Close" in _idx_df.columns:
+                            _ret_levels = _idx_df["Close"]
+                            _label_src = "NIFTY 50 index (^NSEI) fwd return"
+                    except Exception as _ix_e:
+                        console.warning(f"^NSEI index fetch failed ({_ix_e}); using basket fallback")
+                    if _ret_levels is None or len(_ret_levels) == 0:
+                        _ret_levels = _basket_levels()
+                        if _ret_levels is not None:
+                            _label_src = "Constituent EW basket (survivorship-biased)"
+                elif CALIBRATION_RETURN_LABEL == "basket":
+                    _ret_levels = _basket_levels()
+                    if _ret_levels is not None:
+                        _label_src = "Constituent EW basket (survivorship-biased)"
+
+                # "target" mode, or any fallthrough: optimize against the SELECTED
+                # target's forward change — the strongest calibration label in the
+                # 2026-06-15 study (val IC +0.148, 100% durable walk-forward).
+                if _ret_levels is None or len(_ret_levels) == 0:
+                    if not AARAMBH_FORWARD_SIGNAL and "Actual" in aarambh_ts.columns:
+                        # Levels mode: aarambh_ts["Actual"] IS the target level.
+                        _ta = aarambh_ts["Actual"].dropna()
+                        if len(_ta):
+                            _ret_levels = _ta
+                            _label_src = f"Target fwd change ({active_target})"
+                    elif (AARAMBH_FORWARD_SIGNAL and active_date != "None"
+                          and active_date in data.columns and active_target in data.columns):
+                        # Predictive mode: "Actual" is already a forward RETURN, so
+                        # use the real target LEVEL series (PE) instead of the old
+                        # basket fallback — the basket is survivorship-biased and was
+                        # the WORST label (val IC +0.038, NOT durable; it overfits
+                        # survivor drift and produced the spurious "not durable"
+                        # verdicts). The real PE level is the best label.
+                        _tl = pd.Series(
+                            pd.to_numeric(data[active_target], errors="coerce").values,
+                            index=pd.to_datetime(data[active_date], errors="coerce", dayfirst=True),
+                        )
+                        _tl = _tl[~_tl.index.isna()].dropna()
+                        if len(_tl):
+                            _ret_levels = _tl
+                            _label_src = f"Target fwd change ({active_target})"
+                    if _ret_levels is None or len(_ret_levels) == 0:
+                        _ret_levels = _basket_levels()
+                        if _ret_levels is not None:
+                            _label_src = "Constituent EW basket (last-resort fallback)"
                 tuner = _intel_mod.ConvergenceTuner(
                     convergence_df, aarambh_ts,
                     universe=_intel_universe, selected_index=_intel_index,
+                    return_levels=_ret_levels,
                 )
+                console.item("Return Label", _label_src)
                 console.item("TPE Trials", _n_trials)
-                console.item("Train / Val Split", f"{int(tuner.train_frac*100)}/{int((1-tuner.train_frac)*100)} chronological")
+                _purge_rows = len(tuner.full_frame) - len(tuner.train_frame) - len(tuner.val_frame)
+                console.item("Train / Val Split", f"{int(tuner.train_frac*100)}/{int((1-tuner.train_frac)*100)} chronological · {_purge_rows}-row purge gap (= max horizon)")
+                console.item("Objective", f"purged {tuner.n_cv_folds}-fold CV IC (mean − 0.5·std), L2={tuner.l2_alpha}")
                 console.item("Horizons", " · ".join(str(h) for h in tuner.horizons))
                 console.item("Train Rows", len(tuner.train_frame))
                 console.item("Val Rows", len(tuner.val_frame))
@@ -924,26 +1227,67 @@ def main():
                         f"Optuna Trial {trial_num}/{total} · Best Score {best:+.4f}",
                     )
 
-                _final_profile, _ = tuner.optimize(n_trials=_n_trials, progress_callback=_cal_cb)
+                _candidate, _ = tuner.optimize(n_trials=_n_trials, progress_callback=_cal_cb)
                 tuner.evaluate_validation()
-                _final_profile = tuner._make_profile()
-                _intel_mod.save_profile(_final_profile)
+                _cv = tuner.cross_validated_ic(folds=5)   # multi-fold stability
+                _candidate = tuner._make_profile()
+                _cal_frame = tuner.full_frame             # for walk-forward IC diagnostic
 
-                progress_bar(
-                    progress_container, 90,
-                    "Intelligence Mode · Profile Saved",
-                    f"Train IC {_final_profile.train_ic:+.3f} · Val IC {_final_profile.val_ic:+.3f}",
-                )
-                console.item("Train IC", f"{_final_profile.train_ic:+.4f}")
-                console.item("Val IC",   f"{_final_profile.val_ic:+.4f}")
-                # Top-3 most important parameters
-                if _final_profile.sensitivity:
-                    _top3 = sorted(_final_profile.sensitivity.items(), key=lambda kv: -kv[1])[:3]
+                # Gate persistence on out-of-sample edge AND fold stability. A
+                # profile that overfits (strong train IC, weak/negative val IC),
+                # is unstable across regimes, or regresses against the incumbent
+                # is NOT saved or applied — we keep prior / defaults instead.
+                # Re-score the incumbent on THIS run's validation frame so the
+                # regression check is apples-to-apples (the stored incumbent IC
+                # may have been measured on a smaller/older sample — e.g. a 2y
+                # window — and isn't comparable to a 5y candidate).
+                _incumbent_cmp = _prior_profile
+                if _prior_profile is not None:
+                    try:
+                        import dataclasses as _dc
+                        _inc_ic_now = tuner.score_on_validation(
+                            _prior_profile.weights, _prior_profile.thresholds
+                        )
+                        if np.isfinite(_inc_ic_now):
+                            _incumbent_cmp = _dc.replace(_prior_profile, val_ic=float(_inc_ic_now))
+                            console.item(
+                                "Incumbent IC (re-scored on current val)",
+                                f"{_inc_ic_now:+.4f}  (stored {_prior_profile.val_ic:+.4f})",
+                            )
+                    except Exception as _inc_e:
+                        console.warning(f"incumbent re-score failed: {_inc_e}")
+                _accept, _reason = _intel_mod.is_profile_acceptable(_candidate, _incumbent_cmp)
+                console.item("Train IC", f"{_candidate.train_ic:+.4f}")
+                console.item("Val IC",   f"{_candidate.val_ic:+.4f}")
+                _fold_str = ", ".join(f"{x:+.3f}" for x in _candidate.cv_fold_ics) or "n/a"
+                console.item("Fold ICs", f"[{_fold_str}]")
+                console.item("Fold Stability", f"{_candidate.cv_fraction_positive*100:.0f}% positive · mean {_candidate.cv_ic_mean:+.3f} · min {_candidate.cv_ic_min:+.3f} · std {_candidate.cv_ic_std:.3f}")
+                if _candidate.sensitivity:
+                    _top3 = sorted(_candidate.sensitivity.items(), key=lambda kv: -kv[1])[:3]
                     console.item("Top drivers", " · ".join(f"{k} {v:.0f}%" for k, v in _top3))
-                console.success(
-                    f"Calibration complete · val IC {_final_profile.val_ic:+.3f} · "
-                    f"persisted to disk ({_intel_universe} · {_intel_index})"
-                )
+
+                if _accept:
+                    _intel_mod.save_profile(_candidate)
+                    _final_profile = _candidate
+                    progress_bar(
+                        progress_container, 90,
+                        "Intelligence Mode · Profile Saved",
+                        f"Train IC {_candidate.train_ic:+.3f} · Val IC {_candidate.val_ic:+.3f}",
+                    )
+                    console.success(
+                        f"Calibration accepted · {_reason} · "
+                        f"persisted to disk ({_intel_universe} · {_intel_index})"
+                    )
+                else:
+                    _final_profile = _prior_profile
+                    progress_bar(
+                        progress_container, 90,
+                        "Intelligence Mode · Calibration Rejected",
+                        f"{_reason} · keeping prior / defaults",
+                    )
+                    console.warning(
+                        f"Calibration rejected · {_reason} — keeping prior profile / defaults"
+                    )
             except Exception as _cal_e:
                 console.warning(f"Calibration failed: {_cal_e} — falling back to prior profile / defaults")
                 _final_profile = _prior_profile
@@ -1059,6 +1403,306 @@ def main():
 
         console.end_phase("FINAL ASSEMBLY")
 
+        # ════════════════════════════════════════════════════════════════
+        #  SYSTEM DIAGNOSTICS — full per-run telemetry. A single copy of this
+        #  block is intended to be sufficient to evaluate and tune the system
+        #  end-to-end without the raw data. Each subsection is independently
+        #  guarded so a single failure never aborts the run.
+        # ════════════════════════════════════════════════════════════════
+        console.section("SYSTEM DIAGNOSTICS", "DIAGNOSTICS")
+        try:
+            _sig = engine.get_current_signal()
+            _ms = engine.get_model_stats()
+            _ou = engine.ou_params
+            _regst = engine.get_regime_stats()
+        except Exception as _de:
+            _sig, _ms, _ou, _regst = {}, {}, {}, {}
+            console.warning(f"diagnostics: engine snapshot failed: {_de}")
+
+        # ── 1. Data Quality ──────────────────────────────────────────────
+        try:
+            console.section("Data Quality")
+            _tgt = data[active_target] if active_target in data.columns else pd.Series(dtype=float)
+            console.item("Target", f"{active_target} · {len(data)} obs")
+            if active_date != "None" and active_date in data.columns:
+                _dt = pd.to_datetime(data[active_date], errors="coerce")
+                console.item("Target Date Range", f"{_dt.min()} → {_dt.max()}")
+            console.item("Target NaN", f"{int(_tgt.isna().sum())} ({_tgt.isna().mean()*100:.1f}%)")
+            _nan_by_feat = {f: float(data[f].isna().mean()*100) for f in active_features if f in data.columns}
+            _worst = sorted(_nan_by_feat.items(), key=lambda kv: -kv[1])[:5]
+            console.item("Predictors", f"{len(active_features)} · worst NaN%: " +
+                         (", ".join(f"{k} {v:.0f}%" for k, v in _worst if v > 0) or "none"))
+            console.item("Macro Symbols", f"{macro_df.shape[1] if hasattr(macro_df,'shape') else 0} fetched")
+            if constituent_ohlcv:
+                _rows = [len(v) for v in constituent_ohlcv.values() if v is not None]
+                if _rows:
+                    console.item("Constituent Rows", f"min {min(_rows)} · median {int(np.median(_rows))} · max {max(_rows)}")
+            _cov = (overlap_count / total_dates * 100) if total_dates else 0.0
+            console.item("Convergence Coverage", f"{overlap_count}/{total_dates} dates ({_cov:.1f}%) have BOTH engines — "
+                         f"the other {100-_cov:.1f}% are Aarambh-only (Nirnay neutral prior)")
+        except Exception as _de:
+            console.warning(f"diagnostics: data-quality failed: {_de}")
+
+        # ── 2. Aarambh Engine ────────────────────────────────────────────
+        try:
+            console.section("Aarambh Engine — Model & Edge")
+            if AARAMBH_FORWARD_SIGNAL:
+                console.item("OOS R² (forecast)", f"{_ms.get('r2_oos',0):.4f}  (returns forecast — magnitude R²≈0 is NORMAL; edge is in IC)")
+            else:
+                console.item("OOS R² (vs mean)", f"{_ms.get('r2_oos',0):.4f}  ⚠ persistence-inflated on near-unit-root PE")
+            console.item("R² vs Random Walk", f"{_ms.get('r2_vs_rw',0):+.3f}  ← magnitude skill (negative = worse than naive)")
+            console.item("RMSE / MAE (OOS)", f"{_ms.get('rmse_oos',0):.4f} / {_ms.get('mae_oos',0):.4f}")
+            console.item("Model Spread (avg)", f"{_ms.get('avg_model_spread',0):.4f}")
+            console.item("Model Coverage", f"{_ms.get('model_coverage',0)*100:.1f}% chunks fit ({_ms.get('n_fallback_chunks',0)} fell back to mean)")
+            if AARAMBH_FORWARD_SIGNAL:
+                console.item("Magnitude Edge", f"{_sig.get('edge_assessment','?')}  (level test, tradeable={_sig.get('tradeable')} — NOT the predictive verdict; see Directional/Walk-Forward IC)")
+            else:
+                console.item("EDGE", f"{_sig.get('edge_assessment','?')}  →  tradeable={_sig.get('tradeable')}")
+            if AARAMBH_FORWARD_SIGNAL:
+                console.item("Regime memory", f"Hurst {_sig.get('hurst',0.5):.3f}  ⚠ describes the FORECAST series (−prediction), not mean-reverting residuals — OU/half-life below are not applicable in predictive mode")
+            else:
+                console.item("Regime memory", f"Hurst {_sig.get('hurst',0.5):.3f} · mean_reverting={_sig.get('mean_reverting')} · random_walk={_sig.get('random_walk_regime')}")
+            console.item("OU θ / dyn-θ", f"{_ou.get('theta',0):.4f} / {_ou.get('dynamic_theta',0):.4f} (θ-std {_ou.get('theta_std',0):.4f}, stable={_sig.get('theta_stable')})")
+            _hl = _ou.get('half_life',0)
+            console.item("OU Half-Life", f"{_hl:.1f}d  " + ("(meaningful)" if _sig.get('half_life_meaningful') else "⚠ NOT meaningful — residuals do not mean-revert exploitably"))
+            console.item("Forward Edge", f"has_edge={_sig.get('has_forward_edge')} · inverted={_sig.get('inverted')} (from realized signal performance, below)")
+            console.item("ADF / KPSS p", f"{_ou.get('adf_pvalue',1):.4f} / {_ou.get('kpss_pvalue',0):.4f}")
+            console.item("Structural Breaks", f"{len(engine.break_dates)} (global view): {engine.break_dates[:8]}")
+            console.item("Signal", f"{_sig.get('signal')} / {_sig.get('strength')} (display: {_sig.get('display_strength')}) · conf {_sig.get('confidence')}")
+            console.item("Conviction", f"{_sig.get('conviction_score',0):+.1f} [band {_sig.get('conviction_lower',0):+.0f}, {_sig.get('conviction_upper',0):+.0f}] · regime {_sig.get('regime')}")
+            _cl = _sig.get('conviction_levels', {})
+            console.item("Adaptive Bands", f"weak {_cl.get('weak',0):.1f} · moderate {_cl.get('moderate',0):.1f} · strong {_cl.get('strong',0):.1f} (empirical, causal)")
+            console.item("Breadth", f"oversold {_sig.get('oversold_breadth',0):.0f}% · overbought {_sig.get('overbought_breadth',0):.0f}% · avgZ {_sig.get('avg_z',0):+.2f}")
+            _fi = list(engine.latest_feature_impacts.items())[:6]
+            if _fi:
+                console.item("Top Feature Impacts", " · ".join(f"{k} {v:.0f}%" for k, v in _fi))
+        except Exception as _de:
+            console.warning(f"diagnostics: aarambh failed: {_de}")
+
+        # ── 3. Signal Performance (forward-change significance) ───────────
+        try:
+            _perf = engine.get_signal_performance()
+            console.section("Aarambh Signal Performance (forward Δ, OOS)")
+            if AARAMBH_FORWARD_SIGNAL:
+                console.detail(
+                    "⚠ NOT meaningful in PREDICTIVE mode: the target is already a forward "
+                    "return, so 'forward Δ of the target' is a double-forward quantity — the "
+                    "avg% below are artifacts, not tradeable returns. Use the Directional / "
+                    "Walk-Forward IC sections for the predictive-mode edge read."
+                )
+            for _p in (5, 10, 20):
+                r = _perf.get(_p, {})
+                console.detail(
+                    f"{_p}d → BUY n={r.get('buy_count',0)} avg {r.get('buy_avg',0):+.2f}% "
+                    f"hit {r.get('buy_hit',0)*100:.0f}% t={r.get('buy_t_stat',0):+.2f} p={r.get('buy_p_value',1):.3f}  |  "
+                    f"SELL n={r.get('sell_count',0)} avg {r.get('sell_avg',0):+.2f}% "
+                    f"hit {r.get('sell_hit',0)*100:.0f}% t={r.get('sell_t_stat',0):+.2f} p={r.get('sell_p_value',1):.3f}"
+                )
+        except Exception as _de:
+            console.warning(f"diagnostics: signal-performance failed: {_de}")
+
+        # ── 4. Nirnay Aggregate ──────────────────────────────────────────
+        try:
+            console.section("Nirnay Engine — Aggregate")
+            if nirnay_constituent_dfs:
+                _mmrq = [float(d["MMR_Quality"].iloc[-1]) for d in nirnay_constituent_dfs.values()
+                         if "MMR_Quality" in d.columns and len(d)]
+                if _mmrq:
+                    console.item("MMR Quality (√R² vs RW)", f"mean {np.mean(_mmrq):.3f} · min {min(_mmrq):.3f} · max {max(_mmrq):.3f}")
+                _last_regimes = [str(d["Regime"].iloc[-1]) for d in nirnay_constituent_dfs.values() if "Regime" in d.columns and len(d)]
+                if _last_regimes:
+                    _rc = pd.Series(_last_regimes).value_counts().to_dict()
+                    console.item("Regime Distribution (latest)", " · ".join(f"{k}:{v}" for k, v in _rc.items()))
+                _last_vol = [str(d["Vol_Regime"].iloc[-1]) for d in nirnay_constituent_dfs.values() if "Vol_Regime" in d.columns and len(d)]
+                if _last_vol:
+                    _vc = pd.Series(_last_vol).value_counts().to_dict()
+                    console.item("Vol Regime (latest)", " · ".join(f"{k}:{v}" for k, v in _vc.items()))
+                _oscs = [float(d["Unified_Osc"].iloc[-1]) for d in nirnay_constituent_dfs.values() if "Unified_Osc" in d.columns and len(d)]
+                if _oscs:
+                    console.item("Oscillator (latest)", f"mean {np.mean(_oscs):+.2f} · std {np.std(_oscs):.2f} · range [{min(_oscs):+.1f}, {max(_oscs):+.1f}]")
+            if not nirnay_daily.empty:
+                _lastnd = nirnay_daily.iloc[-1]
+                console.item("Latest Day", f"OS {_lastnd.get('Oversold_Pct',0):.0f}% · OB {_lastnd.get('Overbought_Pct',0):.0f}% · "
+                             f"Buy {int(_lastnd.get('Buy_Signals',0))} · Sell {int(_lastnd.get('Sell_Signals',0))} · ChgPts {int(_lastnd.get('Change_Points',0))}")
+        except Exception as _de:
+            console.warning(f"diagnostics: nirnay failed: {_de}")
+
+        # ── 5. Convergence ───────────────────────────────────────────────
+        try:
+            console.section("Convergence — Dimensions & Zones")
+            if not convergence_df.empty:
+                # Full-history dim means are diluted by the ~90% of dates with no
+                # Nirnay data (neutral 0.5 prior). Report BOTH full-history and the
+                # overlap window (where both engines have real data) so the dilution
+                # is visible rather than hidden.
+                _ovl = convergence_df.tail(max(overlap_count, 1))
+                for _dim in ("dim_direction", "dim_breadth", "dim_magnitude", "dim_regime"):
+                    if _dim in convergence_df.columns:
+                        console.item(_dim, f"full mean {convergence_df[_dim].mean():.3f} · overlap mean {_ovl[_dim].mean():.3f} · last {convergence_df[_dim].iloc[-1]:.3f}")
+                if "consensus_direction" in convergence_df.columns:
+                    _cd = convergence_df["consensus_direction"]
+                    _nbull = int((_cd > 0).sum()); _nbear = int((_cd < 0).sum()); _ndiv = int((_cd == 0).sum())
+                    _tot = max(len(_cd), 1)
+                    console.item(
+                        "Consensus Direction",
+                        f"bull {_nbull} ({_nbull/_tot*100:.0f}%) · bear {_nbear} ({_nbear/_tot*100:.0f}%) · "
+                        f"divergent {_ndiv} ({_ndiv/_tot*100:.0f}%) · last {_cd.iloc[-1]:+.0f}  "
+                        f"← orients the score (the #1 fix)",
+                    )
+                if "convergence_score" in convergence_df.columns:
+                    cs = convergence_df["convergence_score"]
+                    console.item("Convergence Score", f"mean {cs.mean():+.1f} · std {cs.std():.1f} · last {cs.iloc[-1]:+.1f}  (negative = bullish)")
+                if "agreement_ratio" in convergence_df.columns:
+                    console.item("Agreement Ratio", f"mean {convergence_df['agreement_ratio'].mean():.3f} · last {convergence_df['agreement_ratio'].iloc[-1]:.3f}")
+                if "convergence_zone" in convergence_df.columns:
+                    _zc = convergence_df["convergence_zone"].value_counts().to_dict()
+                    console.item("Zone Distribution", " · ".join(f"{k}:{v}" for k, v in list(_zc.items())[:7]))
+                if "lead_lag_indicator" in convergence_df.columns:
+                    _llc = convergence_df["lead_lag_indicator"].value_counts().to_dict()
+                    console.item("Lead-Lag", " · ".join(f"{k}:{v}" for k, v in _llc.items()))
+        except Exception as _de:
+            console.warning(f"diagnostics: convergence failed: {_de}")
+
+        # Captured for the predictive-mode Final Verdict headline (the directional
+        # IC + walk-forward durability ARE the edge verdict in predictive mode,
+        # not the engine's level/magnitude tradeable flag).
+        _dir_ic = _dir_pos = _wf_durable = _wf_mean = _wf_ics_cap = None
+        _dc = None
+
+        # ── 5b. DIRECTIONAL convergence test ─────────────────────────────
+        # Independent cross-check: rebuilds the signal from the raw engine
+        # outputs (the *signed* normalized convergence) rather than reusing the
+        # production convergence_score, and measures its IC against forward
+        # returns across folds — the decisive "is there any real timing edge"
+        # question, as an unbiased second opinion on the scored composite.
+        try:
+            _dret = None
+            try:
+                _dret = _ret_levels  # label levels from calibration, if available
+            except NameError:
+                _dret = None
+            # Intelligence OFF → no calibration label. Stay coherent with the
+            # configured mode: "target" uses the selected target's levels, else
+            # the constituent basket.
+            if _dret is None or len(_dret) == 0:
+                if (CALIBRATION_RETURN_LABEL == "target" and not AARAMBH_FORWARD_SIGNAL
+                        and "Actual" in aarambh_ts.columns):
+                    _dret = aarambh_ts["Actual"].dropna()
+                else:
+                    _dret = _intel_mod.build_index_return_levels(constituent_ohlcv)
+                    _label_src = "Constituent EW basket (survivorship-biased)"
+            _dc = _intel_mod.directional_convergence_ic(aarambh_ts, nirnay_daily, _dret)
+            console.section(f"Directional Convergence Test (signed signal vs {_label_src})")
+            if _dc:
+                _fi = ", ".join(f"{x:+.3f}" for x in _dc["fold_ics"])
+                console.item("Fold ICs", f"[{_fi}]  (n={_dc['n']})")
+                console.item("Stability", f"{_dc['fraction_positive']*100:.0f}% positive · mean {_dc['mean']:+.3f} · min {_dc['min']:+.3f}")
+                _verdict = ("REAL directional edge candidate" if (_dc["fraction_positive"] >= 0.8 and _dc["mean"] > 0.03)
+                            else "no robust directional edge (flat / sign-flipping folds)")
+                console.item("Verdict", _verdict)
+                _dir_ic, _dir_pos = _dc["mean"], _dc["fraction_positive"]
+            else:
+                console.item("Status", "insufficient aligned data for the test")
+        except Exception as _de:
+            console.warning(f"diagnostics: directional test failed: {_de}")
+
+        # ── 5b. Walk-Forward IC (re-calibrated durability grade) ─────────
+        # Unlike the directional test (one fixed signal across folds) and the
+        # calibration's own fold stability (one fixed param set), this RE-
+        # OPTIMIZES the weights/thresholds on each expanding train block and
+        # scores the next purged OOS block — so it grades whether the edge
+        # survives recalibration or just rode one lucky parameterization.
+        try:
+            if _cal_frame is not None and len(_cal_frame) >= 250:
+                console.section("Walk-Forward IC (re-calibrated per window · purged OOS)")
+                _wf = _intel_mod.walk_forward_ic(_cal_frame)
+                if _wf:
+                    _ics = [w["ic"] for w in _wf if not np.isnan(w["ic"])]
+                    _seq = ", ".join(f"{x:+.3f}" for x in _ics)
+                    console.item("Window OOS ICs", f"[{_seq}]  (n={len(_wf)})")
+                    if _ics:
+                        _arr = np.array(_ics, dtype=float)
+                        _fp = float((_arr > 0).mean())
+                        console.item("Durability", f"{_fp*100:.0f}% positive · mean {_arr.mean():+.3f} · min {_arr.min():+.3f}")
+                        _wf_durable = bool(_fp >= 0.8 and _arr.mean() > 0.02)
+                        _wf_mean = float(_arr.mean())
+                        _wf_ics_cap = list(_ics)
+                        _wf_verdict = ("durable edge across windows" if _wf_durable
+                                       else "not durable (edge does not survive recalibration)")
+                        console.item("Verdict", _wf_verdict)
+                else:
+                    console.item("Status", "insufficient history for walk-forward windows")
+        except Exception as _we:
+            console.warning(f"diagnostics: walk-forward IC failed: {_we}")
+
+        # Stash the predictive-edge diagnostics for the Diagnostics tab so it
+        # surfaces the IC / durability verdict (not just the levels metrics).
+        st.session_state["intelligence_diag"] = {
+            "forward_signal": bool(AARAMBH_FORWARD_SIGNAL),
+            "label_src": _label_src,
+            "directional_ic": (_dir_ic if _dir_ic is not None else None),
+            "directional_pos": (_dir_pos if _dir_pos is not None else None),
+            "directional_folds": (_dc.get("fold_ics") if _dc else None),
+            "wf_ics": _wf_ics_cap,
+            "wf_durable": _wf_durable,
+            "wf_mean": _wf_mean,
+        }
+
+        # ── 6. Calibration Profile ───────────────────────────────────────
+        try:
+            console.section("Calibration Profile")
+            if _final_profile is not None:
+                console.item("Label Source", f"{_label_src} [{_final_profile.label_kind}]")
+                console.item("Sample", f"train {_final_profile.n_train_dates} · val {_final_profile.n_val_dates} · trials {_final_profile.n_trials}")
+                console.item("IC", f"train {_final_profile.train_ic:+.4f} · val {_final_profile.val_ic:+.4f}")
+                if _final_profile.cv_fold_ics:
+                    console.item("Fold ICs", "[" + ", ".join(f"{x:+.3f}" for x in _final_profile.cv_fold_ics) + "]")
+                    console.item("Fold Stability", f"{_final_profile.cv_fraction_positive*100:.0f}% positive · mean {_final_profile.cv_ic_mean:+.3f} · min {_final_profile.cv_ic_min:+.3f} · std {_final_profile.cv_ic_std:.3f}")
+                _w = _final_profile.weights
+                console.item("Weights", " · ".join(f"{k.replace('w_','')} {v:.3f}" for k, v in _w.items()))
+                _t = _final_profile.thresholds
+                console.item("Thresholds", " · ".join(f"{k} {v:+.3f}" for k, v in _t.items()))
+                if _final_profile.sensitivity:
+                    console.item("Param Importance", " · ".join(f"{k} {v:.0f}%" for k, v in sorted(_final_profile.sensitivity.items(), key=lambda kv: -kv[1])))
+                console.item("Prior val IC", f"{(_prior_profile.val_ic if _prior_profile else float('nan')):+.4f}")
+            else:
+                console.item("Status", "No calibrated profile (Intelligence OFF or calibration rejected)")
+        except Exception as _de:
+            console.warning(f"diagnostics: calibration failed: {_de}")
+
+        # ── 7. Final Nishkarsh Verdict ───────────────────────────────────
+        try:
+            console.section("Nishkarsh — Final Verdict")
+            console.item("Normalized Conviction", f"{(_nishkarsh_norm['value'] if _nishkarsh_norm else 0):+.3f}")
+            console.item("Signal", display_signal)
+            if results:
+                _l = results[-1]
+                console.item("DDM Conviction", f"{_l.nishkarsh_conviction:+.1f} [band {_l.confidence_lower:+.0f}, {_l.confidence_upper:+.0f}]")
+            if AARAMBH_FORWARD_SIGNAL:
+                # Predictive mode: the verdict is DIRECTIONAL (IC + walk-forward),
+                # NOT the engine's level/magnitude tradeable flag.
+                console.item("Directional IC", f"{_dir_ic:+.3f} ({(_dir_pos or 0)*100:.0f}% folds positive)" if _dir_ic is not None else "n/a")
+                console.item("Walk-Forward", (("durable" if _wf_durable else "not durable") + (f" (mean {_wf_mean:+.3f})" if _wf_mean is not None else "")) if _wf_durable is not None else "n/a")
+                if _dir_ic is not None and _dir_ic > 0.03 and (_dir_pos or 0) >= 0.8 and _wf_durable:
+                    _headline = (f"DIRECTIONAL EDGE candidate — IC {_dir_ic:+.3f}, walk-forward durable "
+                                 "(rank-IC evidence; pending non-overlapping significance + cost backtest)")
+                elif _dir_ic is not None and _dir_ic > 0.03 and (_dir_pos or 0) >= 0.8:
+                    _headline = f"directional IC {_dir_ic:+.3f} but NOT durable OOS — provisional, do not trade yet"
+                else:
+                    _headline = "no robust directional edge (predictive mode)"
+            else:
+                console.item("Aarambh Tradeable", _sig.get("tradeable"))
+                console.item("Edge Verdict", _sig.get("edge_assessment", "?"))
+                if _sig.get("inverted"):
+                    _headline = "SIGNAL INVERTED — historically anti-predictive; do NOT trade as-is"
+                elif not _sig.get("tradeable"):
+                    _headline = "NO FORECAST EDGE — treat as valuation context only"
+                else:
+                    _headline = "edge present (signal predicted correct direction, p<0.10)"
+            console.item("HEADLINE", f"{display_signal} · {_headline}")
+        except Exception as _de:
+            console.warning(f"diagnostics: verdict failed: {_de}")
+
         console.summary("RUN SUMMARY", {
             "Total Phases": "5/5 complete",
             "Aarambh Rows": len(engine.ts_data),
@@ -1076,7 +1720,9 @@ def main():
         console._write()
 
         progress_bar(progress_container, 100, "Analysis Complete", f"Nishkarsh: {display_signal}")
-        time.sleep(0.25)
+        # Clear the transient progress card immediately — no blocking sleep on
+        # Streamlit's single script thread. The completion state is surfaced in
+        # the rendered result, not a lingering banner.
         progress_container.empty()
         st.session_state["run_requested"] = True
         st.rerun()
