@@ -221,15 +221,19 @@ class AdaptiveHMM:
 
     def _adapt_emissions(self) -> None:
         """Adapt emission parameters based on recent observations."""
-        recent_obs = np.array(self.observation_history[-50:])
-        recent_states = self.state_history[-len(recent_obs) :]
+        recent_obs = np.asarray(self.observation_history[-50:], dtype=float)
+        # Convert the state window ONCE (the old code rebuilt this array inside
+        # the per-state loop, 3× per row across ~1700 rows × 50 stocks).
+        recent_states = np.asarray(self.state_history[-len(recent_obs) :])
 
         for state_idx in range(3):
-            mask = np.array(recent_states) == state_idx
+            mask = recent_states == state_idx
             if mask.sum() >= 2:
                 state_obs = recent_obs[mask]
                 new_mean = np.mean(state_obs)
-                new_std = max(np.std(state_obs), 1e-4) # Enforce positive bounds
+                # np.std(x) == sqrt(mean((x − mean)²)); reuse new_mean to skip the
+                # second internal mean pass np.std would do. Bit-identical result.
+                new_std = max(np.sqrt(np.mean((state_obs - new_mean) ** 2)), 1e-4)
 
                 self.state.emission_means[state_idx] = (
                     0.9 * self.state.emission_means[state_idx] + 0.1 * new_mean
@@ -240,10 +244,11 @@ class AdaptiveHMM:
 
     def _adapt_transitions(self) -> None:
         """Adapt transition matrix based on recent state transitions."""
-        recent = self.state_history[-30:]
+        recent = np.asarray(self.state_history[-30:])
         counts = np.zeros((3, 3))
-        for i in range(len(recent) - 1):
-            counts[recent[i], recent[i + 1]] += 1
+        if len(recent) > 1:
+            # Vectorized equivalent of the per-transition Python loop.
+            np.add.at(counts, (recent[:-1], recent[1:]), 1)
 
         for i in range(3):
             row_sum = counts[i].sum()
