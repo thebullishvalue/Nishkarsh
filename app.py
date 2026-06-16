@@ -383,6 +383,31 @@ def _render_footer() -> None:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# CACHED ANALYTICS
+# ══════════════════════════════════════════════════════════════════════════════
+
+@st.cache_data(show_spinner=False, ttl=3600, max_entries=8)
+def _cached_macro_factors(macro_df, n_components, passthrough, stationarize, return_loadings):
+    """Cache the deterministic causal macro-factor PCA on the panel's content.
+
+    The factors are a pure function of (macro_df, params). The macro panel comes
+    from the disk-cached fetches and is independent of target/feature selection,
+    so this computes once per data snapshot and is reused across analysis re-runs
+    (changing target/predictors hits the cache). Hashing the panel costs ~15 ms —
+    negligible versus the minutes the PCA takes on a cold run. st.cache_data
+    returns a fresh copy each call, so downstream mutation can't corrupt the entry.
+    """
+    from analytics.factors import build_causal_macro_factors
+    return build_causal_macro_factors(
+        macro_df,
+        n_components=n_components,
+        passthrough=list(passthrough) if passthrough else None,
+        stationarize=stationarize,
+        return_loadings=return_loadings,
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # MAIN APPLICATION
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -795,8 +820,10 @@ def main():
         _raw_macro_panel = nirnay_macro_df.copy() if not nirnay_macro_df.empty else pd.DataFrame()
         _n_raw_macros = len(macro_cols_list)
         if _n_raw_macros > 12:
-            from analytics.factors import build_causal_macro_factors
-            _macro_factors = build_causal_macro_factors(nirnay_macro_df, n_components=8, passthrough=_PASSTHROUGH)
+            _macro_factors = _cached_macro_factors(
+                nirnay_macro_df, n_components=8, passthrough=tuple(_PASSTHROUGH),
+                stationarize=False, return_loadings=False,
+            )
             if not _macro_factors.empty and _macro_factors.shape[1] >= 2:
                 nirnay_macro_df = _macro_factors
                 macro_cols_list = list(_macro_factors.columns)
@@ -834,7 +861,6 @@ def main():
         if (AARAMBH_PCA_PREDICTORS and not AARAMBH_FORWARD_SIGNAL and not _raw_macro_panel.empty
                 and active_date != "None" and active_date in data.columns):
             try:
-                from analytics.factors import build_causal_macro_factors
                 _dates = pd.to_datetime(data[active_date])
                 _sheet = data[active_features].reset_index(drop=True)
                 _macro_al = (
@@ -857,9 +883,9 @@ def main():
                 # stationarize=True: the macro panel holds non-stationary price
                 # levels; without rolling-z + clip they make the level regression
                 # extrapolate (R² → −47). Stationarizing bounds every input.
-                _aar_factors, _aar_loadings = build_causal_macro_factors(
-                    _combined, n_components=_ncomp, stationarize=True, return_loadings=True,
-                    passthrough=_PASSTHROUGH,
+                _aar_factors, _aar_loadings = _cached_macro_factors(
+                    _combined, n_components=_ncomp, passthrough=tuple(_PASSTHROUGH),
+                    stationarize=True, return_loadings=True,
                 )
                 if not _aar_factors.empty and _aar_factors.shape[1] >= 2:
                     X = _aar_factors.fillna(0.0).to_numpy(dtype=np.float64)
