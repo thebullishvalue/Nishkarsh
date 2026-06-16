@@ -99,7 +99,12 @@ class CrossSystemDivergenceDetector:
         nirnay_ob_pct = float(nirnay_day_stats.get("overbought_pct", 50))
         nirnay_avg_osc = float(nirnay_day_stats.get("avg_unified_osc", 0))
 
-        aarambh_stance = self._classify_aarambh_stance(conviction, oversold_breadth)
+        # Use the engine's own adaptive conviction bands so "extreme/strong"
+        # means the same thing here as it does in the Aarambh signal and Regime
+        # labels — avoids the scale mismatch where the engine calls |conv|>17
+        # "STRONG" while this detector still demanded >60.
+        levels = aarambh_signal.get("conviction_levels") or {}
+        aarambh_stance = self._classify_aarambh_stance(conviction, oversold_breadth, levels)
         nirnay_stance = self._classify_nirnay_stance(nirnay_os_pct, nirnay_ob_pct, nirnay_avg_osc)
 
         div_type: str | None = None
@@ -192,15 +197,31 @@ class CrossSystemDivergenceDetector:
         return pd.DataFrame(rows).set_index("date")
 
     @staticmethod
-    def _classify_aarambh_stance(conviction: float, oversold_breadth: float) -> str:
-        """Classify Aarambh's directional stance."""
-        if conviction < -60 and oversold_breadth > 70:
+    def _classify_aarambh_stance(
+        conviction: float,
+        oversold_breadth: float,
+        levels: dict[str, float] | None = None,
+    ) -> str:
+        """Classify Aarambh's directional stance.
+
+        Conviction cut-points come from the engine's adaptive bands
+        (``levels``) so they track the same market-led scale as the engine's
+        own STRONG/WEAK labels; the config priors (60/20) are the fallback when
+        no levels are supplied. Breadth cut-points (70/50/30) are deliberately
+        kept as structural *ratios* — they are the percentage of look-back
+        windows in agreement, i.e. "supermajority / majority / minority", which
+        is meaningful on its own scale rather than a magnitude threshold.
+        """
+        levels = levels or {}
+        strong = float(levels.get("strong", 60.0))
+        weak = float(levels.get("weak", 20.0))
+        if conviction < -strong and oversold_breadth > 70:
             return "EXTREME_BULLISH"
-        if conviction < -20 or oversold_breadth > 50:
+        if conviction < -weak or oversold_breadth > 50:
             return "BULLISH"
-        if conviction > 60 and oversold_breadth < 30:
+        if conviction > strong and oversold_breadth < 30:
             return "EXTREME_BEARISH"
-        if conviction > 20 or oversold_breadth < 50:
+        if conviction > weak or oversold_breadth < 50:
             return "BEARISH"
         return "NEUTRAL"
 

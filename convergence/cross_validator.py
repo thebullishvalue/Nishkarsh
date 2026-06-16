@@ -53,6 +53,12 @@ class ConvergenceSignal:
         Adaptive weights actually used for this observation.
     date : str
         Date string.
+    consensus_direction : float
+        The agreed market direction of the two engines for this date:
+        +1 = both bullish, -1 = both bearish, 0 = they disagree. This is what
+        orients ``convergence_score`` (the four dims are AGREEMENT scores, not
+        bull/bear), so the score is a genuine directional conviction rather than
+        a sign-ambiguous agreement magnitude.
     """
 
     convergence_score: float
@@ -63,6 +69,7 @@ class ConvergenceSignal:
     dimension_scores: dict[str, float]
     dimension_weights: dict[str, float]
     date: str
+    consensus_direction: float = 0.0
 
 
 class CrossValidator:
@@ -195,14 +202,28 @@ class CrossValidator:
             total_w = sum(adaptive_weights.values())
             adaptive_weights = {k: v / total_w for k, v in adaptive_weights.items()}
 
-        # Composite convergence score [-100, +100]
+        # Composite AGREEMENT strength in [-1, +1] (the four dims are agreement
+        # scores, not bull/bear, so this measures HOW STRONGLY the two engines
+        # concur — not in which direction).
         composite = (
             adaptive_weights["direction"] * (direction_score * 2 - 1)
             + adaptive_weights["breadth"] * (2 * breadth_score - 1)
             + adaptive_weights["magnitude"] * (2 * magnitude_score - 1)
             + adaptive_weights["regime"] * (2 * regime_score - 1)
         )
-        convergence_score = composite * 100
+        # ── Orient the score directionally ──────────────────────────────
+        # On its own `composite` has no direction — a high value could be
+        # agreement on a top or a bottom (the documented agreement-vs-direction
+        # flaw, which made the hero card and DDM contradict in sign). Multiply
+        # by the consensus direction so the score is a genuine directional
+        # conviction (zone convention: negative = bullish). When the two engines
+        # disagree, the directional conviction collapses to ~0 (DIVERGENT).
+        if aarambh_direction == nirnay_direction and aarambh_direction != 0:
+            consensus_direction = float(aarambh_direction)  # +1 bullish, -1 bearish
+        else:
+            consensus_direction = 0.0
+        agreement_strength = (composite + 1.0) / 2.0  # [-1,1] agreement → [0,1]
+        convergence_score = -consensus_direction * agreement_strength * 100.0
 
         # Agreement ratio
         # When Intelligence Mode injected calibrated weights, the agreement
@@ -263,6 +284,7 @@ class CrossValidator:
             },
             dimension_weights={k: round(v, 3) for k, v in adaptive_weights.items()},
             date=date,
+            consensus_direction=float(consensus_direction),
         )
         self.history.append(result)
         return result
@@ -281,6 +303,7 @@ class CrossValidator:
                     "agreement_ratio": h.agreement_ratio,
                     "lead_lag_indicator": h.lead_lag_indicator,
                     "confidence": h.confidence,
+                    "consensus_direction": h.consensus_direction,
                     **{f"dim_{k}": v for k, v in h.dimension_scores.items()},
                     **{f"w_{k}": v for k, v in h.dimension_weights.items()},
                 }

@@ -30,6 +30,29 @@ from analytics.ddm_filter import drift_diffusion_filter
 from analytics.utils import _apply_conviction_bounds
 
 
+def _coerce_scores(values) -> np.ndarray:
+    """Coerce an arbitrary score sequence into a clean 1-D float array.
+
+    Defensive: a single non-scalar element (e.g. a length-1 ``pd.Series`` or
+    ``np.ndarray`` that slipped through an upstream ``.get()`` on a frame with a
+    duplicated column/index) would make ``np.array(..., dtype=float64)`` raise
+    "cannot convert the series to float" and abort the whole run. Flatten each
+    element to its first scalar and replace anything non-numeric with 0.0.
+    """
+    out: list[float] = []
+    for x in values:
+        try:
+            if isinstance(x, (pd.Series, np.ndarray, list, tuple)):
+                arr = np.asarray(x, dtype=np.float64).ravel()
+                out.append(float(arr[0]) if arr.size else 0.0)
+            else:
+                fx = float(x)
+                out.append(fx if np.isfinite(fx) else 0.0)
+        except (TypeError, ValueError):
+            out.append(0.0)
+    return np.array(out, dtype=np.float64)
+
+
 @dataclass
 class UnifiedConvictionResult:
     """Output of the unified conviction model for a single date.
@@ -98,7 +121,7 @@ class UnifiedConvictionModel:
         list[UnifiedConvictionResult]
             One result per observation.
         """
-        scores = np.array(convergence_scores, dtype=np.float64)
+        scores = _coerce_scores(convergence_scores)
         self._dates = dates
 
         filtered, _gains, variances = drift_diffusion_filter(
