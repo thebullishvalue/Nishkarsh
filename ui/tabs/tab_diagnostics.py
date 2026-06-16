@@ -1,8 +1,12 @@
 """
-Nishkarsh v1.4.0 — Diagnostics tab: ML diagnostics from both engines.
+Nishkarsh — Diagnostics tab: model quality + predictive-edge diagnostics.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
-UI — Model quality assessment: feature importance, residuals, walk-forward performance.
+UI — Model quality + the predictive-edge verdict: OU residual stationarity,
+feature impact, regime (HMM) telemetry, data-layer health, and the Intelligence
+Center (calibration + out-of-sample directional IC / walk-forward durability /
+fold stability). Predictive-mode aware: relabels the level/mean-reversion
+diagnostics that aren't the verdict when Aarambh is forecasting returns.
 """
 
 from __future__ import annotations
@@ -19,6 +23,7 @@ from core.config import (
     COLOR_AMBER,
     COLOR_CYAN,
     COLOR_MUTED,
+    AARAMBH_FWD_MOM_K,
 )
 from data.cache import all_caches
 from data.circuit_breaker import all_circuits, CircuitState
@@ -64,11 +69,23 @@ def render_diagnostics_tab(engine, ts_filtered, x_axis, x_title, signal, model_s
         unsafe_allow_html=True,
     )
 
+    # Predictive mode changes what most of these diagnostics MEAN: Aarambh is
+    # forecasting forward returns, not regressing a fair-value level, so the
+    # OU/stationarity "mean-reversion foundation", the "fair-value" feature
+    # impacts, and the level-based Signal Performance are NOT the verdict — the
+    # tradeable edge is DIRECTIONAL (rank IC), surfaced in the Intelligence
+    # Center below. The tab relabels accordingly rather than implying otherwise.
+    forward_mode = bool(signal.get("forward_signal", False))
+    diag = st.session_state.get("intelligence_diag", {}) or {}
+
     # ═══════════════════════════════════════════════════════════════════════
     # 1. OU MEAN-REVERSION DIAGNOSTICS
     # ═══════════════════════════════════════════════════════════════════════
     render_section_header(
-        "OU Mean-Reversion Diagnostics",
+        "OU Residual Diagnostics" if forward_mode else "OU Mean-Reversion Diagnostics",
+        ("Stationarity of the model residual. ⚠ In predictive mode these describe the "
+         "FORECAST series, not a tradeable mean-reversion residual — not the edge verdict.")
+        if forward_mode else
         "Tests whether the pricing residual is stationary — the foundation all mean-reversion signals depend on.",
         icon="crosshair",
         accent="cyan",
@@ -110,7 +127,10 @@ def render_diagnostics_tab(engine, ts_filtered, x_axis, x_title, signal, model_s
     # 2. FEATURE IMPACT
     # ═══════════════════════════════════════════════════════════════════════
     render_section_header(
-        "Feature Impact on Fair Value",
+        "Feature Impact on Forecast" if forward_mode else "Feature Impact on Fair Value",
+        (f"How much each predictor's {AARAMBH_FWD_MOM_K}-day momentum shifts the forward-return "
+         "forecast now. Top features drive the signal — if they go stale, the signal degrades.")
+        if forward_mode else
         "How much each predictor shifts the fair-value estimate now. Top features drive the signal — if they go stale, the signal degrades.",
         icon="bar-chart",
         accent="violet",
@@ -122,6 +142,27 @@ def render_diagnostics_tab(engine, ts_filtered, x_axis, x_title, signal, model_s
             impacts = engine.latest_feature_impacts
             labels = list(impacts.keys())[::-1]
             vals = list(impacts.values())[::-1]
+
+            # These ARE the predictors actually fed to this run's model. When the
+            # combined-PCA gate is on (levels mode), the model trains on orthogonal
+            # factors, so the names are MACRO_PC* — flag that honestly rather than
+            # implying they are raw predictors.
+            _names = list(impacts.keys())
+            _is_pca = any(str(n).startswith("MACRO_PC") for n in _names)
+            _roster = " · ".join(str(n) for n in _names[:18]) + ("  …" if len(_names) > 18 else "")
+            _cap = (
+                f"<b>{len(_names)} factors</b> feeding the model (causal-PCA gate ON — orthogonal "
+                f"factors, not raw predictors; see console loadings for each factor's drivers): {_roster}"
+                if _is_pca else
+                f"<b>{len(_names)} predictors</b> feeding this run"
+                + (f" ({AARAMBH_FWD_MOM_K}-day momentum)" if forward_mode else "")
+                + f": {_roster}"
+            )
+            st.markdown(
+                f'<div style="font-family:var(--data);font-size:0.72rem;color:var(--ink-tertiary);'
+                f'margin:-0.2rem 0 0.6rem 0;line-height:1.5;">{_cap}</div>',
+                unsafe_allow_html=True,
+            )
 
             # Gradient color scale from light slate to bright slate based on relative contribution
             colors = []
@@ -142,7 +183,8 @@ def render_diagnostics_tab(engine, ts_filtered, x_axis, x_title, signal, model_s
             fig_imp.update_layout(**chart_layout(height=max(260, len(labels) * 32), show_legend=False))
             fig_imp.update_xaxes(
                 showgrid=True, gridcolor="rgba(255,255,255,0.035)", gridwidth=0.5,
-                title_text="Contribution %", zeroline=True,
+                title_text="Momentum contribution %" if forward_mode else "Contribution %",
+                zeroline=True,
                 zerolinecolor="rgba(255,255,255,0.06)", zerolinewidth=0.5,
             )
             fig_imp.update_yaxes(showgrid=False)
@@ -165,6 +207,10 @@ def render_diagnostics_tab(engine, ts_filtered, x_axis, x_title, signal, model_s
     # ═══════════════════════════════════════════════════════════════════════
     render_section_header(
         "Signal Performance",
+        ("⚠ NOT meaningful in predictive mode: the target is already a forward return, so "
+         "'forward Δ of the target' is a double-forward artifact. The real edge is the "
+         "Directional / Walk-Forward IC in the Intelligence Center below.")
+        if forward_mode else
         "Walk-forward hit rates across 5D, 10D, 20D forward return horizons.",
         icon="trending",
         accent="emerald",
@@ -201,15 +247,28 @@ def render_diagnostics_tab(engine, ts_filtered, x_axis, x_title, signal, model_s
         accent="rose",
     )
 
+    # Daily aggregated Nirnay regime series (app stores it under "nirnay_daily").
+    nirnay_df = st.session_state.get("nirnay_daily", pd.DataFrame())
+
+    # Empirical regime persistence, measured from the data (the dominant HMM
+    # state's day-over-day stickiness) instead of a hardcoded constant.
+    persist_val, persist_sub = "—", "no regime series this run"
+    if not nirnay_df.empty and "avg_hmm_bull" in nirnay_df.columns and "avg_hmm_bear" in nirnay_df.columns:
+        _state = (nirnay_df["avg_hmm_bull"] > nirnay_df["avg_hmm_bear"]).astype(int)
+        if len(_state) > 1:
+            _persist = float((_state.values[1:] == _state.values[:-1]).mean())
+            persist_val = f"{_persist:.2f}"
+            persist_sub = "P(state holds next day) · empirical"
+
     c1, c2 = st.columns(2)
     with c1:
-        render_metric_card("COVARIANCE SHRINKAGE", "1e-4", "Regularization strength", "warning",
+        render_metric_card("COVARIANCE SHRINKAGE", "1e-4", "Regularization strength (config)", "warning",
                            tooltip=TOOLTIPS["hmm_cov_shrinkage"])
     with c2:
-        render_metric_card("REGIME PERSISTENCE", "0.98", "Probability regime holds next period", "info",
+        render_metric_card("REGIME PERSISTENCE", persist_val, persist_sub,
+                           "info" if persist_val != "—" else "neutral",
                            tooltip=TOOLTIPS["viterbi_persist"])
 
-    nirnay_df = st.session_state.get("nirnay_results", pd.DataFrame())
     if not nirnay_df.empty and "avg_hmm_bull" in nirnay_df.columns:
         fig_hmm = go.Figure()
         fig_hmm.add_trace(go.Scatter(
@@ -310,10 +369,10 @@ def render_diagnostics_tab(engine, ts_filtered, x_axis, x_title, signal, model_s
     # 5. INTELLIGENCE CENTER — self-calibration dashboard (Sanket-pattern)
     # ═══════════════════════════════════════════════════════════════════════
     section_gap()
-    _render_intelligence_center()
+    _render_intelligence_center(forward_mode=forward_mode, diag=diag)
 
 
-def _render_intelligence_center() -> None:
+def _render_intelligence_center(forward_mode: bool = False, diag: dict | None = None) -> None:
     """Intelligence Center — read-only diagnostic dashboard.
 
     Calibration is now automatic during every **Run Analysis** when the
@@ -340,6 +399,12 @@ def _render_intelligence_center() -> None:
     profile = st.session_state.get("intelligence_active_profile")
     is_calibrated = bool(profile)
     intel_enabled = bool(st.session_state.get("intelligence_mode", True))
+    diag = diag or {}
+    # The calibration label is now configurable (^NSEI / PE / basket) — show the
+    # one actually used this run instead of the stale hardcoded "forward PE".
+    _label = diag.get("label_src") or (
+        "index return" if (profile and profile.get("label_kind") == "index_return") else "forward target Δ"
+    )
 
     # Top-line status banner
     if not intel_enabled:
@@ -371,7 +436,11 @@ def _render_intelligence_center() -> None:
     n_trials = int(profile.get("n_trials", 0)) if profile else 0
     n_train  = int(profile.get("n_train_dates", 0)) if profile else 0
     n_val    = int(profile.get("n_val_dates", 0)) if profile else 0
-    stability = (val_ic / train_ic * 100) if abs(train_ic) > 1e-9 else 0.0
+    # Fold stability (% of cross-validation folds with positive IC) is the metric
+    # the acceptance gate actually keys on — and unlike the old val/train ratio it
+    # doesn't penalise a barely-fit profile whose val IC exceeds train IC (the
+    # healthy regime under a clean ^NSEI/PE label).
+    fold_pos = profile.get("cv_fraction_positive") if profile else None
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -384,15 +453,15 @@ def _render_intelligence_center() -> None:
     with c2:
         render_metric_card(
             "VAL IC", f"{val_ic:+.3f}" if is_calibrated else "—",
-            "out-of-sample skill",
+            f"OOS skill vs {_label}" if is_calibrated else "out-of-sample skill",
             "success" if (is_calibrated and val_ic > 0) else "neutral",
         )
     with c3:
         render_metric_card(
-            "STABILITY",
-            f"{stability:+.0f}%" if (is_calibrated and abs(train_ic) > 1e-9) else "—",
-            "val / train ratio",
-            "success" if (is_calibrated and 50 <= stability <= 110) else "warning",
+            "FOLD STABILITY",
+            f"{fold_pos*100:.0f}%" if (is_calibrated and fold_pos is not None) else "—",
+            "CV folds positive (gate metric)",
+            "success" if (is_calibrated and fold_pos is not None and fold_pos >= 0.8) else "warning",
         )
     with c4:
         render_metric_card(
@@ -414,24 +483,65 @@ def _render_intelligence_center() -> None:
         d1, d2, d3, d4 = st.columns(4)
         with d1:
             render_metric_card(
-                "TRAIN IC", f"{train_ic:+.3f}", "in-sample IC vs forward PE",
+                "TRAIN IC", f"{train_ic:+.3f}", f"in-sample IC vs {_label}",
                 "success" if train_ic > 0 else "danger",
             )
         with d2:
             render_metric_card(
-                "VAL IC", f"{val_ic:+.3f}", "out-of-sample IC vs forward PE",
+                "VAL IC", f"{val_ic:+.3f}", f"out-of-sample IC vs {_label}",
                 "success" if val_ic > 0 else "danger",
             )
         with d3:
             render_metric_card(
                 "TRAIN / VAL",
                 f"{n_train} / {n_val}" if (n_train or n_val) else "—",
-                "chronological 70/30 split", "info",
+                "purged 70/30 · K-fold CV objective", "info",
             )
         with d4:
             render_metric_card(
                 "UPDATED", profile.get("timestamp", "—"),
                 "last calibration", "info",
+            )
+
+        # ── Out-of-sample durability (the predictive edge verdict) ───────
+        # Surfaces the directional IC + re-calibrating walk-forward + fold
+        # stability — the metrics that actually decide whether there is a
+        # tradeable directional edge (vs the level/magnitude metrics above).
+        section_gap()
+        render_section_header(
+            "Out-of-Sample Edge Durability",
+            "Directional rank-IC of the signed convergence signal, its re-calibrated "
+            "walk-forward durability, and cross-validation fold stability — the predictive verdict.",
+            icon="trending",
+            accent="emerald",
+        )
+        _dic = diag.get("directional_ic")
+        _dpos = diag.get("directional_pos")
+        _wfd = diag.get("wf_durable")
+        _wfm = diag.get("wf_mean")
+        _cv_mean = profile.get("cv_ic_mean")
+        _cv_min = profile.get("cv_ic_min")
+        e1, e2, e3 = st.columns(3)
+        with e1:
+            render_metric_card(
+                "DIRECTIONAL IC",
+                f"{_dic:+.3f}" if _dic is not None else "—",
+                (f"{(_dpos or 0)*100:.0f}% folds positive vs {_label}" if _dic is not None else "signed signal vs forward return"),
+                "success" if (_dic is not None and _dic > 0.03 and (_dpos or 0) >= 0.8) else "warning",
+            )
+        with e2:
+            render_metric_card(
+                "WALK-FORWARD",
+                ("Durable" if _wfd else "Not durable") if _wfd is not None else "—",
+                (f"re-cal OOS · mean {_wfm:+.3f}" if _wfm is not None else "re-calibrated per window"),
+                "success" if _wfd else ("warning" if _wfd is not None else "neutral"),
+            )
+        with e3:
+            render_metric_card(
+                "CV FOLD IC",
+                f"{_cv_mean:+.3f}" if _cv_mean is not None else "—",
+                (f"min {_cv_min:+.3f} across folds" if _cv_min is not None else "mean across CV folds"),
+                "success" if (_cv_mean is not None and _cv_mean > 0) else "neutral",
             )
 
         # ── Learned weights ─────────────────────────────────────────────

@@ -382,6 +382,62 @@ def _render_model_quality_cards(model_stats, signal):
         )
 
 
+def _render_edge_verdict(signal):
+    """Edge verdict — the honest tradeability call from realized forward performance.
+
+    Sits in the TRUST phase: before reading any conviction, the user is told
+    whether this signal has *demonstrated* forward edge, has none (context only),
+    or is historically inverted. Driven by the engine's realized signal
+    performance (t/p), not by R²/Hurst.
+    """
+    inverted = bool(signal.get("inverted", False))
+    tradeable = bool(signal.get("tradeable", False))
+    skill = float(signal.get("forecast_skill_vs_rw", 0.0))
+    forward_signal = bool(signal.get("forward_signal", False))
+
+    if forward_signal:
+        # Predictive mode: the inverted/tradeable flags above come from the
+        # LEVEL/magnitude forward-edge test, which is not the verdict here. The
+        # tradeable edge is DIRECTIONAL — measured by rank IC in the Convergence
+        # tab. Don't show the levels-mode "valuation context" framing.
+        title, color = "PREDICTIVE MODE — DIRECTIONAL READ IN CONVERGENCE TAB", "info"
+        body = (
+            "Aarambh is <strong>forecasting forward returns</strong>, not regressing a "
+            "fair-value level. A return forecast's magnitude R&sup2; is ~0 by nature "
+            f"(R&sup2; vs random walk {skill:+.1f}) — that is <em>expected</em>, not a failure. "
+            "The tradeable signal is the <strong>direction</strong>, graded by rank IC in the "
+            "<strong>Convergence</strong> tab (Directional &amp; Walk-Forward IC), not by the "
+            "level/magnitude metrics on this tab."
+        )
+        render_interpretation_card(title=title, body=body, color=color)
+        return
+
+    if inverted:
+        title, color = "SIGNAL INVERTED — VALUATION CONTEXT ONLY", "danger"
+        body = (
+            "On history this signal has been <strong>anti-predictive</strong> — BUY/SELL "
+            "preceded the <em>wrong</em> direction with significance (p&lt;0.05). Read the "
+            "conviction below as a valuation / breadth / regime <strong>context</strong> "
+            f"gauge, <strong>not</strong> a tradeable directional call. "
+            f"R&sup2; vs random walk {skill:+.1f} (negative = worse than &ldquo;tomorrow = today&rdquo;)."
+        )
+    elif not tradeable:
+        title, color = "VALUATION CONTEXT — NOT A TRADEABLE SIGNAL", "warning"
+        body = (
+            "No significant forward predictive power on history. These readings describe "
+            "<strong>where valuation sits</strong> (cheap/expensive vs its own range) and the "
+            "regime — use them as context, not as a directional signal. "
+            f"R&sup2; vs random walk {skill:+.1f}."
+        )
+    else:
+        title, color = "FORECAST EDGE PRESENT", "success"
+        body = (
+            "The signal predicted the correct direction with statistical significance on "
+            f"out-of-sample history. R&sup2; vs random walk {skill:+.1f}."
+        )
+    render_interpretation_card(title=title, body=body, color=color)
+
+
 def _render_fair_value_chart(engine, ts_filtered, x_axis, ts, active_target):
     """Section: Actual vs Walk-Forward Fair Value — dual-panel chart."""
     fig = make_subplots(
@@ -520,6 +576,7 @@ def render_aarambh_tab(engine, ts_filtered, x_axis, x_title, signal, model_stats
         accent="violet",
     )
     _render_model_quality_cards(model_stats, signal)
+    _render_edge_verdict(signal)
 
     section_gap()
 
