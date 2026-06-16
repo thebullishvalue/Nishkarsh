@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import sys
+import time
 import warnings
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -893,7 +894,23 @@ def main():
 
         console.section("Walk-Forward Regression")
         engine = FairValueEngine()
-        engine.fit(X, y, feature_names=_aar_feature_names, forward_signal=AARAMBH_FORWARD_SIGNAL, progress_callback=lambda pct, msg: progress_bar(progress_container, int(20 + pct * 20), "Running Aarambh Engine", msg))
+
+        # The walk-forward refits the ensemble across hundreds of expanding-window
+        # chunks (HuberRegressor dominates the cost). On a constrained host this
+        # runs for minutes emitting nothing to the console, which looks frozen.
+        # Emit a throttled heartbeat (~every 4s) so the log shows it is alive,
+        # without spamming one line per chunk. The Streamlit progress bar is still
+        # updated on every chunk as before.
+        _aar_last_log = [0.0]
+
+        def _aar_progress(pct: float, msg: str) -> None:
+            progress_bar(progress_container, int(20 + pct * 20), "Running Aarambh Engine", msg)
+            now = time.time()
+            if pct >= 1.0 or now - _aar_last_log[0] >= 4.0:
+                _aar_last_log[0] = now
+                console.detail(f"Walk-forward {pct * 100:3.0f}% · {msg}")
+
+        engine.fit(X, y, feature_names=_aar_feature_names, forward_signal=AARAMBH_FORWARD_SIGNAL, progress_callback=_aar_progress)
 
         sig = engine.get_current_signal()
         stats = engine.get_model_stats()
