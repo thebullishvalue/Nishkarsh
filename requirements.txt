@@ -9,7 +9,7 @@ plotly>=5.18.0
 
 # Scientific Computing
 scipy>=1.11.0
-scikit-learn>=1.4.0
+scikit-learn>=1.7
 statsmodels>=0.14.0
 
 # Self-Calibration / Intelligence Mode (Optuna TPE optimizer)
