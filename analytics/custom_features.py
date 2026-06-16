@@ -7,7 +7,7 @@ rates, credit/commodity ratios, FX momentum, cross-asset composites) from a
 combined panel of sheet columns + macro tickers. Every feature is STATIONARY
 (native spread, causal rolling z-score, or momentum) and CAUSAL (rolling stats
 use rows ≤ t only — no future), so the output is backtest-safe and won't make a
-level regression extrapolate. See CUSTOM_PREDICTORS.md for the full spec.
+level regression extrapolate. See docs/CUSTOM_PREDICTORS.md for the full spec.
 """
 
 from __future__ import annotations
