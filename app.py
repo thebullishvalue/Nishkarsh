@@ -10,9 +10,32 @@ Usage:
 
 from __future__ import annotations
 
+import os
+
+# ── BLAS thread pinning (MUST run before numpy/sklearn import) ────────────────
+# The walk-forward fits hundreds of small models sequentially. On Streamlit
+# Community Cloud the container is throttled to ~1 shared vCPU but the host
+# reports many logical CPUs, so OpenBLAS/MKL spawn one thread per reported core
+# and thrash — turning each tiny PCA/Ridge solve into a thread-contention storm
+# (the #1 reason the walk-forward is far slower on cloud than locally). One
+# thread per process is strictly faster for many-small-matrix workloads here.
+# os.environ.setdefault → respects any explicit override from the environment.
+for _v in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS",
+           "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):
+    os.environ.setdefault(_v, "1")
+
+# ── Numba cache OUTSIDE the app tree (MUST run before numba is imported) ──────
+# @njit(cache=True) kernels write .nbc/.nbi artifacts. If those land in the app
+# directory (default: <module>/__pycache__), Streamlit's file watcher treats each
+# write as a source change and reruns the script — restarting the whole pipeline
+# mid-compile. Point Numba's cache at the home cache dir (writable, NOT watched).
+os.environ.setdefault(
+    "NUMBA_CACHE_DIR",
+    os.path.join(os.path.expanduser("~"), ".cache", "nishkarsh", "numba"),
+)
+
 import json
 import logging
-import os
 import sys
 import time
 import warnings
@@ -34,9 +57,15 @@ warnings.filterwarnings("ignore", category=UserWarning, module="yfinance")
 pd.options.mode.chained_assignment = None
 
 # ── Path setup ───────────────────────────────────────────────────────────────
+# Force PROJECT_ROOT to the FRONT of sys.path (ahead of site-packages) so the
+# project's own packages (analytics, core, data, …) always win over any
+# same-named package that happens to be installed in the environment. The
+# project dirs carry __init__.py so they resolve as regular packages.
 PROJECT_ROOT = Path(__file__).resolve().parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+_pr = str(PROJECT_ROOT)
+if _pr in sys.path:
+    sys.path.remove(_pr)
+sys.path.insert(0, _pr)
 
 # ── UI ───────────────────────────────────────────────────────────────────────
 from ui.theme import inject_css, VERSION, PRODUCT_NAME, COMPANY, progress_bar
@@ -54,6 +83,7 @@ from ui.components import (
 )
 from ui.tabs.tab_aarambh import render_aarambh_tab
 from ui.tabs.tab_nirnay import render_nirnay_tab
+from ui.tabs.tab_precedent import render_precedent_tab
 from ui.tabs.tab_diagnostics import render_diagnostics_tab
 from ui.tabs.tab_data import render_data_tab
 
@@ -79,11 +109,27 @@ from core.config import (
     CUSTOM_PREDICTORS_ENABLED, PCA_PASSTHROUGH, PCA_PASSTHROUGH_ENABLED,
     CALIBRATION_RETURN_LABEL,
     AARAMBH_FORWARD_SIGNAL, AARAMBH_FWD_HORIZON, AARAMBH_FWD_MOM_K,
+    PRECEDENT_HOLD_HORIZONS,
 )
 
 # Effective passthrough columns — empty when the master toggle is off, so all
 # downstream call sites and the cache key stay in sync with one switch.
 _PASSTHROUGH = tuple(PCA_PASSTHROUGH) if PCA_PASSTHROUGH_ENABLED else ()
+
+
+# ─── Per-config result cache ─────────────────────────────────────────────────
+# The full result of an analysis is the set of session-state keys below. We
+# snapshot them per cache_key so revisiting a previously-computed config (e.g.
+# the user toggles a predictor set off and back on) restores instantly instead
+# of recomputing the whole 5-phase pipeline. Bounded (LRU) to cap memory.
+_BUNDLE_KEYS = (
+    "engine", "aarambh_ts", "nirnay_daily", "nirnay_constituent_dfs",
+    "convergence_df", "divergence_events", "nishkarsh_result", "last_agreement",
+    "nishkarsh_conv_normalized",
+    "intelligence_active_weights", "intelligence_active_thresholds",
+    "intelligence_active_profile",
+)
+_RESULTS_CACHE_MAX = 3  # keep the last N configs
 
 
 # ── Secret Management ────────────────────────────────────────────────────────
@@ -599,6 +645,20 @@ def main():
                 st.session_state.pop("nishkarsh_result", None)
                 st.rerun()
 
+            # Force a live re-pull of the market data (macro + constituent OHLCV), then
+            # recompute — for when the data is stale/partial. Reset = re-run on cached
+            # data (fast); Refresh = re-fetch live + re-run (slower). Snapshot-preserving:
+            # if the live pull fails (rate-limit / circuit open), the cache's stale
+            # fallback keeps the app working on last-good data instead of going empty.
+            if st.button("Refresh Data", type="secondary", width="stretch"):
+                from data.cache import begin_force_refresh
+                begin_force_refresh()   # next fetches bypass TTL; disk snapshot kept
+                for _k in ("engine", "engine_cache", "aarambh_engine", "aarambh_fit_key",
+                           "wf_results", "results_cache", "nishkarsh_result"):
+                    st.session_state.pop(_k, None)
+                st.rerun()
+            st.caption("Reset = re-run on cached data · Refresh = re-fetch live, then re-run")
+
         # ── Model Passport (Sanket-style) ──────────────────────────────
         # Surfaces the active calibrated profile (Intelligence Mode).
         _current_universe = "NIFTY 50"
@@ -684,6 +744,18 @@ def main():
         X, y = data[active_features].values, data[active_target].values
         cache_key = f"{active_target}|{'|'.join(sorted(active_features))}|{len(data)}|pca{int(AARAMBH_PCA_PREDICTORS)}|cf{int(CUSTOM_PREDICTORS_ENABLED)}|pt{'-'.join(_PASSTHROUGH)}"
     if st.session_state.get("engine_cache") != cache_key:
+        # ── Restore from the per-config result cache if this exact config was
+        # already computed this session (e.g. the user toggled a predictor set
+        # off and came back) — full reuse, no recompute. ────────────────────
+        _rcache = st.session_state.setdefault("results_cache", {})
+        if cache_key in _rcache:
+            for _bk, _bv in _rcache[cache_key].items():
+                st.session_state[_bk] = _bv
+            _rcache[cache_key] = _rcache.pop(cache_key)  # mark most-recently-used
+            st.session_state["engine_cache"] = cache_key
+            console.header("NISHKARSH — Cached Result Restored", f"v{VERSION}")
+            console.success(f"Restored {active_target} from session cache — no recompute")
+            st.rerun()
         if "engine" in st.session_state:
             del st.session_state["engine"]
 
@@ -933,7 +1005,6 @@ def main():
             )
 
         console.section("Walk-Forward Regression")
-        engine = FairValueEngine()
 
         # The walk-forward refits the ensemble across hundreds of expanding-window
         # chunks (HuberRegressor dominates the cost). On a constrained host this
@@ -950,7 +1021,28 @@ def main():
                 _aar_last_log[0] = now
                 console.detail(f"Walk-forward {pct * 100:3.0f}% · {msg}")
 
-        engine.fit(X, y, feature_names=_aar_feature_names, forward_signal=AARAMBH_FORWARD_SIGNAL, progress_callback=_aar_progress)
+        # Reuse an already-fit engine for this exact config if a prior (possibly
+        # interrupted) execution in THIS session already produced one. engine_cache
+        # is only set at the end of Phase 5, so a Streamlit rerun mid-pipeline
+        # (yfinance retry, cloud reconnect, stray interaction) would otherwise
+        # re-enter this block and re-run the expensive walk-forward. Keyed by
+        # cache_key → identical inputs → identical fit, so reuse is safe.
+        if (st.session_state.get("aarambh_fit_key") == cache_key
+                and isinstance(st.session_state.get("aarambh_engine"), FairValueEngine)):
+            engine = st.session_state["aarambh_engine"]
+            console.item("Walk-Forward", "reused cached fit (resumed run)")
+            progress_bar(progress_container, 40, "Aarambh Engine Reused", "Cached walk-forward fit")
+        else:
+            engine = FairValueEngine()
+            engine.fit(X, y, feature_names=_aar_feature_names, forward_signal=AARAMBH_FORWARD_SIGNAL, progress_callback=_aar_progress)
+            # Carry the raw target LEVEL on the engine output (forward-signal mode
+            # otherwise leaves only return-scale columns). Used by the Precedent tab
+            # for the analog price path / forward returns. Length-guarded — ts_data
+            # rows align 1:1 with the _valid-filtered `data` used to build X/y.
+            if len(engine.ts_data) == len(data):
+                engine.ts_data["Price"] = data[active_target].values
+            st.session_state["aarambh_engine"] = engine
+            st.session_state["aarambh_fit_key"] = cache_key
 
         sig = engine.get_current_signal()
         stats = engine.get_model_stats()
@@ -1776,6 +1868,15 @@ def main():
         console.line('═', 70)
         console._write()
 
+        # Snapshot this config's full result into the bounded per-config cache so
+        # revisiting it later (predictor toggle-back) restores instantly. LRU-evict
+        # to keep memory bounded.
+        _rcache = st.session_state.setdefault("results_cache", {})
+        _rcache.pop(cache_key, None)
+        _rcache[cache_key] = {bk: st.session_state.get(bk) for bk in _BUNDLE_KEYS}
+        while len(_rcache) > _RESULTS_CACHE_MAX:
+            _rcache.pop(next(iter(_rcache)))
+
         progress_bar(progress_container, 100, "Analysis Complete", f"Nishkarsh: {display_signal}")
         # Clear the transient progress card immediately — no blocking sleep on
         # Streamlit's single script thread. The completion state is surfaced in
@@ -1897,8 +1998,8 @@ def main():
     # Get current active tab from URL hash or default to 0
     active_tab_idx = 0  # Streamlit doesn't expose active tab index directly, so we render on demand
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "CONVERGENCE", "AARAMBH", "NIRNAY", "DIAGNOSTICS", "DATA",
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        "CONVERGENCE", "AARAMBH", "NIRNAY", "PRECEDENT", "DIAGNOSTICS", "DATA",
     ])
 
     # Error boundary wrapper
@@ -1930,9 +2031,15 @@ def main():
         _safe_render("Nirnay", lambda: render_nirnay_tab(selected_tf))
     with tab4:
         st.session_state.rendered_tabs.add(3)
-        _safe_render("Diagnostics", lambda: render_diagnostics_tab(engine, ts_filtered, x_axis, x_title, signal, model_stats))
+        # Full-history `ts` (not the timeframe-filtered view) so the analog matcher
+        # sees the whole series. Horizons follow the Aarambh forecast lens.
+        _safe_render("Precedent", lambda: render_precedent_tab(
+            ts, active_target, tuple(PRECEDENT_HOLD_HORIZONS), AARAMBH_FWD_MOM_K, AARAMBH_FWD_HORIZON))
     with tab5:
         st.session_state.rendered_tabs.add(4)
+        _safe_render("Diagnostics", lambda: render_diagnostics_tab(engine, ts_filtered, x_axis, x_title, signal, model_stats))
+    with tab6:
+        st.session_state.rendered_tabs.add(5)
         _safe_render("Data", lambda: render_data_tab(ts_filtered, ts, active_target))
 
     _render_footer()

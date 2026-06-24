@@ -10,7 +10,7 @@ its convergence weights and thresholds against forward returns on every run.
 
 | | |
 |---|---|
-| **Version** | 1.4.23 — *Performance pass & deploy hardening* |
+| **Version** | 1.4.24 — *Precedent tab UI parity* |
 | **Stack** | Python 3.12+ · Streamlit · scikit-learn · statsmodels · Optuna · Plotly |
 | **Universe** | Nifty 50 (live, fetched from niftyindices.com) |
 | **License** | See `LICENSE.md` |
@@ -537,4 +537,4 @@ Mathematical primitives draw on:
 
 ---
 
-© 2026 Nishkarsh · [@thebullishvalue](https://twitter.com/thebullishvalue) · v1.4.23
+© 2026 Nishkarsh · [@thebullishvalue](https://twitter.com/thebullishvalue) · v1.4.24

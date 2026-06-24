@@ -13,6 +13,24 @@ Sections used: **Added · Changed · Deprecated · Removed · Fixed · Security 
 
 ---
 
+## [1.4.24] — 2026-06-24 — *Precedent tab UI parity*
+
+### Fixed
+- **Precedent tab analog-card styling.** The Precedent view's Python logic was
+  ported from Tattva intact, but the supporting `.analog-*` CSS family was never
+  carried into `ui/theme.css`, so the analog-period cards rendered as raw,
+  unstyled HTML — no eyebrow/date header, no 3-column stat row, no signed-coloured
+  forward-return tiles, and no footer similarity bar. Ported the full analog-card
+  stylesheet (`.analog-card`, `.analog-card-head`/`-id`, `.analog-eyebrow`,
+  `.analog-symbol`, `.analog-stat-row`/`-stat`/`-label`/`-value` with
+  `.amber`/`.pos`/`.neg`/`.neutral` accents, `.analog-fwd-block`/`-grid`/`-tile`
+  with signed gradients + top accent line + hover lift, `.analog-card-foot`/
+  `-label`/`-pct`, the `.position-card.analog-card` tier-aware hover glows, and the
+  `max-width: 480px` responsive collapse) so the tab now matches Tattva's
+  Obsidian-Quant fidelity exactly. *(Adapted from Tattva.)*
+
+---
+
 ## [1.4.23] — 2026-06-17 — *Performance pass & deploy hardening*
 
 ### Added
