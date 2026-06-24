@@ -12,12 +12,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from analytics.regime import (
-    AdaptiveKalmanFilter,
-    AdaptiveHMM,
-    GARCHDetector,
-    CUSUMDetector,
-)
+from analytics.regime import run_regime_loop
 from analytics.utils import causal_gram_schmidt_orthogonalize
 from core.config import (
     NIRNAY_OVERSOLD,
@@ -427,68 +422,14 @@ def run_full_analysis(
         axis=1,
     )
 
-    # Regime intelligence loop
-    hmm = AdaptiveHMM()
-    garch = GARCHDetector()
-    cusum = CUSUMDetector()
-    kalman = AdaptiveKalmanFilter()
-
-    regimes: list[str] = []
-    hmm_bulls: list[float] = []
-    hmm_bears: list[float] = []
-    vol_regimes: list[str] = []
-    change_points: list[bool] = []
-    confidences: list[float] = []
-    signal_history: list[float] = []
-
-    unified_vals = df["Unified"].values
-
-    # HMM confidence cuts tied to the model's uniform baseline (3 states → 1/3
-    # each) rather than magic 0.6/0.4: "strong" = twice the uniform prior,
-    # "weak" = a margin above it. Structural to the state space, not a market
-    # magnitude threshold.
-    uniform_p = 1.0 / 3.0
-    strong_p = 2.0 * uniform_p
-    weak_p = uniform_p + 0.07
-
-    for i in range(len(df)):
-        sig = unified_vals[i] if not np.isnan(unified_vals[i]) else 0.0
-
-        # Kalman smoothing
-        filtered = kalman.update(sig)
-
-        # GARCH volatility regime
-        shock = sig - signal_history[-1] if signal_history else 0.0
-        garch.update(shock)
-        vol_regime, _ = garch.get_regime()
-
-        # HMM state estimation
-        hmm_probs = hmm.update(filtered)
-        change = cusum.update(filtered)
-
-        bull_p = hmm_probs["BULL"]
-        bear_p = hmm_probs["BEAR"]
-
-        if change:
-            regime = "TRANSITION"
-        elif bull_p > strong_p:
-            regime = "BULL"
-        elif bear_p > strong_p:
-            regime = "BEAR"
-        elif bull_p > weak_p:
-            regime = "WEAK_BULL"
-        elif bear_p > weak_p:
-            regime = "WEAK_BEAR"
-        else:
-            regime = "NEUTRAL"
-
-        regimes.append(regime)
-        hmm_bulls.append(bull_p)
-        hmm_bears.append(bear_p)
-        vol_regimes.append(vol_regime)
-        change_points.append(change)
-        confidences.append(max(bull_p, bear_p, hmm_probs["NEUTRAL"]))
-        signal_history.append(sig)
+    # Regime intelligence loop — single-pass Numba kernel (faithful port of the
+    # Kalman → GARCH → HMM → CUSUM object loop, validated bit-identical to the
+    # AdaptiveKalmanFilter/HMM/GARCH/CUSUM classes). Same structural HMM cuts
+    # (strong = 2/3, weak = 1/3 + 0.07) and non-causal CUSUM window as before;
+    # only the per-step Python/NumPy dispatch is eliminated.
+    regimes, hmm_bulls, hmm_bears, vol_regimes, change_points, confidences = (
+        run_regime_loop(df["Unified"].values)
+    )
 
     # Join the six regime-intelligence columns as ONE block via pd.concat.
     # df.assign() also fragments under newer pandas because it inserts kwargs
