@@ -7,7 +7,7 @@ CORE — Merged from both Aarambh (correl.py) and Nirnay (nirnay_core.py) monoli
 
 # ─── Version / Product ───────────────────────────────────────────────────────
 
-VERSION = "1.4.23"
+VERSION = "1.4.24"
 PRODUCT_NAME = "NISHKARSH"
 COMPANY = "@thebullishvalue"
 
@@ -109,6 +109,17 @@ CALIBRATION_RETURN_LABEL = "nsei"
 AARAMBH_FORWARD_SIGNAL = True
 AARAMBH_FWD_HORIZON = 10   # forecast horizon (trading days)
 AARAMBH_FWD_MOM_K = 20     # trailing momentum window for the predictor features
+
+# ── Precedent (historical analog) view ───────────────────────────────────────
+# The Precedent tab matches today's state to the most statistically-similar past
+# states (covariance-aware Mahalanobis on engine.ts_data) and reports what the
+# target did next — a descriptive base rate complementing the Aarambh forecast.
+# Forward-return HOLD grid for the base-rate summary; the primary read is the
+# Aarambh forecast horizon (AARAMBH_FWD_HORIZON), momentum window AARAMBH_FWD_MOM_K.
+PRECEDENT_HOLD_HORIZONS = (3, 5, 10, 20)
+# An honorary +Nd reference tile shown with a caveat (the analog has no edge at this
+# horizon — reference only, NOT part of any calibration). None disables it.
+PRECEDENT_HONORARY_HORIZON = 1
 
 # Signal thresholds (conviction score → signal mapping)
 CONVICTION_STRONG = 60
