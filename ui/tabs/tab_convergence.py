@@ -15,11 +15,7 @@ from plotly.subplots import make_subplots
 
 from ui.theme import chart_layout, style_axes
 from ui.components import render_metric_card, render_section_header, section_gap
-from convergence.normalization import (
-    align_aarambh_nirnay,
-    compute_norm_params,
-    zscore_clip,
-)
+from convergence.normalization import align_aarambh_nirnay
 from core.config import (
     COLOR_GREEN,
     COLOR_RED,
@@ -176,18 +172,52 @@ def render_convergence_tab(ts_filtered=None):
         st.warning("No overlapping dates between Aarambh and Nirnay data sources.")
         return
 
-    # ── Normalization params: computed once from the FULL dataset, cached, ──
-    #    then applied to the filtered slice for plotting.
-    if "conv_norm_params" not in st.session_state:
-        _, full_a, full_n = align_aarambh_nirnay(aarambh_ts, nirnay_daily)
-        st.session_state["conv_norm_params"] = compute_norm_params(full_a, full_n)
+    # ── Per-date CAUSAL normalization, cached per engine config + content ──
+    # Two fixes over the old single "conv_norm_params" session key:
+    #   1. CAUSAL: applying terminal full-sample μ/σ to a historical slice is
+    #      look-ahead — earlier bars appear less extreme than they were at the
+    #      time. Each date is z-scored on expanding stats up to that date.
+    #   2. KEYED: the old key was set once per session and survived
+    #      "Refresh Data" / target / predictor changes, silently normalizing
+    #      new data against a previous config's μ/σ. The key folds in the
+    #      engine config plus a content fingerprint (row count + latest raw
+    #      values), so an intraday last-bar update invalidates it too.
+    _last_a = aligned_aarambh_raw[-1] if aligned_aarambh_raw else 0.0
+    _last_n = aligned_nirnay_raw[-1] if aligned_nirnay_raw else 0.0
+    _np_key = (
+        f"conv_norm_causal::{st.session_state.get('engine_cache', st.session_state.get('active_target', ''))}"
+        f"|{len(aligned_dates)}|{_last_a:.6g}|{_last_n:.6g}"
+    )
+    if _np_key not in st.session_state:
+        _full_dates, full_a, full_n = align_aarambh_nirnay(aarambh_ts, nirnay_daily)
+        fa = np.array(full_a, dtype=np.float64)
+        fn = np.array(full_n, dtype=np.float64)
+        sa, sn = pd.Series(fa), pd.Series(fn)
+        na_full = np.clip(
+            (fa - sa.expanding().mean().to_numpy())
+            / sa.expanding().std().clip(lower=1e-10).fillna(1.0).to_numpy()
+            / 3.0, -1.0, 1.0,
+        )
+        nn_full = np.clip(
+            (fn - sn.expanding().mean().to_numpy())
+            / sn.expanding().std().clip(lower=1e-10).fillna(1.0).to_numpy()
+            / 3.0, -1.0, 1.0,
+        )
 
-    params = st.session_state["conv_norm_params"]
+        def _dk(d):
+            return str(d.date()) if hasattr(d, "date") else str(d)
 
-    arr_a = np.array(aligned_aarambh_raw, dtype=np.float64)
-    arr_n = np.array(aligned_nirnay_raw, dtype=np.float64)
-    norm_a = zscore_clip(arr_a, params["mu_a"], params["sigma_a"])
-    norm_n = zscore_clip(arr_n, params["mu_n"], params["sigma_n"])
+        st.session_state[_np_key] = {
+            "a": {_dk(d): v for d, v in zip(_full_dates, na_full)},
+            "n": {_dk(d): v for d, v in zip(_full_dates, nn_full)},
+        }
+    _norm_lookup = st.session_state[_np_key]
+
+    def _dkey(d):
+        return str(d.date()) if hasattr(d, "date") else str(d)
+
+    norm_a = np.array([_norm_lookup["a"].get(_dkey(d), 0.0) for d in aligned_dates])
+    norm_n = np.array([_norm_lookup["n"].get(_dkey(d), 0.0) for d in aligned_dates])
     norm_avg = (norm_a + norm_n) / 2.0
 
     # Pre-compute conviction raw for row 2

@@ -253,10 +253,11 @@ def render_precedent_tab(
     tr_p = np.corrcoef(tr_x, tr_y)[0, 1] if len(tr_x) > 2 else 0.0
     tr_s, _ = _spearmanr(tr_x, tr_y) if len(tr_x) > 2 else (0.0, 1.0)
     oos_p = np.corrcoef(te_x, te_y)[0, 1] if len(te_x) > 2 else 0.0
-    oos_s, _ = _spearmanr(te_x, te_y) if len(te_x) > 2 else (0.0, 1.0)
+    oos_s, oos_s_pval = _spearmanr(te_x, te_y) if len(te_x) > 2 else (0.0, 1.0)
     tr_s = 0.0 if not np.isfinite(tr_s) else tr_s
     oos_s = 0.0 if not np.isfinite(oos_s) else oos_s
     oos_p = 0.0 if not np.isfinite(oos_p) else oos_p
+    oos_s_pval = 1.0 if not np.isfinite(oos_s_pval) else float(oos_s_pval)
 
     fig = go.Figure()
     fig.add_trace(go.Scattergl(
@@ -295,27 +296,32 @@ def render_precedent_tab(
     fig.update_layout(**layout)
     style_axes(fig, y_title=f"{active_target} Return T+{horizon}d (%)", x_title="Extension Z at T")
 
-    st.plotly_chart(fig, use_container_width=True,
+    st.plotly_chart(fig, width="stretch",
                     config={"displayModeBar": False, "displaylogo": False})
 
-    oos_strong = oos_s if abs(oos_s) > abs(oos_p) else oos_p
-    if abs(oos_strong) > 0.3:
-        strength = "strong" if abs(oos_strong) > 0.5 else "moderate"
-        direction = "positive" if oos_strong > 0 else "negative"
+    # Verdict is gated on the Spearman p-value, not a bare |ρ| > 0.3 cutoff:
+    # on this test split (often only ~20-40 non-overlapping windows) |ρ| > 0.3
+    # is common under pure noise, and picking max(|Pearson|, |Spearman|)
+    # compounded the multiple-comparisons problem. Sample size is surfaced.
+    if oos_s_pval < 0.10 and abs(oos_s) > 0.0:
+        strength = "strong" if abs(oos_s) > 0.5 else "moderate"
+        direction = "positive" if oos_s > 0 else "negative"
         body = (
-            f"<strong>Out-of-sample (30%):</strong> Pearson {oos_p:.2f} · Spearman {oos_s:.2f} — "
-            f"{strength} {direction} relationship holds on unseen data.<br>"
+            f"<strong>Out-of-sample (30%, n={len(te_x)}):</strong> Spearman {oos_s:.2f} "
+            f"(p={oos_s_pval:.3f}) · Pearson {oos_p:.2f} — "
+            f"{strength} {direction} relationship holds on unseen data at the 10% level.<br>"
             f"<span style='color:var(--ink-tertiary);'>In-sample (70%): Pearson {tr_p:.2f} · "
             f"Spearman {tr_s:.2f}</span>"
         )
         render_interpretation_card("Relationship Holds Out-of-Sample", body, color="success")
     else:
         body = (
-            f"<strong>Out-of-sample (30%):</strong> Pearson {oos_p:.2f} · Spearman {oos_s:.2f} — "
-            f"weak out-of-sample relationship at the {horizon}d horizon.<br>"
+            f"<strong>Out-of-sample (30%, n={len(te_x)}):</strong> Spearman {oos_s:.2f} "
+            f"(p={oos_s_pval:.3f}) · Pearson {oos_p:.2f} — "
+            f"not significant at the {horizon}d horizon on this sample.<br>"
             f"<span style='color:var(--ink-tertiary);'>In-sample (70%): Pearson {tr_p:.2f} · "
             f"Spearman {tr_s:.2f}</span><br><br>"
-            "The extension→return link may be non-linear (see the quadratic curve) or "
-            "stronger at a different lens horizon."
+            "The extension→return link may be non-linear (see the quadratic curve), "
+            "stronger at a different lens horizon, or simply absent."
         )
-        render_interpretation_card("Weak Out-of-Sample Fit", body, color="warning")
+        render_interpretation_card("No Significant Out-of-Sample Fit", body, color="warning")

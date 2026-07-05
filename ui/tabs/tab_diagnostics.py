@@ -49,10 +49,6 @@ TOOLTIPS = {
         "Corroborating test: checks whether the residual is stationary around a trend. "
         "p > 0.05 fails to reject stationarity — second confirmation of mean-reversion."
     ),
-    "hmm_cov_shrinkage": (
-        "Covariance regularization for the regime detection model. "
-        "Prevents overfitting when estimating regime volatility from limited data."
-    ),
     "viterbi_persist": (
         "Probability the current regime (bull/bear) persists into the next period. "
         "Near 1.0 = stable regimes; below 0.9 = frequent switching, lower signal confidence."
@@ -99,12 +95,18 @@ def render_diagnostics_tab(engine, ts_filtered, x_axis, x_title, signal, model_s
         render_metric_card("OU HALF-LIFE", f"{signal['ou_half_life']:.0f}d", "Days to close half the pricing gap", "info",
                            tooltip=TOOLTIPS["ou_half_life"])
     with c2:
-        adf_class = "success" if signal["adf_pvalue"] < 0.05 else "danger"
-        render_metric_card("ADF P-VALUE", f"{signal['adf_pvalue']:.3f}", "Rejects drift if p < 0.05", adf_class,
+        # Forward mode: ADF/KPSS describe the FORECAST series (-prediction),
+        # not a tradeable mean-reversion residual — grading them
+        # success/danger implies a pass/fail verdict on a series that isn't
+        # the verdict. Render neutral and say so; levels mode is unchanged.
+        adf_class = "neutral" if forward_mode else ("success" if signal["adf_pvalue"] < 0.05 else "danger")
+        adf_sub = "Rejects drift if p < 0.05" + (" (forecast series — not a verdict)" if forward_mode else "")
+        render_metric_card("ADF P-VALUE", f"{signal['adf_pvalue']:.3f}", adf_sub, adf_class,
                            tooltip=TOOLTIPS["adf_pvalue"])
     with c3:
-        kpss_class = "success" if signal["kpss_pvalue"] > 0.05 else "danger"
-        render_metric_card("KPSS P-VALUE", f"{signal['kpss_pvalue']:.3f}", "Confirms mean-reversion if p > 0.05", kpss_class,
+        kpss_class = "neutral" if forward_mode else ("success" if signal["kpss_pvalue"] > 0.05 else "danger")
+        kpss_sub = "Confirms mean-reversion if p > 0.05" + (" (forecast series — not a verdict)" if forward_mode else "")
+        render_metric_card("KPSS P-VALUE", f"{signal['kpss_pvalue']:.3f}", kpss_sub, kpss_class,
                            tooltip=TOOLTIPS["kpss_pvalue"])
 
     # Status indicators
@@ -260,11 +262,12 @@ def render_diagnostics_tab(engine, ts_filtered, x_axis, x_title, signal, model_s
             persist_val = f"{_persist:.2f}"
             persist_sub = "P(state holds next day) · empirical"
 
-    c1, c2 = st.columns(2)
+    # (The former "COVARIANCE SHRINKAGE 1e-4" card displayed a hardcoded
+    # emission-variance epsilon styled as measured telemetry — removed rather
+    # than left masquerading as a diagnostic. Regime persistence below IS
+    # measured from the data.)
+    c1, _ = st.columns(2)
     with c1:
-        render_metric_card("COVARIANCE SHRINKAGE", "1e-4", "Regularization strength (config)", "warning",
-                           tooltip=TOOLTIPS["hmm_cov_shrinkage"])
-    with c2:
         render_metric_card("REGIME PERSISTENCE", persist_val, persist_sub,
                            "info" if persist_val != "—" else "neutral",
                            tooltip=TOOLTIPS["viterbi_persist"])

@@ -23,11 +23,8 @@ import streamlit as st
 from ui.theme import chart_layout, style_axes
 from ui.components import (
     render_metric_card,
-    render_info_box,
     render_interpretation_card,
     render_section_header,
-    render_collapsible_section,
-    render_collapsible_section_close,
     section_gap,
 )
 from core.config import (
@@ -303,11 +300,14 @@ def _render_market_state_cards(signal, regime_stats, ts):
             tooltip=TOOLTIPS["current_regime"],
         )
 
-    # Regime distribution interpretation
-    total = len(ts)
+    # Regime distribution interpretation. Denominator = rows the engine
+    # actually classified (get_regime_stats now excludes the walk-forward
+    # warm-up, whose fabricated-neutral labels previously diluted these
+    # percentages by the warm-up's share of history) — NOT len(ts).
     os_total = regime_stats["strongly_oversold"] + regime_stats["oversold"]
     ob_total = regime_stats["strongly_overbought"] + regime_stats["overbought"]
     neutral_count = regime_stats["neutral"]
+    total = os_total + ob_total + neutral_count
     os_pct = os_total / total * 100 if total > 0 else 0
     ob_pct = ob_total / total * 100 if total > 0 else 0
     neutral_pct = neutral_count / total * 100 if total > 0 else 0
@@ -344,12 +344,26 @@ def _render_model_quality_cards(model_stats, signal):
     q1, q2, q3, q4 = st.columns(4)
     with q1:
         r2 = model_stats["r2_oos"]
-        render_metric_card(
-            "OOS R²", f"{r2:.3f}",
-            "Variance explained on unseen data. Below 0.4 = model cannot reliably forecast.",
-            "success" if r2 > UI_R2_STRONG else "warning" if r2 > UI_R2_ACCEPTABLE else "danger",
-            tooltip=TOOLTIPS["oos_r2"],
-        )
+        _fwd = bool(signal.get("forward_signal", False))
+        if _fwd:
+            # A returns forecast's magnitude R² is ~0 by nature — grading it
+            # on the level-regression scale (danger below 0.4) mislabels the
+            # expected regime as failure. The edge is directional (rank IC).
+            render_metric_card(
+                "OOS R² (FORECAST)", f"{r2:.3f}",
+                "Returns forecast — R² near 0 is expected; the edge is in rank IC (Diagnostics).",
+                "neutral",
+                tooltip="Variance of the forward return explained by the forecast. For return "
+                        "forecasting this is structurally near zero even for a genuinely useful "
+                        "signal — direction (rank IC), not magnitude, is the verdict.",
+            )
+        else:
+            render_metric_card(
+                "OOS R²", f"{r2:.3f}",
+                "Variance explained on unseen data. Below 0.4 = model cannot reliably forecast.",
+                "success" if r2 > UI_R2_STRONG else "warning" if r2 > UI_R2_ACCEPTABLE else "danger",
+                tooltip=TOOLTIPS["oos_r2"],
+            )
     with q2:
         r2_rw = model_stats.get("r2_vs_rw", 0.0)
         render_metric_card(
@@ -438,7 +452,7 @@ def _render_edge_verdict(signal):
     render_interpretation_card(title=title, body=body, color=color)
 
 
-def _render_fair_value_chart(engine, ts_filtered, x_axis, ts, active_target):
+def _render_fair_value_chart(engine, ts_filtered, x_axis, ts, active_target, signal):
     """Section: Actual vs Walk-Forward Fair Value — dual-panel chart."""
     fig = make_subplots(
         rows=2, cols=1, row_heights=[0.62, 0.38],
@@ -471,7 +485,14 @@ def _render_fair_value_chart(engine, ts_filtered, x_axis, ts, active_target):
     ), row=2, col=1)
     fig.add_hline(y=0, line_color="rgba(255,255,255,0.06)", line_width=0.5, row=2, col=1)
 
-    if hasattr(engine, "ou_projection") and len(engine.ou_projection) > 0 and pd.api.types.is_datetime64_any_dtype(ts["Date"]):
+    # OU is fit on the fair-value RESIDUAL. In forward mode the "residual"
+    # driving the OU estimate is -prediction (the forecast series itself, per
+    # engines/aarambh.py::fit), so the projection describes a mean-reversion
+    # dynamic that the run log already flags "not applicable in predictive
+    # mode" — drawing it here would contradict that. Levels mode is unchanged.
+    if (not bool(signal.get("forward_signal", False))
+            and hasattr(engine, "ou_projection") and len(engine.ou_projection) > 0
+            and pd.api.types.is_datetime64_any_dtype(ts["Date"])):
         from pandas import bdate_range
         last_date = ts["Date"].iloc[-1]
         proj_dates = bdate_range(start=last_date, periods=OU_PROJECTION_DAYS + 1)[1:]
@@ -581,13 +602,24 @@ def render_aarambh_tab(engine, ts_filtered, x_axis, x_title, signal, model_stats
     section_gap()
 
     # ── Phase 2: ANCHOR ────────────────────────────────────────────────
-    render_section_header(
-        "Actual vs Walk-Forward Fair Value",
-        "Actual PE vs model's fair-value estimate. Tight band + large divergence = strongest signals.",
-        icon="trending",
-        accent="cyan",
-    )
-    _render_fair_value_chart(engine, ts_filtered, x_axis, ts, active_target)
+    # Mode-aware header: in predictive mode "Actual" is the realized forward
+    # return and "FairValue" is the forecast — calling it a fair-value level
+    # comparison would describe a model that isn't running.
+    if bool(signal.get("forward_signal", False)):
+        render_section_header(
+            "Realized vs Forecast Forward Return",
+            "Realized h-day forward return vs the model's ex-ante forecast. The unlabeled tail (no realized value yet) is the live forecast region.",
+            icon="trending",
+            accent="cyan",
+        )
+    else:
+        render_section_header(
+            "Actual vs Walk-Forward Fair Value",
+            "Actual level vs model's fair-value estimate. Tight band + large divergence = strongest signals.",
+            icon="trending",
+            accent="cyan",
+        )
+    _render_fair_value_chart(engine, ts_filtered, x_axis, ts, active_target, signal)
 
     section_gap()
 
