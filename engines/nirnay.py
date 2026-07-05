@@ -7,6 +7,7 @@ NIRNAY — Per-constituent MSF + MMR analysis with HMM/GARCH/CUSUM regime intell
 
 from __future__ import annotations
 
+import warnings
 from typing import Any
 
 import numpy as np
@@ -34,10 +35,14 @@ def _sigmoid(x: np.ndarray | float, scale: float = 1.0) -> np.ndarray | float:
 
 
 def _zscore_clipped(series: pd.Series, window: int, clip: float = 3.0) -> pd.Series:
-    """Rolling causal z-score with outlier clipping. Uses shift(1) to prevent today's outlier from biasing the denominator."""
+    """Rolling causal z-score with outlier clipping. Uses shift(1) to prevent
+    today's outlier from biasing the denominator. No bfill on the shifted
+    stats: backfilling row 0 from row 1's statistic reintroduces the current
+    observation into its own z-score at the series head — row 0 simply stays
+    neutral (the trailing ``fillna(0)``)."""
     series_filled = series.ffill().fillna(0)
-    roll_mean = series_filled.rolling(window=window, min_periods=1).mean().shift(1).bfill()
-    roll_std = series_filled.rolling(window=window, min_periods=1).std().shift(1).bfill()
+    roll_mean = series_filled.rolling(window=window, min_periods=1).mean().shift(1)
+    roll_std = series_filled.rolling(window=window, min_periods=1).std().shift(1)
     z = (series_filled - roll_mean) / roll_std.replace(0, np.nan)
     return z.clip(-clip, clip).fillna(0)
 
@@ -132,10 +137,14 @@ def calculate_msf(
     # counts as up/down only if it exceeds a quarter of the stock's own recent
     # daily sigma (causal, shifted). This adapts per-name and per-regime instead
     # of applying one hardcoded percentage to every constituent.
+    # No bfill / full-series-std fill on the warm-up: both would leak future
+    # volatility into the first bars' significant-bar cut. Warm-up rows fall
+    # through to bar_cut = 0.0 (any nonzero move counts) until 5 real bars of
+    # realized vol exist — a neutral prior, not a look-ahead.
     bar_vol = (
-        pct_change.rolling(length, min_periods=5).std().shift(1).bfill()
+        pct_change.rolling(length, min_periods=5).std().shift(1)
     )
-    bar_vol = bar_vol.fillna(pct_change.std()).replace(0, np.nan)
+    bar_vol = bar_vol.replace(0, np.nan)
     bar_cut = (0.25 * bar_vol).fillna(0.0)
     regime_signals = np.select(
         [pct_change > bar_cut, pct_change < -bar_cut], [1, -1], default=0
@@ -193,26 +202,44 @@ def calculate_mmr(
     if len(df) < length + 10 or not available_macros:
         return (pd.Series(0.0, index=df.index), [], pd.Series(0.0, index=df.index))
 
-    y_mean = target.rolling(length, min_periods=1).mean().shift(1).bfill()
-    y_std = target.rolling(length, min_periods=1).std().shift(1).bfill()
+    # No bfill on any shifted rolling stat: backfilling the warm-up rows with
+    # the first post-warm-up value fills them from a FUTURE window (for
+    # roll_corr that was ~`length` rows of look-ahead). Warm-up rows stay NaN
+    # and fall through to the y_mean fallback in the row loop below.
+    y_mean = target.rolling(length, min_periods=1).mean().shift(1)
+    y_std = target.rolling(length, min_periods=1).std().shift(1)
 
     preds_list = []
     r2_list = []
-    
+
     # Vectorized causal rolling computations
     for ticker in available_macros:
         x = df[ticker].ffill().fillna(0)
-        x_mean = x.rolling(length, min_periods=1).mean().shift(1).bfill()
-        x_std = x.rolling(length, min_periods=1).std().shift(1).bfill()
-        
-        # Pearson correlation shifted (only prior data used to estimate relationship)
-        roll_corr = x.rolling(length, min_periods=length).corr(target).shift(1).bfill().fillna(0)
+        x_mean = x.rolling(length, min_periods=1).mean().shift(1)
+        x_std = x.rolling(length, min_periods=1).std().shift(1)
+
+        # Pearson correlation shifted (only prior data used to estimate the
+        # relationship). rolling.corr emits ±inf (not NaN) on near-zero-
+        # variance windows — routine with pegged/constant series (e.g.
+        # LIQUIDBEES.NS) or forward-filled holiday runs — and catastrophic
+        # cancellation can also yield finite |r| > 1. Both are numerically
+        # meaningless for a Pearson r and, squared, +inf would ALWAYS win the
+        # top-N driver argsort below (it passed the old ~isnan mask), letting
+        # an information-free column hijack a driver slot. Sanitize at source:
+        # non-finite → NaN (no information), then clip to the valid range.
+        roll_corr = (
+            x.rolling(length, min_periods=length).corr(target)
+             .replace([np.inf, -np.inf], np.nan)
+             .clip(-1.0, 1.0)
+             .shift(1)
+             .fillna(0)
+        )
         slope = roll_corr * (y_std / x_std.replace(0, np.nan)).fillna(0)
         intercept = y_mean - (slope * x_mean)
-        
+
         pred = (slope * x) + intercept
         r2 = roll_corr**2
-        
+
         preds_list.append(pred)
         r2_list.append(r2)
 
@@ -228,7 +255,11 @@ def calculate_mmr(
 
     for i in range(n_rows):
         row_r2 = all_r2_arr[i]
-        valid_mask = ~np.isnan(row_r2)
+        # isfinite, not ~isnan: +inf passes an isnan check and always sorts
+        # last in the argsort below — the driver-hijack path (audit B2). The
+        # per-driver predictions must be finite too, or a sane r² can still
+        # smuggle a non-finite prediction into the weighted sum.
+        valid_mask = np.isfinite(row_r2) & np.isfinite(all_preds_arr[i])
         if np.sum(valid_mask) < num_vars:
             y_predicted[i] = y_mean.iloc[i]
             continue
@@ -240,7 +271,7 @@ def calculate_mmr(
         preds_sel = all_preds_arr[i, top_real_indices]
 
         r2_sum = np.sum(r2_sel)
-        if r2_sum > 1e-6:
+        if np.isfinite(r2_sum) and r2_sum > 1e-6:
             y_predicted[i] = np.sum(preds_sel * r2_sel) / r2_sum
         else:
             y_predicted[i] = y_mean.iloc[i]
@@ -262,11 +293,24 @@ def calculate_mmr(
     r2_roll = (1.0 - resid_var / rw_var).clip(lower=0.0, upper=1.0)
     mmr_quality = np.sqrt(r2_roll.fillna(0.0))
 
-    # For display purposes (not trading logic), get the trailing global top drivers
+    # For display purposes (not trading logic), get the trailing global top
+    # drivers. Ranked by |r| but the SIGNED correlation is reported — an
+    # inversely-related driver previously displayed as positively correlated.
+    # Non-finite correlations (pegged/constant columns) are excluded.
     driver_details = []
     if len(df) > length:
-        trailing_corr = df[available_macros].iloc[-length:].corrwith(target.iloc[-length:]).abs().sort_values(ascending=False)
-        for ticker in trailing_corr.head(num_vars).index:
+        # corrwith legitimately warns (0/0) on a constant column — expected,
+        # and the resulting NaN is dropped below; suppression is scoped to
+        # exactly this call (no blanket filter).
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=RuntimeWarning)
+            trailing_corr = (
+                df[available_macros].iloc[-length:]
+                .corrwith(target.iloc[-length:])
+                .replace([np.inf, -np.inf], np.nan)
+                .dropna()
+            )
+        for ticker in trailing_corr.abs().sort_values(ascending=False).head(num_vars).index:
             driver_details.append({
                 "Symbol": ticker,
                 "Correlation": round(float(trailing_corr[ticker]), 4),
@@ -285,6 +329,7 @@ def run_full_analysis(
     regime_sensitivity: float,
     base_weight: float,
     macro_columns: list[str] | None = None,
+    num_vars: int = 5,
 ) -> tuple[pd.DataFrame, list[dict[str, Any]]]:
     """Run the complete Nirnay pipeline on a single stock DataFrame.
 
@@ -309,7 +354,7 @@ def run_full_analysis(
 
     df["MSF"], df["Micro"], df["Momentum"], df["Flow"] = calculate_msf(df, length, roc_len)
     df["MMR"], drivers, df["MMR_Quality"] = calculate_mmr(
-        df, length, num_vars=5, macro_columns=macro_columns
+        df, length, num_vars=num_vars, macro_columns=macro_columns
     )
 
     # Adaptive weighting based on signal clarity
@@ -422,11 +467,12 @@ def run_full_analysis(
         axis=1,
     )
 
-    # Regime intelligence loop — single-pass Numba kernel (faithful port of the
-    # Kalman → GARCH → HMM → CUSUM object loop, validated bit-identical to the
-    # AdaptiveKalmanFilter/HMM/GARCH/CUSUM classes). Same structural HMM cuts
-    # (strong = 2/3, weak = 1/3 + 0.07) and non-causal CUSUM window as before;
-    # only the per-step Python/NumPy dispatch is eliminated.
+    # Regime intelligence loop — single-pass Numba kernel (port of the
+    # Kalman → GARCH → HMM → CUSUM object loop; see analytics/regime.py for
+    # the two 2026-07 correctness fixes applied to BOTH implementations:
+    # causal CUSUM window and the HMM state-ordering constraint). Same
+    # structural HMM cuts (strong = 2/3, weak = 1/3 + 0.07); the per-step
+    # Python/NumPy dispatch is eliminated.
     regimes, hmm_bulls, hmm_bears, vol_regimes, change_points, confidences = (
         run_regime_loop(df["Unified"].values)
     )

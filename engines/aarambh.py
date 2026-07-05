@@ -23,7 +23,6 @@ from core.config import (
     LOOKBACK_WINDOWS,
     MIN_TRAIN_SIZE,
     MAX_TRAIN_SIZE,
-    REFIT_INTERVAL,
     RIDGE_ALPHAS,
     HUBER_EPSILON,
     HUBER_MAX_ITER,
@@ -55,7 +54,7 @@ except ImportError:
     _HAS_SKLEARN = False
 
 # Math imports from package
-from analytics.ou_process import ornstein_uhlenbeck_estimate, andrews_median_unbiased_ar1
+from analytics.ou_process import ornstein_uhlenbeck_estimate
 from analytics.ddm_filter import drift_diffusion_filter
 from analytics.hurst import hurst_dfa
 from analytics.structural_breaks import detect_structural_breaks
@@ -111,6 +110,9 @@ class FairValueEngine:
         self.feature_names: list[str] = []
         self.n_samples: int = 0
         self.forward_signal: bool = False
+        self.purge: int = 0
+        self.price: np.ndarray | None = None
+        self.label_mask: np.ndarray | None = None
         self.y: np.ndarray = np.array([])
         self.predictions: np.ndarray = np.array([])
         self.model_spread: np.ndarray = np.array([])
@@ -125,6 +127,9 @@ class FairValueEngine:
         feature_names: list[str] | None = None,
         progress_callback: Callable | None = None,
         forward_signal: bool = False,
+        purge: int = 0,
+        price: np.ndarray | None = None,
+        label_mask: np.ndarray | None = None,
     ) -> "FairValueEngine":
         """Run the full walk-forward pipeline.
 
@@ -135,6 +140,22 @@ class FairValueEngine:
             so a positive expected forward return maps to the engine's bullish
             (oversold) pole. R²/R²-vs-RW still measure forecast skill (prediction
             vs realized forward return).
+        purge: in forward_signal mode, the label horizon h (FWD_HORIZON). The
+            label at row s covers (s, s+h], so training/validation rows within
+            h of the forecast point carry labels overlapping the very window
+            being forecast — the overlapping-label leakage purged walk-forward
+            validation exists to prevent (López de Prado 2018, ch. 7). Setting
+            ``purge=h`` drops the last h training rows per chunk, keeps the
+            member-weighting validation slice behind the same gap, and purges
+            the causal break-point search.
+        price: optional genuine target LEVEL series aligned 1:1 with ``y``.
+            Used for the forward-change table and swing/divergence detection —
+            in forward mode ``y`` is a return, not a price, and treating it as
+            one corrupts those diagnostics.
+        label_mask: optional bool array, False where ``y`` is a zero-filled
+            placeholder (the last h rows in forward mode, whose forward label
+            does not exist yet). Those rows stay in the regression input but
+            the displayed ``Actual`` column is masked to NaN.
         """
         start_time = time.time()
 
@@ -142,8 +163,15 @@ class FairValueEngine:
         self.n_samples = len(y)
         self.y = y.copy()
         self.forward_signal = forward_signal
+        self.purge = max(0, int(purge))
+        self.price = np.asarray(price, dtype=np.float64) if price is not None else None
+        self.label_mask = (
+            np.asarray(label_mask, dtype=bool) if label_mask is not None else None
+        )
 
-        # Detect structural breaks
+        # Detect structural breaks — full-sample retrospective diagnostic only
+        # (surfaced as break_detected); the walk-forward's per-chunk training
+        # boundary uses the purged, causal detection in _process_wf_chunk.
         self.break_dates = detect_structural_breaks(y)
 
         # Walk-forward regression
@@ -156,8 +184,12 @@ class FairValueEngine:
         if forward_signal:
             # Predictive mode: the signal IS the forecast. Drive the conviction
             # stack with -prediction so a positive expected forward return maps
-            # to the bullish (oversold) pole — instead of the fair-value residual.
-            self.residuals = -np.nan_to_num(self.predictions, nan=0.0)
+            # to the bullish (oversold) pole. NaN predictions (the genuinely
+            # unfit warm-up region) are PRESERVED as NaN rather than
+            # zero-filled — a fake "0 forecast" would silently reintroduce a
+            # fabricated neutral signal into rows that have no honest
+            # walk-forward forecast.
+            self.residuals = -self.predictions
         self._compute_multi_lookback_signals()
         self._compute_breadth_metrics()
         self._compute_ddm_conviction()
@@ -352,7 +384,14 @@ class FairValueEngine:
 
     def get_regime_stats(self) -> dict:
         ts = self.ts_data
-        regime_counts = ts["Regime"].value_counts()
+        # Count only rows with a genuine walk-forward forecast: the warm-up
+        # region ([0, MIN_TRAIN_SIZE), Valid == False) carries a fabricated
+        # neutral regime label and would dilute the "% of history classified
+        # oversold/overbought" read by the warm-up's share of history.
+        if "Valid" in ts.columns:
+            regime_counts = ts.loc[ts["Valid"].astype(bool), "Regime"].value_counts()
+        else:
+            regime_counts = ts["Regime"].value_counts()
         return {
             "strongly_oversold": regime_counts.get("STRONGLY OVERSOLD", 0),
             "oversold": regime_counts.get("OVERSOLD", 0),
@@ -431,9 +470,15 @@ class FairValueEngine:
         self._wf_chunks_total = 0
         self._wf_chunks_fallback = 0
 
-        for t in range(MIN_TRAIN_SIZE):
-            self.predictions[t] = float(np.mean(y[:t])) if t > 0 else float(y[0])
-            self.model_spread[t] = 0.0
+        # Rows [0, MIN_TRAIN_SIZE) are left genuinely NaN rather than filled
+        # with an expanding mean of y[:t]. In forward_signal mode y[s] is the
+        # h-day FORWARD label (s → s+h), so mean(y[:t]) draws on labels whose
+        # windows overlap the point being "forecast" — a look-ahead into the
+        # warm-up region — and in EVERY mode the filled values were fabricated
+        # "forecasts" that the conformal z-scores, breadth, ConvictionRaw, the
+        # Intelligence calibration frame, and the analog feature pool then
+        # treated as real (audit B4). Downstream consumers are NaN-guarded and
+        # a `Valid` column records the genuine forecast coverage.
 
         decay_rate = np.log(2) / 252.0
         global_weights = np.exp(-decay_rate * np.arange(MAX_TRAIN_SIZE - 1, -1, -1))
@@ -463,12 +508,17 @@ class FairValueEngine:
         self, t_start: int, t_end: int, X: np.ndarray, y: np.ndarray,
         global_weights: np.ndarray,
     ) -> tuple[int, int, np.ndarray, np.ndarray, dict, np.ndarray]:
-        # Detect breaks causally on data available up to this chunk only.
-        # Using the globally-detected self.break_dates would leak the future:
-        # whether (and where) a break exists before t_start was decided using
-        # data after t_start, which shifts the historical training window and
-        # makes the backtest non-reproducible under truncation.
-        valid_breaks = detect_structural_breaks(y[:t_start])
+        # Detect breaks causally on data available up to this chunk only —
+        # and, in forward_signal mode, PURGED: y[s] for s within `purge` of
+        # t_start carries a label whose window (s, s+h] extends into/past the
+        # forecast point, so without the gap the break search (and hence the
+        # training window's start_idx) could shift based on labels overlapping
+        # the forecast window. Mirrors the purge applied to the training rows
+        # below. (Using the globally-detected self.break_dates would leak even
+        # further — whether a break exists before t_start would be decided
+        # using data after it.)
+        _bd_purge = getattr(self, "purge", 0)
+        valid_breaks = detect_structural_breaks(y[: max(0, t_start - _bd_purge)])
         last_break = valid_breaks[-1] if valid_breaks else 0
         max_lookback = max(0, t_start - MAX_TRAIN_SIZE)
 
@@ -479,8 +529,17 @@ class FairValueEngine:
         else:
             start_idx = max_lookback
 
+        # Purge gap: drop the last `purge` training rows whose forward-return
+        # labels overlap the forecast window [t_start, …]. Guard against
+        # starving the window (keep ≥50 rows); otherwise fall back to no purge
+        # for the chunk.
+        purge = getattr(self, "purge", 0)
+        train_end = t_start - purge
+        if train_end - start_idx < 50:
+            train_end = t_start
+
         models, scaler, valid_cols = self._fit_ensemble(
-            X[start_idx:t_start], y[start_idx:t_start], t_start, global_weights
+            X[start_idx:train_end], y[start_idx:train_end], t_start, global_weights
         )
 
         self._wf_chunks_total += 1
@@ -488,9 +547,12 @@ class FairValueEngine:
         if len(X_chunk) == 0:
             return t_start, t_end, np.array([]), np.array([]), models, valid_cols
 
-        val_size = min(30, max(5, int((t_start - start_idx) * 0.2)))
-        X_val = X[t_start - val_size : t_start] if t_start > val_size else None
-        y_val = y[t_start - val_size : t_start] if t_start > val_size else None
+        # The member-weighting validation slice must also stay behind the gap
+        # — its labels otherwise overlap the forecast window directly, biasing
+        # member selection toward whichever model accidentally fits it.
+        val_size = min(30, max(5, int((train_end - start_idx) * 0.2)))
+        X_val = X[train_end - val_size : train_end] if train_end > val_size else None
+        y_val = y[train_end - val_size : train_end] if train_end > val_size else None
 
         preds_matrix, weights = self._predict_ensemble(
             X_chunk, models, scaler, valid_cols, t_start, X_val, y_val
@@ -508,11 +570,11 @@ class FairValueEngine:
                 spreads = np.maximum(np.nanstd(preds_stacked, axis=0), 1e-6) if len(preds_matrix) > 1 else np.full(len(preds), 1e-6)
                 nans = np.isnan(preds)
                 if np.any(nans):
-                    preds[nans] = float(np.mean(y[start_idx:t_start]))
+                    preds[nans] = float(np.mean(y[start_idx:train_end]))
                     spreads[nans] = 1e-6
         else:
             self._wf_chunks_fallback += 1
-            fallback = float(np.mean(y[start_idx:t_start]))
+            fallback = float(np.mean(y[start_idx:train_end]))
             preds = np.full(t_end - t_start, fallback)
             spreads = np.full(t_end - t_start, 1e-6)
 
@@ -696,11 +758,28 @@ class FairValueEngine:
             mae = float(np.mean(np.abs(y_v - p_v)))
 
         if len(y_v) > 2:
-            rw_forecast = np.empty_like(y_v)
-            rw_forecast[0] = y_v[0]
-            rw_forecast[1:] = y_v[:-1]
-            ss_res = float(np.sum((y_v - p_v) ** 2))
-            ss_rw = float(np.sum((y_v - rw_forecast) ** 2))
+            # Subsample at the label-horizon stride so consecutive labels are
+            # non-overlapping (stride 1 in level mode — unchanged there).
+            _stride = max(1, getattr(self, "purge", 0)) if self.forward_signal else 1
+            y_sub = y_v[::_stride]
+            p_sub = p_v[::_stride]
+            if self.forward_signal:
+                # Naive baseline for a RETURN forecast is the MARTINGALE null:
+                # E[forward return] = 0. The previous baseline ("yesterday's
+                # label") is not a martingale null — for iid labels its SSE is
+                # E(y_t − y_{t−1})² = 2σ² vs the zero-forecast's σ², so a
+                # SKILL-LESS model scored r2_vs_rw ≈ +0.5 on pure noise
+                # (verified: mean +0.497 over 300 seeded trials). Against the
+                # zero baseline the same skill-less model correctly reads ~0.
+                baseline = np.zeros_like(y_sub)
+            else:
+                # Level mode: y genuinely is a level series, so "tomorrow =
+                # today" (last value) is the standard random-walk baseline.
+                baseline = np.empty_like(y_sub)
+                baseline[0] = y_sub[0]
+                baseline[1:] = y_sub[:-1]
+            ss_res = float(np.sum((y_sub - p_sub) ** 2))
+            ss_rw = float(np.sum((y_sub - baseline) ** 2))
             r2_vs_rw = 1 - ss_res / max(ss_rw, 1e-10)
         else:
             r2_vs_rw = 0.0
@@ -740,8 +819,15 @@ class FairValueEngine:
                 "lower_bounds": lower_bounds, "upper_bounds": upper_bounds,
             }
 
+        # `Actual` masked to NaN where the label is a zero-filled placeholder
+        # (forward mode's last h rows — no realized forward label yet). The
+        # regression input self.y is unchanged; this is display honesty only
+        # (the tail previously rendered a literal 0.0000 as if realized).
+        actual_display = self.y.astype(np.float64).copy()
+        if self.label_mask is not None and len(self.label_mask) == len(actual_display):
+            actual_display[~self.label_mask] = np.nan
         self.ts_data = pd.DataFrame({
-            "Actual": self.y, "FairValue": self.predictions,
+            "Actual": actual_display, "FairValue": self.predictions,
             "Residual": self.residuals, "ModelSpread": self.model_spread,
         })
         for lb, data in self.lookback_data.items():
@@ -774,7 +860,28 @@ class FairValueEngine:
             sell_count += self.ts_data[f"Sell_{lb}"].values
             z_scores_list.append(z)
 
-        avg_z = np.nan_to_num(np.nanmean(np.vstack(z_scores_list), axis=0), nan=0.0) if z_scores_list else np.zeros(n)
+        # A row with no finite z-score in ANY lookback window has no genuine
+        # signal — true both of the ordinary lookback warm-up and, since B4,
+        # of the engine's own [0, MIN_TRAIN_SIZE) forecast warm-up (residual/
+        # prediction NaN). Without this guard the breadth/count sums are just
+        # 0 for a missing row (every zone comparison is False against "N/A"),
+        # silently fabricating a confident "neutral" ConvictionRaw == 0
+        # reading for a period that was never actually forecast — exactly the
+        # region the Intelligence calibration frame and the analog pool need
+        # to be able to detect and drop. `Valid` records genuine coverage.
+        finite_stack = (
+            np.vstack([np.isfinite(z) for z in z_scores_list])
+            if z_scores_list else np.zeros((0, n), dtype=bool)
+        )
+        valid_row = finite_stack.any(axis=0) if len(finite_stack) else np.zeros(n, dtype=bool)
+
+        # nanmean legitimately warns "Mean of empty slice" on the all-NaN
+        # warm-up rows — expected and handled (result NaN, masked below), so
+        # the suppression is scoped to this exact call instead of the old
+        # blanket process-wide RuntimeWarning filter (audit D1).
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=RuntimeWarning)
+            avg_z = np.nanmean(np.vstack(z_scores_list), axis=0) if z_scores_list else np.zeros(n)
 
         self.ts_data["OversoldBreadth"] = (oversold + extreme_os) / num_lb * 100
         self.ts_data["OverboughtBreadth"] = (overbought + extreme_ob) / num_lb * 100
@@ -782,11 +889,13 @@ class FairValueEngine:
         self.ts_data["ExtremeOverbought"] = extreme_ob / num_lb * 100
         self.ts_data["BuySignalBreadth"] = buy_count
         self.ts_data["SellSignalBreadth"] = sell_count
-        self.ts_data["AvgZ"] = avg_z
-        self.ts_data["ConvictionRaw"] = (
+        self.ts_data["AvgZ"] = np.where(valid_row, np.nan_to_num(avg_z, nan=0.0), np.nan)
+        conviction_raw = (
             (overbought - oversold) / num_lb * 100
             + (extreme_ob - extreme_os) / num_lb * 100 * 1.5
         )
+        self.ts_data["ConvictionRaw"] = np.where(valid_row, conviction_raw, np.nan)
+        self.ts_data["Valid"] = valid_row
 
     def _compute_ddm_conviction(self) -> None:
         raw = self.ts_data["ConvictionRaw"].values
@@ -868,7 +977,14 @@ class FairValueEngine:
             self.ts_data["BearishDiv"] = bear_div
             return
 
-        price = np.asarray(self.y)
+        # Swing detection runs on the genuine PRICE level when available — in
+        # forward mode self.y is the h-day forward return, and "price swings"
+        # of a return series are not market swings (same rationale as
+        # _compute_forward_changes).
+        if self.price is not None and len(self.price) == n:
+            price = np.asarray(self.price, dtype=np.float64)
+        else:
+            price = np.asarray(self.y)
         residual = np.asarray(self.residuals)
         last_low_idx = -1
         last_high_idx = -1
@@ -876,6 +992,8 @@ class FairValueEngine:
 
         for i in range(order * 2, n):
             window_price = price[i - 2 * order : i + 1]
+            if not np.isfinite(window_price).all():
+                continue  # warm-up / masked rows — no genuine swing to score
             if np.argmin(window_price) == order:
                 curr_low = i - order
                 if last_low_idx != -1 and price[curr_low] < price[last_low_idx] and residual[curr_low] > residual[last_low_idx]:
@@ -899,6 +1017,11 @@ class FairValueEngine:
 
         for i in range(order * 2, n):
             window = r[i - 2 * order : i + 1]
+            # NaN residuals (the engine's genuinely-unfit warm-up region, B4)
+            # sort as the maximum under np.argmax — without this guard the
+            # warm-up would sprout spurious "pivots" at NaN positions.
+            if not np.isfinite(window).all():
+                continue
             if np.argmax(window) == order:
                 conf_tops.append(i)
                 top_vals.append(r[i - order])
@@ -922,8 +1045,18 @@ class FairValueEngine:
             self.ts_data.loc[conf_bottoms, "IsPivotBottom"] = True
 
     def _compute_forward_changes(self) -> None:
+        # Use the genuine PRICE level when fit() was given one. In
+        # forward_signal mode self.y[t] is the h-day FORWARD return (t → t+h)
+        # — "% change of y" is then a change of overlapping forward returns,
+        # not a price move, corrupting this table's hit-rates/t-stats
+        # (get_signal_performance) and the edge verdict built on them. Fall
+        # back to y only when no price was supplied (level mode, where y
+        # genuinely is the level — unchanged legacy behaviour).
         n = len(self.ts_data)
-        y_arr = np.asarray(self.y)
+        if self.price is not None and len(self.price) == n:
+            y_arr = np.asarray(self.price, dtype=np.float64)
+        else:
+            y_arr = np.asarray(self.y)
         for period in (5, 10, 20):
             fwd = np.full(n, np.nan)
             y_curr = y_arr[:-period]
@@ -935,7 +1068,11 @@ class FairValueEngine:
 
     def _compute_ou_diagnostics(self) -> None:
         r = self.residuals
+        # Finite OOS residuals only: a stray NaN (failed chunk) would make
+        # adfuller raise and silently report "non-stationary" (p=1.0) via the
+        # except path rather than testing the data that exists.
         oos_r = r[MIN_TRAIN_SIZE:]
+        oos_r = oos_r[np.isfinite(oos_r)]
 
         if len(oos_r) > 30:
             theta, mu, sigma = ornstein_uhlenbeck_estimate(oos_r)
