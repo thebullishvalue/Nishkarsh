@@ -10,7 +10,7 @@ its convergence weights and thresholds against forward returns on every run.
 
 | | |
 |---|---|
-| **Version** | 1.4.24 — *Precedent tab UI parity* |
+| **Version** | 1.6.0 — *Hero verdict rebuild · round-2 residual audit* |
 | **Stack** | Python 3.12+ · Streamlit · scikit-learn · statsmodels · Optuna · Plotly |
 | **Universe** | Nifty 50 (live, fetched from niftyindices.com) |
 | **License** | See `LICENSE.md` |
@@ -58,8 +58,8 @@ information.
 |---|---|---|
 | **Direction** | Top-down | Bottom-up |
 | **Question** | *Is the index fairly valued?* | *What are the 50 constituents doing?* |
-| **Method** | Walk-forward ensemble regression on the Nifty 50 PE ratio with conformal intervals, DDM smoothing, and OU mean-reversion diagnostics | Per-stock MSF (Market Strength Factor) + MMR (Macro-Micro Regime) with a four-method regime ensemble |
-| **Math** | Ridge · Huber · OLS · ElasticNet · PCA-WLS · Bai-Perron breaks · DFA-Hurst · Andrews median-unbiased AR(1) | Adaptive Kalman · 3-state HMM · GARCH-like · CUSUM · sigmoid-bounded composite |
+| **Method** | Walk-forward ensemble regression on the Nifty 50 PE ratio with rolling robust-quantile z-scores, DDM smoothing, and OU mean-reversion diagnostics | Per-stock MSF (Market Strength Factor) + MMR (Macro-Micro Regime) with a four-method regime ensemble |
+| **Math** | Ridge · Huber · OLS · ElasticNet · PCA-WLS · structural-break binding · DFA-Hurst · Kendall/Orcutt-Winokur bias-corrected AR(1) | Adaptive Kalman · 3-state HMM · GARCH-like · CUSUM · sigmoid-bounded composite |
 
 The **Convergence layer** cross-validates both systems across four dimensions
 (Direction · Breadth · Magnitude · Regime), adaptively reweights by per-dimension
@@ -131,6 +131,7 @@ data is cached.
 
 | Surface | What It Shows |
 |---|---|
+| **Hero verdict card** (above the tabs) | Structured signal + score + trust chip (non-overlapping Val IC / walk-forward durability) + tagged evidence rows (MODEL / PRECEDENT / INTERNALS / RISK). Built by the pure, unit-tested `build_hero_verdict` function — mode-aware (forward vs. levels) so an Aarambh signal the engine has measured as INVERTED never renders as a confident directional call. The precedent (analog) second opinion is gated on ≥5 distinct post-Theiler-exclusion analogs before it's treated as probative. |
 | **CONVERGENCE** tab | Headline conviction, normalised Aarambh-vs-Nirnay overlay, agreement metrics, divergence event timeline |
 | **AARAMBH** tab | Base conviction with DDM bands, fair-value plot, model quality (R², MAE), breadth distribution, feature-impact evolution |
 | **NIRNAY** tab | Constituent oversold / overbought distribution, signal counts, HMM regime probabilities, per-stock table |
@@ -180,10 +181,13 @@ Weights are renormalised to sum to 1; thresholds are constrained so
 ### Calibration objective
 
 Maximise the **Spearman Information Ratio** of the composite convergence
-signal against forward NIFTY-50-PE returns at horizons `[3, 5, 10, 20]`
-trading days, with **L2 regularisation toward uniform weights** to discourage
-overfit. Validates on a **chronological 70/30 train/val split** — no
-shuffling, no leakage.
+signal against forward returns at horizons `[3, 5, 10, 20]` trading days,
+with **L2 regularisation toward uniform weights** to discourage overfit.
+Validates on a **purged chronological 70/30 train/val split** (purge gap =
+max horizon) with a K-fold CV search objective. Every *reported or gated*
+IC (Train, Val, fold, walk-forward) is scored **non-overlapping**
+(stride = shortest hold horizon) — overlapping daily forward returns
+overstate an IC's precision by roughly √h.
 
 The optimiser is **Optuna TPE** (Tree-structured Parzen Estimator), with
 configurable trial count (default 50 — sufficient for IC convergence on
@@ -280,19 +284,21 @@ core/
   logger_config.py             Terminal logging with color and run IDs
 
 analytics/                     Pure functions. No state. No IO. Independently testable.
-  conformal.py                 Empirical-quantile prediction intervals (fat-tail adjustment)
+  conformal.py                 Rolling robust-quantile z-scores + empirical interval
+                               bounds (fat-tail robust; NOT conformal prediction — no
+                               coverage guarantee is claimed)
   ddm_filter.py                Drift-Diffusion leaky integrator with mean-reverting variance
   hurst.py                     DFA Hurst exponent with ADF stationarity guard
-  ou_process.py                Ornstein-Uhlenbeck with Andrews (1993) bias correction
-  regime.py                    Adaptive Kalman / HMM / GARCH-like / CUSUM
-  signals.py                   MSF + MMR primitives (Market Strength Factor, Macro-Micro Regime)
+  ou_process.py                Ornstein-Uhlenbeck with a Kendall (1954) / Orcutt &
+                               Winokur (1969) bias-corrected AR(1)
+  regime.py                    Adaptive Kalman / HMM (order-constrained) / GARCH-like /
+                               CUSUM (causal window)
   structural_breaks.py         Bai-Perron multiple breakpoints (with fallback)
   utils.py                     sigmoid, zscore_clipped, ATR, soft bounds, zone classifier
 
 data/                          Sole IO boundary. Production-grade resilience.
   fetcher.py                   Google Sheets + yfinance — circuit-protected, retry-wrapped
   constituents.py              Nifty 50 list (live from niftyindices.com + fallback)
-  schema.py                    UnifiedDataset dataclass contracts
   cache.py                     Two-tier (memory + disk) TTL cache with versioned keys
                                and last-good-snapshot fallback
   circuit_breaker.py           CLOSED → OPEN → HALF_OPEN per-service + retry-with-backoff
@@ -354,7 +360,7 @@ Never upward, never sideways. `data/` is the only IO boundary. `ui/` reads from
 │  │     analytics/ → conformal, ddm, ou_process, hurst,       │  │
 │  │                  structural_breaks, utils                 │  │
 │  │     Walk-forward ensemble regression (Ridge/Huber/OLS/    │  │
-│  │     ElasticNet/PCA-WLS) with conformal prediction bounds  │  │
+│  │     ElasticNet/PCA-WLS) with robust quantile z-bounds     │  │
 │  └───────────────────────────────────────────────────────────┘  │
 │  ┌───────────────────────────────────────────────────────────┐  │
 │  │  3. NIRNAY — Constituent Regime Intelligence              │  │
@@ -392,9 +398,8 @@ All tunable constants live in `core/config.py`. The most consequential ones:
 
 | Constant | Default | Affects |
 |---|---|---|
-| `LOOKBACK_WINDOWS` | `(5, 10, 20, 50, 100)` | Conformal z-score multi-horizon |
-| `MIN_TRAIN_SIZE` | `20` | Aarambh walk-forward floor |
-| `REFIT_INTERVAL` | `5` | Steps between ensemble refits |
+| `LOOKBACK_WINDOWS` | `(5, 10, 20, 50, 100)` | Quantile z-score multi-horizon |
+| `MIN_TRAIN_SIZE` / `MAX_TRAIN_SIZE` | `1500 / 2000` | Aarambh walk-forward window (refit cadence is derived: `clip(n/200, 2, 5)`) |
 | `DDM_LEAK_RATE` | `0.08` | DDM smoothing (both passes) |
 | `OU_PROJECTION_DAYS` | `90` | Forward path length |
 | `CONVICTION_STRONG / MODERATE / WEAK` | `60 / 40 / 20` | Signal classification |
@@ -437,8 +442,9 @@ Nishkarsh is honest about what it does not yet do:
   convergence score is an *agreement* metric, not a directional one). The system
   surfaces this honestly rather than hiding it. Full detail in
   [`FINDINGS.md`](docs/FINDINGS.md). Treat the output as context, not alpha.
-- **No regression tests.** Pure-function primitives in `analytics/` are
-  testable in isolation; a test harness is not yet implemented.
+- **Limited regression tests.** `tests/verify_audit.py` re-checks every
+  statistical finding from the 2026-07 audit (simulation-based, seeded);
+  broader unit coverage of `analytics/` is still open.
 - **No engine output caching.** Streamlit reruns recompute the full pipeline.
 - **Survivorship bias.** Nirnay runs against *today's* Nifty 50 over their
   full history. Stocks dropped from the index do not appear.
@@ -530,11 +536,14 @@ pip3 --version      # Should match your Python version
 
 Mathematical primitives draw on:
 
-- **Andrews, D.W.K. (1993).** *Exactly median-unbiased estimation of first-order autoregressive/unit root models.* Econometrica. — Bias-corrected AR(1) coefficient.
+- **Kendall, M.G. (1954).** *Note on bias in the estimation of autocorrelation.* Biometrika 41. — First-order AR(1) bias correction (additive), with **Orcutt, G.H. & Winokur, H.S. (1969)**, Econometrica 37.
+- **Theiler, J. (1986).** *Spurious dimension from correlation algorithms applied to limited time-series data.* Phys. Rev. A 34. — Exclusion window for analog/nearest-neighbor selection.
+- **Chen, Y., Wiesel, A., Eldar, Y.C. & Hero, A.O. (2010).** *Shrinkage algorithms for MMSE covariance estimation.* IEEE Trans. Signal Processing 58(10). — OAS covariance shrinkage (analog matcher).
+- **López de Prado, M. (2018).** *Advances in Financial Machine Learning.* Wiley. — Purged walk-forward validation for overlapping labels.
 - **Bai, J. & Perron, P. (2003).** *Computation and analysis of multiple structural change models.* J. Applied Econometrics. — Regime-break detection.
 - **Peng, C.K. *et al.* (1994).** *Mosaic organization of DNA nucleotides.* Phys. Rev. E. — Detrended Fluctuation Analysis (DFA) for Hurst exponent.
 - **Ratcliff, R. & McKoon, G. (2008).** *The diffusion decision model.* Neural Computation. — Drift-Diffusion Model (DDM) for sequential evidence accumulation.
 
 ---
 
-© 2026 Nishkarsh · [@thebullishvalue](https://twitter.com/thebullishvalue) · v1.4.24
+© 2026 Nishkarsh · [@thebullishvalue](https://twitter.com/thebullishvalue) · v1.6.0

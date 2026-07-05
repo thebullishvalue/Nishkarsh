@@ -1,16 +1,25 @@
-# Tattva — Unified Convergence Analysis System
+# Nishkarsh — Unified Convergence Analysis System
 # @thebullishvalue Product
 
 # Core Framework
-streamlit>=1.30.0
+# streamlit >= 1.42: the UI uses the `width='stretch'` argument on
+# st.button / st.plotly_chart / st.dataframe / st.download_button, introduced
+# in 1.42 — on the previously-declared 1.30 floor the app crashes at first
+# render (TypeError: unexpected keyword 'width').
+streamlit>=1.42.0
 pandas>=2.1.0
 numpy>=1.24.0
 plotly>=5.18.0
-numba
+# numba: JIT kernels in analytics/conformal.py and analytics/regime.py.
+numba>=0.59
 
 # Scientific Computing
 scipy>=1.11.0
-scikit-learn>=1.5.0  # 1.5+ enables PCA svd_solver="covariance_eigh" (exact, ~2x faster walk-forward)
+# scikit-learn >= 1.7: engines/aarambh.py uses the integer form
+# ElasticNetCV(alphas=10) (n_alphas was deprecated in 1.7 and removed in 1.9;
+# the integer-alphas replacement only exists from 1.7). 1.5+ also provides
+# PCA svd_solver="covariance_eigh".
+scikit-learn>=1.7
 statsmodels>=0.14.0
 
 # Self-Calibration / Intelligence Mode (Optuna TPE optimizer)
@@ -19,13 +28,9 @@ optuna>=3.5.0
 # Data Sources (yfinance pulls requests transitively)
 yfinance>=0.2.31
 
-# Per-exchange trading calendars for holiday-aware data-freshness counting
-# (data/calendars.py). Offline, keyless — ships its own holiday tables. OPTIONAL:
-# if absent, freshness degrades gracefully to a plain Mon–Fri busday count.
-exchange_calendars>=4.5
-
-# HTML parsers for index-constituent scraping (pandas.read_html, data/universe.py).
-# lxml is the primary parser; html5lib is a lenient fallback for malformed markup.
+# HTML parsers for the Wikipedia constituent-list fallback
+# (pandas.read_html in data/constituents.py). lxml is the primary parser;
+# html5lib is a lenient fallback for malformed markup.
 lxml>=4.9.0
 html5lib>=1.1
 

@@ -13,6 +13,295 @@ Sections used: **Added · Changed · Deprecated · Removed · Fixed · Security 
 
 ---
 
+## [1.6.0] — 2026-07-04 — *Hero verdict rebuild · round-2 residual audit*
+
+Rebuilds the hero convergence card from a pure, unit-tested verdict function
+(adapted from the Tattva fork's `build_hero_verdict` pattern) and resolves a
+second, narrower audit pass over the v1.5.0 tree (finding register in
+[`docs/AUDIT_2026-07.md`](docs/AUDIT_2026-07.md), "Round 2" section).
+
+### Added
+- **Hero verdict rebuilt as a pure function.** `ui.components.build_hero_verdict`
+  now holds 100% of the hero card's interpretation logic — headline-object
+  resolution (calibrated model → normalized consensus → Aarambh-only),
+  signal-label normalization, trust tiering (non-overlapping Val IC + walk-
+  forward durability), and the precedent evidence row — as a side-effect-free
+  function returning a plain dict, unit-tested independently of Streamlit.
+  `render_hero_card` renders that verdict as a structured, tagged evidence
+  list (MODEL / PRECEDENT / INTERNALS / RISK, each confirm/conflict/neutral/
+  info) instead of a single run-on interpretation paragraph. Adapted for
+  Nishkarsh's two engine theses: forward mode promises a timed forecast
+  horizon (Val IC / walk-forward trust read); levels mode never claims a
+  timed call and additionally surfaces the engine's own realized-performance
+  edge verdict — an `inverted=True` Aarambh signal now forces a RISK evidence
+  row and a headline caution clause, so the hero can never present a
+  confident directional call on a signal the engine itself measured as
+  anti-predictive. The precedent evidence row is gated on a minimum of 5
+  *distinct* (post-Theiler) analogs before claiming agreement or divergence.
+  Divergence risk is counted over a trailing window, not the full run
+  history.
+- **`tests/test_hero_verdict.py`** — 32 assertions covering the headline
+  chain, label normalization, all five trust tiers, all five precedent-gate
+  branches, the forward-vs-levels+INVERTED distinction, divergence counting,
+  and INTERNALS alignment, against the pure function's returned dict.
+
+### Changed
+- Diagnostics ADF/KPSS cards render `neutral` (with a "forecast series — not
+  a verdict" subtext) instead of grading pass/fail in forward mode, where
+  the p-values describe the forecast series, not a tradeable residual.
+- Aarambh tab's fair-value chart no longer draws the OU projection cone in
+  forward mode — it was contradicting the run log's own "not applicable in
+  predictive mode" flag (the OU is fit on `-prediction` there, not a
+  mean-reverting residual).
+
+### Fixed
+- **`intelligence_diag` was missing from the per-config result-cache
+  bundle** (`app.py::_BUNDLE_KEYS`) — written every run and read by both the
+  Diagnostics tab's Out-of-Sample Edge Durability row and the hero's
+  walk-forward trust read, but not restored on a config-cache hit, so
+  revisiting a prior config showed a different config's IC/durability
+  verdict against the current signal. Added to the bundle.
+- **`align_aarambh_nirnay` had no finite-guard on `ConvictionRaw`**
+  (`convergence/normalization.py`) — since v1.5.0's warm-up fix (finding B4)
+  `ConvictionRaw` is genuinely NaN through the engine's walk-forward warm-up,
+  and `float(nan)` passed silently into the expanding z-score inputs; a NaN
+  reaching that path would poison every `mu`/`sigma` computed from that point
+  forward (and hence the hero / Convergence cards) if the Nirnay overlap ever
+  reached into the warm-up region. Non-finite pairs are now skipped.
+
+### Removed
+- 11 zero-call-site config constants: `DEFAULT_SHEET_URL`, `NIFTY_INDICES`,
+  `Z_EXTREME`, `Z_THRESHOLD`, `UI_Z_EXTREME`, `UI_Z_THRESHOLD`,
+  `UI_HMM_CONFIDENT`, `UI_ADF_SIGNIFICANT`, `UI_KPSS_NOT_SIGNIFICANT`,
+  `UI_TABLE_HEIGHT`, `UI_TABLE_HISTORY_ROWS`.
+- 4 dead `ConsoleOutput`/module-level logger methods: `get_console`,
+  `get_run_id`, `.step`, `.issue`, `.checkpoint` (`.error` kept — zero call
+  sites too, but retained deliberately to complete the
+  success/warning/error severity triad for future use).
+- `render_nishkarsh_signal_card` — superseded by `build_hero_verdict` +
+  `render_hero_card`.
+
+### Docs
+- `docs/AUDIT_2026-07.md`: the round-1 "Hero card rebuild — flagged, not
+  fixed" item marked resolved; new "Round 2 (v1.6.0)" section registers the
+  seven residual findings above plus a docs-only note that
+  `get_current_signal()["actual"]` is NaN-by-design in forward mode (no
+  current consumer reads it; any future one must handle NaN).
+
+---
+
+## [1.5.0] — 2026-07-04 — *Full-fidelity audit hardening*
+
+Resolves a full-repo statistical / correctness / infrastructure / UI audit
+(finding register with mechanisms, citations, and simulations in
+[`docs/AUDIT_2026-07.md`](docs/AUDIT_2026-07.md); every statistical fix is
+re-checked by the seeded regression suite `tests/verify_audit.py`).
+
+### Fixed
+- **Corrupted package `__init__.py` files (showstopper).** All seven package
+  init files were pure null bytes (bad archive extraction) — Python refuses
+  NUL in source, so no package imported and the app could not start at all.
+  Restored to genuinely-empty files.
+- **AR(1) bias correction had the wrong sign** (`analytics/ou_process.py`).
+  Kendall (1954): E[â] ≈ a − (1+3a)/n, so the correction is ADDITIVE; the
+  code subtracted, doubling the downward bias (simulated: |bias| 0.028 →
+  0.003 at a=0.9, n=300). Affected OU θ, half-life, and the projection cone.
+  Also corrected the citation — this is Kendall/Orcutt-Winokur, not Andrews
+  (1993) — and unified the OU σ formula (the a>0.98 branch dropped the
+  1/(1−a²) factor, under-estimating σ near a unit root).
+- **MMR driver selection hijackable by a pegged/constant macro column**
+  (`engines/nirnay.py`). `rolling().corr()` emits ±inf on near-zero-variance
+  windows (LIQUIDBEES.NS is price-pegged); +inf passed the `~isnan` validity
+  mask and always won the top-N argsort, letting an information-free column
+  occupy a driver slot. Correlations are now sanitized at source (non-finite
+  → NaN, clipped to [−1,1]), the row mask uses `isfinite`, and the division
+  guard rejects non-finite sums. Driver display now reports the SIGNED
+  correlation (an inverse driver previously displayed as positive).
+- **Walk-forward leakage in forward-signal mode (the shipped default)**
+  (`engines/aarambh.py`). The h-day forward label at row s covers (s, s+h],
+  so training rows, the member-weighting validation slice, and the causal
+  break-point search all consumed labels overlapping the forecast window.
+  `fit(purge=h)` now drops the last h training rows per chunk and keeps the
+  validation slice and break search behind the same gap (purged
+  walk-forward, López de Prado 2018 ch. 7).
+- **Warm-up rows carried a fabricated expanding-mean "forecast."** The first
+  MIN_TRAIN_SIZE rows of `predictions` were filled with `mean(y[:t])` — in
+  forward mode a mean of labels overlapping the rows being stood in for —
+  and everything downstream (conformal z-scores, breadth, ConvictionRaw,
+  the calibration frame, the analog pool, regime stats) treated them as
+  real. They are now genuinely NaN; a `Valid` column records coverage;
+  every consumer excludes or NaN-guards the region (convergence loop skips
+  it with a logged count; pivots/divergences guard NaN windows; the analog
+  candidate pool drops it; `get_regime_stats` and the Aarambh tab
+  denominator count only classified rows).
+- **`r2_vs_rw` used the wrong null for a return forecast.** Benchmarking
+  against "yesterday's label" awards a skill-less forecaster ≈ +0.5 on pure
+  noise (simulated: +0.497 over 300 trials; for iid labels the previous-
+  label SSE is 2σ² vs the zero-forecast's σ²). Forward mode now benchmarks
+  the martingale zero-forecast at non-overlapping stride; level mode keeps
+  the last-value baseline.
+- **Reported Val / fold / walk-forward ICs were scored on overlapping daily
+  forward returns**, overstating precision ~√h (simulated with a DDM-like
+  smooth signal: pure noise shows |IC| > 0.05 on the daily frame in 65% of
+  trials). All reported/gated ICs are now non-overlapping (stride = shortest
+  horizon); the Optuna objective itself still searches the full frame. The
+  acceptance-gate margin and the diagnostics verdict thresholds were
+  recalibrated to the honest scale (0.02 → 0.05).
+- **Calibration could run on a degenerate near-constant convergence signal**
+  when Aarambh∩Nirnay overlap was thin (non-overlap dates score a neutral
+  consensus → convergence_score ≡ 0). Calibration is now gated on ≥ 60
+  overlap dates, decided BEFORE the "First-Pass" label is chosen.
+- **Online HMM had no state-ordering constraint** (`analytics/regime.py`,
+  kernel + class) — label switching (Jasra, Holmes & Stephens 2005) let a
+  slow regime drift silently swap Bull/Bear meaning (reproduced in 1/8
+  seeded ramps). Bull > Neutral > Bear now enforced after every update.
+- **CUSUM z-scored each observation against a window including itself**
+  (self-reference shrinks |z| and delays change detection). The window now
+  excludes the current point, in both the numba kernel and the class.
+- **DFA Hurst used a narrow, linearly-spaced scale grid**
+  (`min_scale = max(4, n/10)`); standard log-spaced boxes (min 8, max n/4,
+  `geomspace`) cut the estimate's RMSE ~2.9–3.7× at H=0.5 (simulated).
+- **DDM filter seeded from `mean(obs[:20])`** — a look-ahead at the series
+  head (filtered[0] depended on obs[1..19]) and a NaN-poisoning hazard (one
+  NaN in the first 20 observations NaN'ed the whole output). Now seeds
+  obs[0] (or a neutral 0.0 when non-finite).
+- **OAS covariance shrinkage was mis-transcribed** (`analytics/analogs.py`)
+  — numerator/denominator terms swapped vs the Chen et al. (2010) closed
+  form, under-shrinking near-isotropic matrices. Now matches
+  `sklearn.covariance.OAS` to ~1e-15 (was deviating by up to 0.28).
+- **Analog matcher had no Theiler exclusion window** — top-N similarity
+  returned runs of adjacent days from 1–3 episodes, inflating the base-rate
+  summary's apparent independence. Greedy Theiler selection added (gap =
+  max(momentum window, max horizon), measured on temporal row positions);
+  the candidate pool also excludes the engine warm-up.
+- **Analog cards' "Extension (Z)" always read +0.00** (tier badge stuck on
+  Neutral) — `AvgZ` was never carried into the analog dicts. Now carried as
+  a display-only field.
+- **Precedent backtest verdict was a bare `max(|Pearson|, |Spearman|) > 0.3`**
+  on a ~20–40-point split — common under pure noise. Now gated on the
+  Spearman p-value (p < 0.10) with the sample size surfaced.
+- **`lead_lag_indicator` compared `abs(sign)` values** — CONTRADICTION was
+  unreachable and every opposite-sign disagreement classified NIRNAY_LEADS.
+  Now compares the actual normalized magnitudes.
+- **Convergence magnitude dimension self-neutralized its normalization**
+  (`|avg_osc|×10` then `/10` = `min(|avg_osc|, 1)`), pinning the score at
+  its ceiling for |avg| ≥ 1. Normalizes by the genuine ±10 scale.
+- **Forward-change table / swing detection treated `y` as a price** — in
+  forward mode y is an h-day return, corrupting FwdChg_* and the signal-
+  performance stats built on it. `fit(price=)` now supplies the real level.
+- **The zero-filled forward-label tail displayed as a literal 0.0000** in
+  `Actual`; now masked to NaN for display via `fit(label_mask=)`.
+- **Full-sample normalization repainted the Unified Signal history** —
+  terminal μ/σ applied to historical bars is look-ahead. Per-date causal
+  expanding z-scores everywhere (plot, cards, directional test), and the
+  tab's cache is keyed by engine config + content fingerprint (the old
+  `conv_norm_params` key survived Refresh Data / target switches and
+  z-scored new data against a previous config's stats).
+- **Look-ahead `bfill` removed from the data path**: the app-level predictor
+  fill (with a per-feature history guard so the removal can't collapse the
+  dataset), the causal-PCA preprocessing in `analytics/factors.py` (whose
+  docstring promises no future data), and `engines/nirnay.py`'s warm-up
+  fills (roll_corr backfilled ~20 rows from a future window; MSF's bar_vol
+  used the full-series std).
+- **Blanket process-wide `RuntimeWarning` suppression removed** (it was
+  hiding the MMR inf corruption); the two legitimately-noisy sources
+  (engine warm-up nanmean, constant-column corrwith in driver display) are
+  suppressed at their exact call sites.
+- **Nirnay engine knobs were hardcoded in app.py** (and the console printed
+  its own copies) while the documented `NIRNAY_*` config constants were
+  never imported — a tuned config silently changed nothing, and
+  `NIRNAY_REGIME_SENSITIVITY` (1.0) disagreed with the value actually used
+  (1.5). Config is now genuinely the single source of truth (engine call +
+  run log + two previously-unlogged knobs); the constant is set to 1.5 to
+  preserve shipped behavior.
+- **TLS verification re-enabled** for the niftyindices.com constituent
+  fetch (`verify=False` + urllib3 suppression removed — the host presents a
+  valid chain).
+- **Macro snapshot backfill got a 7-day staleness ceiling** — a rate-limited
+  ticker was previously refilled from any prior snapshot, however old, and
+  looked current downstream. Too-old columns are now dropped, loudly.
+- **Force-refresh window scoped per session** — the old process-global
+  deadline made one user's "Refresh Data" bypass cache for every concurrent
+  session on a multi-user deploy.
+- **`theme.css` read with explicit UTF-8** — the stylesheet embeds
+  Devanagari (verified: fails cp1252 decode), so locale-default reads
+  crashed at startup on cp1252 Windows hosts.
+- **Progress bar regression fixed** (the first-pass stage posted 83% after
+  the scoring loop had reached 85%); the tail is now strictly monotonic.
+
+### Changed (UI/UX polish — Obsidian Quant grammar preserved)
+- Duplicate conflicting `@keyframes` resolved (`pulse` ×2 — the flat later
+  copy silently replaced the progress dot's scale-breathing; `shimmer` ×2
+  with OPPOSITE sweep directions) by scoping `pulseDot` /
+  `shimmerSkeleton` to their intended consumers; a later `.metric-card`
+  animation block that silently overrode the earlier entrance was collapsed
+  into one grammar; shimmer durations standardized (ambient 2s, skeleton 1.6s).
+- The metric-card entrance stagger never fired (`:nth-child(N)` on a card
+  that is always its column's only child); replaced with a working
+  column-position stagger (60–300ms, reduced-motion neutralizes delays).
+- All 37 `transition: all` declarations replaced with explicit property
+  lists — including three later same-selector rules whose `transition`
+  silently replaced the earlier rule's wholesale.
+- Metric tooltip: dead duplicate `white-space` declaration removed;
+  last-column tooltips open leftward instead of clipping past the viewport.
+- `:focus-visible` rings added for buttons/tabs (keyboard focus was
+  invisible on the dark theme); content width capped at `min(98%, 1720px)`
+  on ultra-wide displays; `tabular-nums` on the remaining numeric readouts;
+  the mobile rule force-clamping every chart to 300px (crushing the 680px
+  3-row Unified Signal stack) removed; z-index ladder documented.
+- The hero card's Aarambh-only fallback path now labels itself instead of
+  presenting a one-engine read as the two-system consensus. Aarambh tab is
+  mode-aware in predictive mode (the "Actual vs Fair Value" framing and the
+  OOS-R² grading no longer describe a levels model that isn't running);
+  Nirnay drill-down surfaces the full regime stack (Vol_Regime,
+  Change_Point, Confidence); the Avg-Signal card's colors align to its ±2
+  label; the Diagnostics "Covariance Shrinkage" card (a hardcoded constant
+  styled as telemetry) removed.
+
+### Removed
+- Dead code with zero call sites: `analytics/signals.py` (the look-ahead
+  MSF/MMR duplicate the 1.4.1 changelog already claimed was removed),
+  `MathUtils`, `build_unified_dataset` + `data/schema.py`,
+  `fetch_aarambh_data`, seven UI components (`render_conviction_signal`,
+  `render_signal_card`, `render_system_card`, `render_kv_table`,
+  `get_signal_badge`, `render_chart_skeleton`, `render_export_button_row`,
+  plus `render_info_box`), the theme toggle and keyboard-shortcuts hint
+  (0-height component iframes whose scripts target the iframe's own
+  document — provably inert; the light-theme CSS they gated could never
+  activate and is removed too), the inert `onclick` on the sidebar
+  CONFIGURE hint, the unused `REFIT_INTERVAL` constant, and the write-only
+  `rendered_tabs` / `run_requested` session keys.
+
+### Added
+- `docs/AUDIT_2026-07.md` — the full finding register (severity, evidence,
+  mechanism/citation, simulation) including the explicit "what we did NOT
+  find broken" list.
+- `tests/verify_audit.py` — seeded, no-network regression suite re-checking
+  every statistical finding (runs the synthetic engine end-to-end with
+  warnings promoted to errors).
+
+### Dependencies
+- `streamlit>=1.42.0` (the UI uses `width='stretch'`, added in 1.42 — the
+  old 1.30 floor crashed at first render); `scikit-learn>=1.7`
+  (`ElasticNetCV(alphas=10)` integer form, per the 1.4.23 note that the pin
+  line itself never reflected); `numba>=0.59` made explicit;
+  `exchange_calendars` removed (its consumer `data/calendars.py` exists
+  only in Tattva); requirements header no longer says "Tattva".
+
+### Docs
+- README claims sweep: "conformal prediction" → rolling robust-quantile
+  z-scores (no coverage guarantee is claimed); "Andrews (1993)" → Kendall
+  (1954) / Orcutt & Winokur (1969); architecture no longer lists the
+  removed `signals.py` / `schema.py`; the config table's stale
+  `MIN_TRAIN_SIZE = 20` / `REFIT_INTERVAL = 5` rows corrected; calibration
+  description now states the purge gap and the non-overlapping IC scale;
+  references updated (Kendall, Theiler, Chen et al., López de Prado).
+- `core/config.py` comment drift fixed (`AARAMBH_FORWARD_SIGNAL` said
+  "default OFF" while shipping True; the train-window comment described
+  252/756 next to 1500/2000 values).
+
+---
+
 ## [1.4.24] — 2026-06-24 — *Precedent tab UI parity*
 
 ### Fixed

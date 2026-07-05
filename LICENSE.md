@@ -1,7 +1,7 @@
 # LICENSE
 
 **NISHKARSH (निष्कर्ष) — Unified Quantitative Convergence Engine**
-**Version 1.4.24**
+**Version 1.6.0**
 
 ---
 
@@ -89,6 +89,8 @@ to terminate this licence at any time for breach of terms.
 
 | Version | Date | Description |
 |---------|------|-------------|
+| 1.6.0 | 2026-07-04 | Hero verdict rebuild (pure `build_hero_verdict` + evidence rows) · round-2 residual audit |
+| 1.5.0 | 2026-07-04 | Full-fidelity audit hardening — statistical core corrections, leakage purge, honest IC scale, UI polish |
 | 1.4.24 | 2026-06-24 | Precedent tab UI parity — ported the missing analog-card stylesheet so the Precedent view matches Tattva's Obsidian-Quant fidelity |
 | 1.4.23 | 2026-06-17 | Performance pass & deploy hardening — incremental PCA, vectorized aggregation, scikit-learn 1.9 compatibility |
 | 1.4.0 | 2026-05-27 | Self-Calibrating Convergence — Intelligence Mode as default + UI polish |

@@ -48,11 +48,14 @@ import pandas as pd
 import streamlit as st
 
 # ── Warning suppression ──────────────────────────────────────────────────────
+# NOTE: no blanket RuntimeWarning filter. The previous process-wide
+# `ignore RuntimeWarning` hid every genuine numeric-corruption warning (it was
+# masking the MMR ±inf driver-hijack, audit B2/D1). Legitimately-noisy sources
+# are suppressed at their exact call sites instead (e.g. the engine's scoped
+# nanmean warm-up suppression in engines/aarambh.py).
 warnings.filterwarnings("ignore", category=FutureWarning)
-warnings.filterwarnings("ignore", category=RuntimeWarning)
 warnings.filterwarnings("ignore", message=".*YF.download.*")
 warnings.filterwarnings("ignore", message=".*auto_adjust.*")
-warnings.filterwarnings("ignore", message=".*Mean of empty slice.*")
 warnings.filterwarnings("ignore", category=UserWarning, module="yfinance")
 pd.options.mode.chained_assignment = None
 
@@ -72,13 +75,10 @@ from ui.theme import inject_css, VERSION, PRODUCT_NAME, COMPANY, progress_bar
 from ui.tabs.tab_convergence import render_convergence_tab
 from ui.components import (
     render_header,
-    render_info_box,
-    render_nishkarsh_signal_card,
+    build_hero_verdict,
+    render_hero_card,
     render_warning_box,
     render_metric_card,
-    render_chart_skeleton,
-    render_collapsible_section,
-    render_collapsible_section_close,
     section_gap,
 )
 from ui.tabs.tab_aarambh import render_aarambh_tab
@@ -88,7 +88,7 @@ from ui.tabs.tab_diagnostics import render_diagnostics_tab
 from ui.tabs.tab_data import render_data_tab
 
 # ── Data ─────────────────────────────────────────────────────────────────────
-from data.fetcher import fetch_aarambh_data, fetch_constituent_ohlcv, fetch_macro_live, load_google_sheet
+from data.fetcher import fetch_constituent_ohlcv, fetch_macro_live, load_google_sheet
 from data.constituents import fetch_nifty50_constituents
 
 # ── Engines ──────────────────────────────────────────────────────────────────
@@ -110,6 +110,9 @@ from core.config import (
     CALIBRATION_RETURN_LABEL,
     AARAMBH_FORWARD_SIGNAL, AARAMBH_FWD_HORIZON, AARAMBH_FWD_MOM_K,
     PRECEDENT_HOLD_HORIZONS,
+    NIRNAY_MSF_LENGTH, NIRNAY_ROC_LEN, NIRNAY_REGIME_SENSITIVITY,
+    NIRNAY_BASE_WEIGHT, NIRNAY_MMR_NUM_VARS, NIRNAY_OVERSOLD, NIRNAY_OVERBOUGHT,
+    UI_AGREEMENT_STRONG, UI_AGREEMENT_MODERATE, DIV_LOOKBACK,
 )
 
 # Effective passthrough columns — empty when the master toggle is off, so all
@@ -127,9 +130,28 @@ _BUNDLE_KEYS = (
     "convergence_df", "divergence_events", "nishkarsh_result", "last_agreement",
     "nishkarsh_conv_normalized",
     "intelligence_active_weights", "intelligence_active_thresholds",
-    "intelligence_active_profile",
+    "intelligence_active_profile", "intelligence_diag",
 )
 _RESULTS_CACHE_MAX = 3  # keep the last N configs
+
+
+def _clear_derived_view_caches() -> None:
+    """Drop every cached per-config derived-view entry (and the legacy key).
+
+    The Convergence tab caches per-config causal z-score tables under
+    ``conv_norm_causal::<engine config>|<content fingerprint>`` keys, and the
+    hero card caches the Precedent (analog) base rate under ``precedent_summary``
+    / ``_prec_key``. Any action that invalidates the engine (target/predictor
+    change, Reset, Refresh Data) must clear all of them — the old single
+    ``conv_norm_params`` key was set once per session and silently survived all
+    of those, so the plot kept z-scoring new data against a previous config's
+    μ/σ (audit B21); the precedent keys have the same staleness risk.
+    """
+    for _k in [k for k in st.session_state.keys()
+               if isinstance(k, str) and (k.startswith("conv_norm_causal::") or k == "conv_norm_params")]:
+        st.session_state.pop(_k, None)
+    st.session_state.pop("precedent_summary", None)
+    st.session_state.pop("_prec_key", None)
 
 
 # ── Secret Management ────────────────────────────────────────────────────────
@@ -220,36 +242,64 @@ def _render_landing_page() -> None:
 
 
 def _render_primary_signal(nishkarsh_norm, agreement, aarambh_signal) -> None:
-    """Render the hero Nishkarsh convergence signal card.
+    """Render the hero verdict card.
 
-    The conviction value now reflects the **normalized convergence** shown in
-    the Unified Signal plot \u2014 i.e. the average of the two systems' z-scored
-    (and clipped) signals, in ``[-1, +1]``. The signal classification and the
-    interpretation paragraph follow the same scale.
+    ALL interpretation logic lives in ``ui.components.build_hero_verdict``
+    (a pure, unit-tested function); this wrapper only gathers session-state
+    inputs and hands the verdict to ``render_hero_card``. The headline chain
+    is calibrated model -> normalized consensus -> Aarambh-only, always
+    paired with an honest trust read: in forward mode that's the
+    non-overlapping Val IC + walk-forward durability; in levels mode it's
+    also the engine's own realized-performance edge verdict (an INVERTED
+    signal must never render as a confident directional call). A
+    minimum-n-gated precedent (analog) base rate is folded in as a second
+    opinion.
     """
-    if nishkarsh_norm:
-        conv = nishkarsh_norm["value"]
-        sig = nishkarsh_norm["signal"]
-        a_norm = nishkarsh_norm["aarambh_norm"]
-        n_norm = nishkarsh_norm["nirnay_norm"]
-        agreement_text = "Strong" if agreement > 0.7 else "Moderate" if agreement > 0.5 else "Weak"
-        explanation = (
-            f"Normalized convergence {conv:+.2f} ({sig}). "
-            f"Aarambh contribution: {a_norm:+.2f}; Nirnay contribution: {n_norm:+.2f}. "
-            f"Agreement: {agreement:.0%} ({agreement_text}). "
-            f"{'Both systems aligned.' if agreement > 0.6 else 'Mixed signals \u2014 wait for clearer convergence.'}"
-        )
-    else:
-        conv = float(aarambh_signal.get("conviction_score", 0))
-        sig = aarambh_signal.get("signal", "HOLD")
-        explanation = f"Conviction: {conv:+.2f} ({sig})."
+    calib      = st.session_state.get("nishkarsh_result")             # UnifiedConvictionResult | None
+    profile    = st.session_state.get("intelligence_active_profile")  # dict | None
+    diag       = st.session_state.get("intelligence_diag") or {}
+    div_events = st.session_state.get("divergence_events")            # DataFrame | None
+    prec       = st.session_state.get("precedent_summary")            # dict | None
 
-    render_nishkarsh_signal_card(
-        signal=sig,
-        conviction=conv,
-        agreement=agreement,
-        explanation=explanation,
+    val_ic = None
+    if profile and profile.get("val_ic") is not None:
+        try:
+            val_ic = float(profile["val_ic"])
+        except (TypeError, ValueError):
+            val_ic = None
+    wf_ics = [v for v in (diag.get("wf_ics") or []) if v == v]  # drop NaN
+    wf_pos = (sum(1 for v in wf_ics if v > 0) / len(wf_ics)) if wf_ics else None
+
+    # Recent divergences only. The events frame spans the FULL scored
+    # history (hundreds of overlap dates) - a total count is meaningless as
+    # a "current risk" flag. Count events in a trailing DIV_LOOKBACK*1.5
+    # session window instead.
+    n_div = 0
+    if div_events is not None and len(div_events):
+        try:
+            _ev_dates = pd.to_datetime(pd.Index(div_events.index), errors="coerce")
+            _cut = _ev_dates.max() - pd.Timedelta(days=int(DIV_LOOKBACK * 1.5))
+            n_div = int((_ev_dates >= _cut).sum())
+        except Exception:
+            n_div = 0
+
+    verdict = build_hero_verdict(
+        calib_conviction=(float(calib.nishkarsh_conviction) if calib is not None else None),
+        calib_signal=(calib.nishkarsh_signal if calib is not None else None),
+        has_profile=bool(profile),
+        consensus=nishkarsh_norm,
+        aarambh_signal=aarambh_signal,
+        agreement=float(agreement or 0.0),
+        val_ic=val_ic,
+        wf_pos=wf_pos,
+        precedent=prec,
+        n_divergences=n_div,
+        horizon_days=int(AARAMBH_FWD_HORIZON),
+        forward_mode=bool(AARAMBH_FORWARD_SIGNAL),
+        agreement_strong=UI_AGREEMENT_STRONG,
+        agreement_moderate=UI_AGREEMENT_MODERATE,
     )
+    render_hero_card(verdict)
     section_gap()
 
 
@@ -581,6 +631,7 @@ def main():
                 )
             st.session_state.pop("engine", None)
             st.session_state.pop("engine_cache", None)
+            _clear_derived_view_caches()
             st.rerun()
 
         available = [c for c in numeric_cols if c != target_col]
@@ -629,6 +680,7 @@ def main():
                     st.session_state["active_features"] = tuple(staging_features)
                     st.session_state.pop("engine", None)
                     st.session_state.pop("engine_cache", None)
+                    _clear_derived_view_caches()
                     st.rerun()
 
             if len(st.session_state["active_features"]) != len(available):
@@ -643,6 +695,7 @@ def main():
                 st.session_state.pop("engine_cache", None)
                 st.session_state.pop("run_analysis", None)
                 st.session_state.pop("nishkarsh_result", None)
+                _clear_derived_view_caches()
                 st.rerun()
 
             # Force a live re-pull of the market data (macro + constituent OHLCV), then
@@ -656,6 +709,7 @@ def main():
                 for _k in ("engine", "engine_cache", "aarambh_engine", "aarambh_fit_key",
                            "wf_results", "results_cache", "nishkarsh_result"):
                     st.session_state.pop(_k, None)
+                _clear_derived_view_caches()
                 st.rerun()
             st.caption("Reset = re-run on cached data · Refresh = re-fetch live, then re-run")
 
@@ -706,7 +760,18 @@ def main():
         data = data.dropna(subset=[active_date]).sort_values(active_date)
     for col in [active_target] + active_features:
         data[col] = pd.to_numeric(data[col], errors="coerce")
-    data[[active_target] + active_features] = data[[active_target] + active_features].ffill().bfill()
+    # ffill only — NO bfill. Backfilling a predictor's leading NaN rows with
+    # its first FUTURE value is a look-ahead (audit B22a). To keep the removal
+    # from collapsing the dataset (dropna over a young, still-NaN column would
+    # wipe every early row), a per-feature history guard drops any predictor
+    # that is still entirely NaN across the most recent MIN_DATA_POINTS rows —
+    # it cannot support the walk-forward anyway.
+    data[[active_target] + active_features] = data[[active_target] + active_features].ffill()
+    _tail = data[active_features].tail(MIN_DATA_POINTS)
+    _too_young = [f for f in active_features if _tail[f].isna().any()]
+    if _too_young:
+        active_features = [f for f in active_features if f not in _too_young]
+        data = data.drop(columns=_too_young)
     data = data.dropna(subset=[active_target] + active_features).reset_index(drop=True)
     if len(data) < MIN_DATA_POINTS:
         st.error(f"Need {MIN_DATA_POINTS}+ data points for walk-forward analysis.")
@@ -738,10 +803,20 @@ def main():
         _valid = _mom.notna().all(axis=1).to_numpy()
         data = data.loc[_valid].reset_index(drop=True)
         X = _mom.loc[_valid].to_numpy(dtype=np.float64)
-        y = np.nan_to_num(_fwd.loc[_valid].to_numpy(dtype=np.float64), nan=0.0)
+        _fwd_valid = _fwd.loc[_valid].to_numpy(dtype=np.float64)
+        y = np.nan_to_num(_fwd_valid, nan=0.0)
+        # False where the forward label doesn't exist yet (the zero-filled
+        # tail) — the engine masks those rows' displayed `Actual` to NaN
+        # instead of rendering a literal 0.0000 as if realized.
+        _label_mask = np.isfinite(_fwd_valid)
+        _engine_price = data[active_target].to_numpy(dtype=np.float64)
+        _engine_purge = int(AARAMBH_FWD_HORIZON)
         cache_key = f"fwd{AARAMBH_FWD_HORIZON}m{AARAMBH_FWD_MOM_K}|{active_target}|{'|'.join(sorted(active_features))}|{len(data)}"
     else:
         X, y = data[active_features].values, data[active_target].values
+        _label_mask = None
+        _engine_price = None
+        _engine_purge = 0
         cache_key = f"{active_target}|{'|'.join(sorted(active_features))}|{len(data)}|pca{int(AARAMBH_PCA_PREDICTORS)}|cf{int(CUSTOM_PREDICTORS_ENABLED)}|pt{'-'.join(_PASSTHROUGH)}"
     if st.session_state.get("engine_cache") != cache_key:
         # ── Restore from the per-config result cache if this exact config was
@@ -1034,7 +1109,19 @@ def main():
             progress_bar(progress_container, 40, "Aarambh Engine Reused", "Cached walk-forward fit")
         else:
             engine = FairValueEngine()
-            engine.fit(X, y, feature_names=_aar_feature_names, forward_signal=AARAMBH_FORWARD_SIGNAL, progress_callback=_aar_progress)
+            engine.fit(
+                X, y, feature_names=_aar_feature_names,
+                forward_signal=AARAMBH_FORWARD_SIGNAL,
+                # purge = the forward-label horizon: drops training/validation
+                # rows whose labels overlap the forecast window (audit B3).
+                purge=_engine_purge,
+                # Real target LEVEL for the forward-change table and swing
+                # detection (in forward mode y is a return, not a price — B18).
+                price=_engine_price,
+                # Masks the zero-filled label tail out of the displayed Actual.
+                label_mask=_label_mask,
+                progress_callback=_aar_progress,
+            )
             # Carry the raw target LEVEL on the engine output (forward-signal mode
             # otherwise leaves only return-scale columns). Used by the Precedent tab
             # for the analog price path / forward returns. Length-guarded — ts_data
@@ -1091,10 +1178,16 @@ def main():
             total = len(constituent_ohlcv)
             console.section("Per-Stock Analysis")
             console.item("Constituents", total)
-            console.item("MSF Length", 20)
-            console.item("ROC Length", 14)
-            console.item("Regime Sensitivity", 1.5)
-            console.item("Base Weight", 0.6)
+            # These read the SAME core/config constants the engine call below
+            # is passed — the console previously printed hardcoded literals
+            # (and the engine call hardcoded its own copies, so a tuned
+            # core/config.py silently changed nothing — audit D2).
+            console.item("MSF Length", NIRNAY_MSF_LENGTH)
+            console.item("ROC Length", NIRNAY_ROC_LEN)
+            console.item("Regime Sensitivity", NIRNAY_REGIME_SENSITIVITY)
+            console.item("Base Weight", NIRNAY_BASE_WEIGHT)
+            console.item("MMR Top-N Drivers", NIRNAY_MMR_NUM_VARS)
+            console.item("Oversold / Overbought", f"{NIRNAY_OVERSOLD} / {NIRNAY_OVERBOUGHT}")
             console.item("Macro Columns", len(macro_cols_list))
 
             for i, (sym, ohlcv_df) in enumerate(constituent_ohlcv.items()):
@@ -1108,9 +1201,11 @@ def main():
                     has_macro = len([c for c in macro_cols_list if c in merged.columns])
 
                     result_df, _ = run_full_analysis(
-                        merged, length=20, roc_len=14,
-                        regime_sensitivity=1.5, base_weight=0.6,
+                        merged, length=NIRNAY_MSF_LENGTH, roc_len=NIRNAY_ROC_LEN,
+                        regime_sensitivity=NIRNAY_REGIME_SENSITIVITY,
+                        base_weight=NIRNAY_BASE_WEIGHT,
                         macro_columns=macro_cols_list,
+                        num_vars=NIRNAY_MMR_NUM_VARS,
                     )
                     nirnay_constituent_dfs[sym] = result_df
 
@@ -1202,6 +1297,7 @@ def main():
 
         console.section("Daily Convergence Scoring")
         overlap_count = 0
+        skipped_warmup = 0
         total_dates = len(aarambh_ts.index)
         for i, ts_idx in enumerate(aarambh_ts.index):
             ts_date = ts_idx.date() if hasattr(ts_idx, "date") else pd.Timestamp(ts_idx).date()
@@ -1209,6 +1305,14 @@ def main():
             row_a = aarambh_ts.loc[ts_idx]
             if isinstance(row_a, pd.DataFrame):
                 row_a = row_a.iloc[-1]
+            # Skip the engine's walk-forward warm-up: those rows have no
+            # genuine forecast (Valid == False, conviction is a fabricated
+            # neutral) and would otherwise enter the convergence series — and
+            # from there the Intelligence calibration frame — as real data
+            # (audit B4/B7).
+            if "Valid" in aarambh_ts.columns and not bool(row_a.get("Valid", True)):
+                skipped_warmup += 1
+                continue
             aarambh_sig = {
                 "conviction_score": float(row_a.get("ConvictionBounded", 0)),
                 "oversold_breadth": float(row_a.get("OversoldBreadth", 50)),
@@ -1243,7 +1347,24 @@ def main():
 
         console.item("Total Aarambh Dates", len(aarambh_ts))
         console.item("Overlap Dates", overlap_count)
+        console.item("Skipped (warm-up, no genuine forecast)", skipped_warmup)
         console.success(f"Convergence scoring complete")
+
+        # ── Calibration viability gate — decided BEFORE any "first pass"
+        # label is chosen, so a gate-skip run never advertises a first pass
+        # that will not have a second. With little/no Aarambh∩Nirnay overlap
+        # the non-overlap dates all score a neutral consensus_direction = 0
+        # → convergence_score ≡ 0, and a calibration on that near-constant
+        # signal is an arbitrary fit to noise (audit B7).
+        _MIN_OVERLAP_FOR_CALIBRATION = 60
+        if _intel_enabled and overlap_count < _MIN_OVERLAP_FOR_CALIBRATION:
+            console.warning(
+                f"Intelligence calibration skipped: only {overlap_count} "
+                f"overlap dates (< {_MIN_OVERLAP_FOR_CALIBRATION}) — convergence_score would "
+                f"be near-constant and any 'calibrated' profile a fit to noise. "
+                f"Running with prior profile / defaults."
+            )
+            _intel_enabled = False
 
         # ── 4a. First-pass conviction model ─────────────────────────────
         # First-pass DDM filter on the convergence_score from the first
@@ -1252,7 +1373,7 @@ def main():
         _first_pass_label = "First-Pass Conviction Model" if _intel_enabled else "Conviction Model"
         console.section("Conviction Model (initial pass)" if _intel_enabled else "Conviction Model")
         progress_bar(
-            progress_container, 83, _first_pass_label,
+            progress_container, 85, _first_pass_label,
             "DDM Filter · Prior Weights" if (_intel_enabled and _prior_profile is not None) else "DDM Filter · Default Weights",
         )
         convergence_df = validator.get_convergence_series()
@@ -1284,7 +1405,7 @@ def main():
             console.section("Intelligence Calibration")
             _n_trials = int(st.session_state.get("intel_n_trials", 50))
             progress_bar(
-                progress_container, 84,
+                progress_container, 86,
                 "Intelligence Mode · Setup",
                 f"Building Tuner · 70/30 Chronological Split · {_n_trials} Trials",
             )
@@ -1367,9 +1488,9 @@ def main():
                 console.item("Val Rows", len(tuner.val_frame))
 
                 def _cal_cb(trial_num: int, total: int, best: float) -> None:
-                    # Map trial progress to 84% → 90% on the global bar.
-                    # Linear interpolation gives smooth motion through the loop.
-                    pct = int(84 + (trial_num / max(1, total)) * 6)
+                    # Map trial progress to 86% → 90% on the global bar
+                    # (monotonic after the 85% first pass / 86% setup stages).
+                    pct = int(86 + (trial_num / max(1, total)) * 4)
                     progress_bar(
                         progress_container, pct,
                         "Intelligence Mode · Calibrating",
@@ -1746,7 +1867,10 @@ def main():
                 _fi = ", ".join(f"{x:+.3f}" for x in _dc["fold_ics"])
                 console.item("Fold ICs", f"[{_fi}]  (n={_dc['n']})")
                 console.item("Stability", f"{_dc['fraction_positive']*100:.0f}% positive · mean {_dc['mean']:+.3f} · min {_dc['min']:+.3f}")
-                _verdict = ("REAL directional edge candidate" if (_dc["fraction_positive"] >= 0.8 and _dc["mean"] > 0.03)
+                # 0.05 margin on the NON-OVERLAPPING IC scale (fold ICs are
+                # now stride-sampled; the old 0.03 was calibrated against the
+                # overlap-inflated precision).
+                _verdict = ("REAL directional edge candidate" if (_dc["fraction_positive"] >= 0.8 and _dc["mean"] > 0.05)
                             else "no robust directional edge (flat / sign-flipping folds)")
                 console.item("Verdict", _verdict)
                 _dir_ic, _dir_pos = _dc["mean"], _dc["fraction_positive"]
@@ -1773,7 +1897,9 @@ def main():
                         _arr = np.array(_ics, dtype=float)
                         _fp = float((_arr > 0).mean())
                         console.item("Durability", f"{_fp*100:.0f}% positive · mean {_arr.mean():+.3f} · min {_arr.min():+.3f}")
-                        _wf_durable = bool(_fp >= 0.8 and _arr.mean() > 0.02)
+                        # 0.05 on the non-overlapping scale (was 0.02 on the
+                        # overlap-inflated scale).
+                        _wf_durable = bool(_fp >= 0.8 and _arr.mean() > 0.05)
                         _wf_mean = float(_arr.mean())
                         _wf_ics_cap = list(_ics)
                         _wf_verdict = ("durable edge across windows" if _wf_durable
@@ -1832,10 +1958,10 @@ def main():
                 # NOT the engine's level/magnitude tradeable flag.
                 console.item("Directional IC", f"{_dir_ic:+.3f} ({(_dir_pos or 0)*100:.0f}% folds positive)" if _dir_ic is not None else "n/a")
                 console.item("Walk-Forward", (("durable" if _wf_durable else "not durable") + (f" (mean {_wf_mean:+.3f})" if _wf_mean is not None else "")) if _wf_durable is not None else "n/a")
-                if _dir_ic is not None and _dir_ic > 0.03 and (_dir_pos or 0) >= 0.8 and _wf_durable:
-                    _headline = (f"DIRECTIONAL EDGE candidate — IC {_dir_ic:+.3f}, walk-forward durable "
-                                 "(rank-IC evidence; pending non-overlapping significance + cost backtest)")
-                elif _dir_ic is not None and _dir_ic > 0.03 and (_dir_pos or 0) >= 0.8:
+                if _dir_ic is not None and _dir_ic > 0.05 and (_dir_pos or 0) >= 0.8 and _wf_durable:
+                    _headline = (f"DIRECTIONAL EDGE candidate — IC {_dir_ic:+.3f} (non-overlapping), "
+                                 "walk-forward durable (rank-IC evidence; pending cost backtest)")
+                elif _dir_ic is not None and _dir_ic > 0.05 and (_dir_pos or 0) >= 0.8:
                     _headline = f"directional IC {_dir_ic:+.3f} but NOT durable OOS — provisional, do not trade yet"
                 else:
                     _headline = "no robust directional edge (predictive mode)"
@@ -1882,7 +2008,6 @@ def main():
         # Streamlit's single script thread. The completion state is surfaced in
         # the rendered result, not a lingering banner.
         progress_container.empty()
-        st.session_state["run_requested"] = True
         st.rerun()
 
     engine: FairValueEngine = st.session_state["engine"]
@@ -1900,13 +2025,47 @@ def main():
     nishkarsh_norm = st.session_state.get("nishkarsh_conv_normalized")
     agreement = st.session_state.get("last_agreement", 0)
 
+    # ─── Precedent base rate for the hero (second opinion) ─────────────────
+    # Content-aware key: latest Price included so an intraday refresh that
+    # updates the last bar without adding a row still recomputes.
+    _plast = float(ts["Price"].iloc[-1]) if "Price" in ts.columns and len(ts) else 0.0
+    _pkey = f"{active_target}|{len(ts)}|{_plast:.6g}"
+    if st.session_state.get("_prec_key") != _pkey:
+        _prec_summary = None
+        try:
+            from analytics.analogs import find_similar_periods as _fsp, summarize_forward as _sf
+            _hold = tuple(PRECEDENT_HOLD_HORIZONS)                    # (3, 5, 10, 20)
+            _analogs = _fsp(ts, active_target, hold_horizons=_hold,
+                            mom_window=AARAMBH_FWD_MOM_K)
+            _ps = _sf(_analogs, _hold) if _analogs else {}
+            # Primary read = the forecast horizon in forward mode (coherent with
+            # the headline's "next ~h days"); the longest validated hold otherwise.
+            _hp = int(AARAMBH_FWD_HORIZON) if AARAMBH_FORWARD_SIGNAL else int(max(_hold))
+            _row = _ps.get(_hp) or _ps.get(int(max(_hold)))
+            if _row:
+                _med = _row["median"]
+                _prec_summary = {
+                    "horizon": _hp if _ps.get(_hp) else int(max(_hold)),
+                    "median": float(_med),
+                    "positive_pct": float(_row["positive_pct"]), "n": int(_row["n"]),
+                    "dir": 1 if _med > 0 else -1 if _med < 0 else 0,
+                }
+        except Exception:
+            _prec_summary = None
+        st.session_state["precedent_summary"] = _prec_summary
+        st.session_state["_prec_key"] = _pkey
+
     # ─── Primary Signal (Above Tabs, Always Visible) ───────────────────────
     _render_primary_signal(nishkarsh_norm, agreement, signal)
 
     # ─── Sidebar Discovery Hint ─────────────────────────────────────────
+    # Passive directional hint only. Streamlit sanitizes inline event handlers
+    # in markdown HTML, so the previous onclick never fired — the element was
+    # styled as a clickable control that silently did nothing (audit D4);
+    # theme.css now styles it as the non-interactive pointer it actually is.
     st.markdown(
         """
-        <div class="sidebar-hint" onclick="document.querySelector('[data-testid=stSidebarCollapse]').click()" title="Open sidebar for configuration">
+        <div class="sidebar-hint">
             <svg class="sidebar-hint-arrow" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polyline points="15 18 9 12 15 6"></polyline>
             </svg>
@@ -1946,58 +2105,15 @@ def main():
     x_axis = ts_filtered["Date"]
     x_title = "Date" if active_date != "None" else "Index"
 
-    # ─── Keyboard Shortcuts Hint ─────────────────────────────────────────
-    from streamlit.components.v1 import html as st_html
-    st_html(
-        """
-        <div class="kbd-shortcuts" id="kbd-shortcuts">
-            <div class="shortcut-row"><kbd>1</kbd>–<kbd>5</kbd> Switch tabs</div>
-            <div class="shortcut-row"><kbd>R</kbd> Run analysis</div>
-            <div class="shortcut-row"><kbd>?</kbd> Toggle shortcuts</div>
-        </div>
-        <script>
-        (function() {
-            var shortcutsVisible = false;
-            var kbdEl = document.getElementById('kbd-shortcuts');
-            function showKbd() {
-                if (kbdEl) { kbdEl.classList.toggle('visible'); shortcutsVisible = !shortcutsVisible; }
-            }
-            document.addEventListener('keydown', function(e) {
-                if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return;
-                if (e.key === '?') { e.preventDefault(); showKbd(); return; }
-                if (shortcutsVisible) return;
-                var tabKeys = Object();
-                tabKeys['1'] = 0; tabKeys['2'] = 1; tabKeys['3'] = 2; tabKeys['4'] = 3; tabKeys['5'] = 4;
-                if (e.key in tabKeys) {
-                    e.preventDefault();
-                    var tabs = document.querySelectorAll('[data-baseweb="tab"]');
-                    if (tabs[tabKeys[e.key]]) tabs[tabKeys[e.key]].click();
-                }
-                if (e.key === 'r' || e.key === 'R') {
-                    if (!e.ctrlKey && !e.metaKey && !e.altKey) {
-                        var runBtn = document.querySelector('button[kind="primary"]');
-                        if (runBtn) runBtn.click();
-                    }
-                }
-            });
-        })();
-        </script>
-        """,
-        height=0,
-    )
+    # NOTE (audit D4): the former keyboard-shortcuts hint and theme toggle
+    # were rendered through 0-height `st.components.v1.html` iframes whose
+    # scripts targeted the IFRAME's own document — `document.querySelectorAll`
+    # there can never reach the app's tabs/buttons and `documentElement` is
+    # the iframe's, not the page's. Both were provably inert (and the
+    # light-mode CSS the toggle gated could never activate), so they were
+    # removed rather than left masquerading as features.
 
-    # ─── Theme Toggle ────────────────────────────────────────────────────
-    from ui.components import render_theme_toggle
-    render_theme_toggle()
-
-    # ─── Tabs with Lazy Loading + Error Boundaries ─────────────────────────
-    # Track which tabs have been rendered (lazy loading)
-    if 'rendered_tabs' not in st.session_state:
-        st.session_state.rendered_tabs = set()
-
-    # Get current active tab from URL hash or default to 0
-    active_tab_idx = 0  # Streamlit doesn't expose active tab index directly, so we render on demand
-
+    # ─── Tabs with Error Boundaries ─────────────────────────────────────
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "CONVERGENCE", "AARAMBH", "NIRNAY", "PRECEDENT", "DIAGNOSTICS", "DATA",
     ])
@@ -2021,25 +2137,19 @@ def main():
             )
 
     with tab1:
-        st.session_state.rendered_tabs.add(0)
         _safe_render("Convergence", lambda: render_convergence_tab(ts_filtered))
     with tab2:
-        st.session_state.rendered_tabs.add(1)
         _safe_render("Aarambh", lambda: render_aarambh_tab(engine, ts_filtered, x_axis, x_title, signal, model_stats, regime_stats, ts, active_target))
     with tab3:
-        st.session_state.rendered_tabs.add(2)
         _safe_render("Nirnay", lambda: render_nirnay_tab(selected_tf))
     with tab4:
-        st.session_state.rendered_tabs.add(3)
         # Full-history `ts` (not the timeframe-filtered view) so the analog matcher
         # sees the whole series. Horizons follow the Aarambh forecast lens.
         _safe_render("Precedent", lambda: render_precedent_tab(
             ts, active_target, tuple(PRECEDENT_HOLD_HORIZONS), AARAMBH_FWD_MOM_K, AARAMBH_FWD_HORIZON))
     with tab5:
-        st.session_state.rendered_tabs.add(4)
         _safe_render("Diagnostics", lambda: render_diagnostics_tab(engine, ts_filtered, x_axis, x_title, signal, model_stats))
     with tab6:
-        st.session_state.rendered_tabs.add(5)
         _safe_render("Data", lambda: render_data_tab(ts_filtered, ts, active_target))
 
     _render_footer()
