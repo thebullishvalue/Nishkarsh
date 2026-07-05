@@ -54,11 +54,6 @@ def generate_run_id() -> str:
     return f"{run_id}_{run_uuid}"
 
 
-def get_run_id() -> str:
-    """Get the session-level run identifier."""
-    return SESSION_RUN_IDENTIFIER
-
-
 # ── ANSI color codes ────────────────────────────────────────────────────────
 
 
@@ -155,10 +150,6 @@ class ConsoleOutput:
             self._write(Colors.GRAY + "─" * len(title) + Colors.RESET)
         self._section_depth += 1
 
-    def step(self, num: int, title: str) -> None:
-        """Print a numbered step."""
-        self._write(f"  {Colors.BOLD}Step {num}:{Colors.RESET} {title}")
-
     def item(self, label: str, value: Any, indent: int = 4) -> None:
         """Print a labeled key-value pair."""
         self._write(f"{' ' * indent}{Colors.GRAY}{label}:{Colors.RESET} {value}")
@@ -180,33 +171,16 @@ class ConsoleOutput:
         )
 
     def error(self, message: str) -> None:
-        """Print an error message."""
+        """Print an error message. Kept despite zero current call sites — it
+        completes the success/warning/error severity triad; removing it would
+        force reaching for the private ``_write`` on the first future
+        exception-reporting path someone adds."""
         self._write(f"  {Colors.RED}{Colors.ERROR} ERROR:{Colors.RESET} {message}")
 
     def failure(self, step: str, error: str) -> None:
         """Print a failure with context."""
         self._write(f"  {Colors.RED}{Colors.ERROR} FAILURE:{Colors.RESET} {step}")
         self._write(f"      {Colors.GRAY}Reason:{Colors.RESET} {error}")
-
-    def issue(self, issue_type: str, location: str, description: str) -> None:
-        """Flag an issue."""
-        self._write(
-            f"  {Colors.YELLOW}{Colors.WARNING} ISSUE [{issue_type}]{Colors.RESET} "
-            f"at {location}"
-        )
-        self._write(f"      {Colors.GRAY}{description}{Colors.RESET}")
-
-    def checkpoint(self, name: str, status: str = "OK") -> None:
-        """Print a checkpoint."""
-        symbol = (
-            Colors.GREEN + Colors.SUCCESS
-            if status == "OK"
-            else Colors.RED + Colors.ERROR
-        )
-        self._write(
-            f"  {symbol} Checkpoint:{Colors.RESET} {name} "
-            f"{Colors.GRAY}[{status}]{Colors.RESET}"
-        )
 
     def summary(self, title: str, data: dict[str, Any]) -> None:
         """Print a boxed summary."""
@@ -246,8 +220,3 @@ class ConsoleOutput:
 # ── Global instance ─────────────────────────────────────────────────────────
 
 console = ConsoleOutput()
-
-
-def get_console() -> ConsoleOutput:
-    """Get the global console instance."""
-    return console

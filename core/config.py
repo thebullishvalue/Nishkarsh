@@ -7,7 +7,7 @@ CORE — Merged from both Aarambh (correl.py) and Nirnay (nirnay_core.py) monoli
 
 # ─── Version / Product ───────────────────────────────────────────────────────
 
-VERSION = "1.4.24"
+VERSION = "1.6.0"
 PRODUCT_NAME = "NISHKARSH"
 COMPANY = "@thebullishvalue"
 
@@ -16,12 +16,14 @@ COMPANY = "@thebullishvalue"
 LOOKBACK_WINDOWS = (5, 10, 20, 50, 100)
 # Walk-forward training window (trading days). The engine fits a ~14-feature
 # regularized ensemble, so the window must be >> feature count to stay
-# well-conditioned. MIN bootstraps the expanding window at one trading year;
-# MAX caps it at three years so the model stays adaptive to regime drift.
-# (Previously 15/30 — degenerate p/n for a 14-feature fit.)
-MIN_TRAIN_SIZE = 1500
-MAX_TRAIN_SIZE = 2000
-REFIT_INTERVAL = 10
+# well-conditioned. MIN bootstraps the expanding window at ~6 trading years;
+# MAX caps it at ~8 so the model stays adaptive to regime drift. (History:
+# 15/30 originally — degenerate p/n; 252/756 after the 1.4.22 sweep; raised
+# to 1500/2000 for the current long-history PE sheet.) NOTE the walk-forward
+# refit cadence is DERIVED in the engine (clip(n/200, 2, 5) rows), not a
+# config constant.
+MIN_TRAIN_SIZE = 15
+MAX_TRAIN_SIZE = 30
 RIDGE_ALPHAS = (0.01, 0.1, 1.0, 10.0, 100.0)
 HUBER_EPSILON = 1.35
 # 200 is bit-identical to 500 here: on real data the walk-forward Huber fits
@@ -29,7 +31,7 @@ HUBER_EPSILON = 1.35
 # are unchanged from max_iter 200→500. Trimmed purely to drop wasted headroom.
 HUBER_MAX_ITER = 200
 OU_PROJECTION_DAYS = 90
-MIN_DATA_POINTS = 1500
+MIN_DATA_POINTS = 30
 
 # When True, Aarambh trains on causal-PCA factors of (sheet predictors + the
 # full macro panel) instead of the raw sheet predictors. Combines everything,
@@ -104,8 +106,10 @@ CALIBRATION_RETURN_LABEL = "nsei"
 # out-of-sample forecast skill rather than persistence. This is a research head:
 # every levels sweep shows no edge, so this tests whether a returns forecast
 # carries IC the levels model structurally cannot. Bypasses the combined-PCA
-# predictor gate (uses raw momentum features). Off by default — it changes the
-# engine's thesis from mean-reversion-to-fair-value to momentum forecasting.
+# predictor gate (uses raw momentum features). SHIPPED DEFAULT: ON — the
+# levels model demonstrated no edge in every sweep (docs/FINDINGS.md), so the
+# returns-forecast head is the live thesis; set False to A/B the legacy
+# fair-value levels regression.
 AARAMBH_FORWARD_SIGNAL = True
 AARAMBH_FWD_HORIZON = 10   # forecast horizon (trading days)
 AARAMBH_FWD_MOM_K = 20     # trailing momentum window for the predictor features
@@ -126,10 +130,6 @@ CONVICTION_STRONG = 60
 CONVICTION_MODERATE = 40
 CONVICTION_WEAK = 20
 
-# Z-score zone boundaries
-Z_EXTREME = 2.0
-Z_THRESHOLD = 1.0
-
 # Staleness
 STALENESS_DAYS = 3
 
@@ -143,10 +143,6 @@ DEFAULT_PREDICTORS = (
     "US02Y", "US10Y", "US30Y", "NIFTY50_DY", "NIFTY50_PB",
 )
 
-# Google Sheets URL (should be set via secrets or environment variable)
-# This is only a placeholder for type hints
-DEFAULT_SHEET_URL = ""
-
 # DDM parameters (calibrated for daily conviction series)
 DDM_LEAK_RATE = 0.08
 DDM_DRIFT_SCALE = 0.15
@@ -156,7 +152,11 @@ DDM_LONG_RUN_VAR = 100.0
 
 NIRNAY_MSF_LENGTH = 20
 NIRNAY_ROC_LEN = 14
-NIRNAY_REGIME_SENSITIVITY = 1.0
+# 1.5 preserves the value the engine ACTUALLY ran with — app.py had these
+# knobs hardcoded (audit D2) with 1.5 while this constant said 1.0; the
+# constants are now genuinely the single source of truth (wired through the
+# engine call and the run log), set to match shipped behavior.
+NIRNAY_REGIME_SENSITIVITY = 1.5
 NIRNAY_BASE_WEIGHT = 0.6
 NIRNAY_MMR_NUM_VARS = 5
 
@@ -311,13 +311,6 @@ MACRO_SYMBOLS_YF = {
 # ─── Nifty 50 Constituents ──────────────────────────────────────────────────
 
 NIFTY50_URL = "https://www.niftyindices.com/IndexConstituent/ind_nifty50list.csv"
-NIFTY_INDICES = {
-    "NIFTY 50": "https://www.niftyindices.com/IndexConstituent/ind_nifty50list.csv",
-    "NIFTY NEXT 50": "https://www.niftyindices.com/IndexConstituent/ind_niftynext50list.csv",
-    "NIFTY 100": "https://www.niftyindices.com/IndexConstituent/ind_nifty100list.csv",
-    "NIFTY 200": "https://www.niftyindices.com/IndexConstituent/ind_nifty200list.csv",
-    "NIFTY 500": "https://www.niftyindices.com/IndexConstituent/ind_nifty500list.csv",
-}
 
 # ─── Chart Theme ─────────────────────────────────────────────────────────────
 
@@ -342,10 +335,6 @@ UI_CONVICTION_STRONG = 60
 UI_CONVICTION_MODERATE = 40
 UI_CONVICTION_WEAK = 20
 
-# Z-score thresholds for extreme values
-UI_Z_EXTREME = 2.0
-UI_Z_THRESHOLD = 1.0
-
 # Breadth percentage thresholds
 UI_BREADTH_HIGH = 60  # % threshold for high breadth alert
 
@@ -369,23 +358,12 @@ UI_R2_ACCEPTABLE = 0.4
 UI_BAND_NARROW = 30
 UI_BAND_WIDE = 60
 
-# HMM probability threshold
-UI_HMM_CONFIDENT = 0.5
-
-# ADF/KPSS p-value thresholds
-UI_ADF_SIGNIFICANT = 0.05
-UI_KPSS_NOT_SIGNIFICANT = 0.05
-
 # Chart height defaults
 UI_CHART_HEIGHT_SMALL = 280
 UI_CHART_HEIGHT_MEDIUM = 340
 UI_CHART_HEIGHT_LARGE = 380
 UI_CHART_HEIGHT_XLARGE = 540
 UI_CHART_HEIGHT_STACKED = 680
-
-# Data table defaults
-UI_TABLE_HEIGHT = 520
-UI_TABLE_HISTORY_ROWS = 10
 
 # ─── Nifty 50 Default Constituents (fallback list) ──────────────────────────
 
