@@ -25,11 +25,30 @@ log = logging.getLogger(__name__)
 DEFAULT_CACHE_DIR = Path.home() / ".cache" / "nishkarsh"
 DEFAULT_TTL_SECONDS = 3600  # 1 hour
 
-# Force-refresh window. While ``time.time() < _FORCE_UNTIL`` every ``Cache.get``
-# returns None (→ live re-fetch) but the disk snapshot is preserved as a fallback.
-# Set via ``begin_force_refresh()`` from the UI "Refresh Data" action. Bounded by a
-# window so it self-clears after one pipeline run (≈ covers a full universe re-pull).
-_FORCE_UNTIL = 0.0
+# Force-refresh window, PER SESSION. While a session's entry here is unexpired,
+# that session's ``Cache.get`` calls return None (→ live re-fetch) but the disk
+# snapshot is preserved as a fallback. Set via ``begin_force_refresh()`` from
+# the UI "Refresh Data" action; self-clears after one pipeline run.
+#
+# Streamlit serves every concurrent session from ONE process, so a single
+# process-global deadline (the previous design) meant one user's "Refresh
+# Data" forced EVERY other concurrent session's next fetch to bypass cache
+# too — needless live pulls and rate-limit exposure on a multi-user deploy.
+# Keying by session ID scopes the bypass to the session that asked for it.
+# Non-Streamlit callers (scripts/tests) fall back to a single shared key,
+# preserving the old behaviour there (only ever one "session").
+_FORCE_UNTIL: dict[str, float] = {}
+
+
+def _current_session_key() -> str:
+    try:
+        from streamlit.runtime.scriptrunner import get_script_run_ctx
+        ctx = get_script_run_ctx(suppress_warning=True)
+        if ctx is not None and getattr(ctx, "session_id", None):
+            return ctx.session_id
+    except Exception:
+        pass
+    return "_no_session_"
 
 
 class Cache:
@@ -75,9 +94,11 @@ class Cache:
         returns ``None`` so the caller re-fetches live — WITHOUT deleting the disk
         snapshot, so ``get_stale`` still serves last-good data if the live fetch
         fails (rate limit / circuit open). That's the safety the naive "clear cache"
-        lacks: a failed forced refresh degrades to stale, never to empty.
+        lacks: a failed forced refresh degrades to stale, never to empty. The
+        window is scoped to the CALLING SESSION (see ``_current_session_key``),
+        so one user's forced refresh doesn't bypass cache for everyone.
         """
-        if time.time() < _FORCE_UNTIL:
+        if time.time() < _FORCE_UNTIL.get(_current_session_key(), 0.0):
             with self._lock:
                 self.misses += 1
             return None
@@ -187,11 +208,12 @@ macro_cache  = Cache(ttl=3600, version="v1", namespace="macro")
 
 
 def begin_force_refresh(window: float = 300.0) -> None:
-    """Open a force-refresh window: for ``window`` seconds, every ``Cache.get``
-    misses (→ live re-fetch) while disk snapshots stay intact as a failure fallback.
-    Self-clearing — covers one full pipeline re-pull, then normal TTL resumes."""
-    global _FORCE_UNTIL
-    _FORCE_UNTIL = time.time() + window
+    """Open a force-refresh window for the CALLING SESSION: for ``window``
+    seconds, every ``Cache.get`` made from this session misses (→ live
+    re-fetch) while disk snapshots stay intact as a failure fallback.
+    Self-clearing — covers one full pipeline re-pull, then normal TTL resumes.
+    Scoped per session so a multi-user deploy isn't force-refreshed globally."""
+    _FORCE_UNTIL[_current_session_key()] = time.time() + window
 
 
 def all_caches() -> list[Cache]:

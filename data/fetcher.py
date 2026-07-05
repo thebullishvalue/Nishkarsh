@@ -26,9 +26,7 @@ import yfinance as yf
 from core.config import (
     GLOBAL_MACRO_MAP,
     MACRO_SYMBOLS_YF,
-    DEFAULT_SHEET_URL,
 )
-from data.schema import UnifiedDataset
 from data.cache import sheets_cache, ohlcv_cache, macro_cache
 from data.circuit_breaker import (
     yfinance_circuit,
@@ -86,12 +84,6 @@ def load_google_sheet(url: str) -> tuple[pd.DataFrame | None, str | None]:
         if stale is not None:
             return stale, f"Serving last-good snapshot: {e}"
         return None, str(e)
-
-
-def fetch_aarambh_data(source: str = DEFAULT_SHEET_URL) -> pd.DataFrame | None:
-    """Legacy wrapper for component compatibility."""
-    df, _ = load_google_sheet(source)
-    return df
 
 
 # ─── Constituent OHLCV (yfinance) ────────────────────────────────────────────
@@ -170,12 +162,21 @@ def fetch_constituent_ohlcv(
 # ─── Macro data (yfinance Global Macro universe + commodities/FX) ───────────
 
 
+# Snapshots older than this are NOT used to backfill a missing column — a
+# column resurrected from a weeks-old snapshot forward-fills flat across the
+# gap and looks like real, current data downstream (silent staleness).
+_BACKFILL_MAX_AGE_DAYS = 7.0
+
+
 def _load_macro_snapshots_newest_first() -> list[pd.DataFrame]:
-    """Prior cached macro frames (ticker-columned), newest first, for column backfill."""
+    """Prior cached macro frames (ticker-columned), newest first, for column
+    backfill. Snapshots past the staleness ceiling are excluded."""
     snaps: list[pd.DataFrame] = []
     try:
+        import time as _time
+        cutoff = _time.time() - _BACKFILL_MAX_AGE_DAYS * 86400.0
         paths = sorted(
-            macro_cache._disk_dir.glob("*.pkl"),
+            (p for p in macro_cache._disk_dir.glob("*.pkl") if p.stat().st_mtime >= cutoff),
             key=lambda p: p.stat().st_mtime,
             reverse=True,
         )
@@ -221,9 +222,11 @@ def _backfill_missing_columns(combined: pd.DataFrame, tickers: tuple[str, ...]) 
                 missing.remove(t)
 
     if filled:
-        log.warning("Macro backfill from snapshot for rate-limited/missing tickers: %s", filled)
+        log.warning("Macro backfill from recent snapshot (≤%.0fd old) for rate-limited/missing tickers: %s",
+                    _BACKFILL_MAX_AGE_DAYS, filled)
     if missing:
-        log.warning("Macro tickers still unavailable after backfill (no prior snapshot): %s", missing)
+        log.warning("Macro tickers unavailable (no snapshot within the %.0fd staleness ceiling) — "
+                    "columns dropped rather than filled stale: %s", _BACKFILL_MAX_AGE_DAYS, missing)
     return combined
 
 
@@ -324,88 +327,3 @@ def fetch_macro_live(
         log.warning("Macro fetch empty; serving last-good snapshot")
         return stale
     return combined
-
-
-# ─── Unified dataset builder ─────────────────────────────────────────────────
-
-
-def build_unified_dataset(
-    aarambh_df: pd.DataFrame,
-    target_col: str = "NIFTY50_PE",
-    feature_cols: list[str] | None = None,
-    date_col: str | None = None,
-    constituents_ohlcv: dict[str, pd.DataFrame] | None = None,
-    macro_df: pd.DataFrame | None = None,
-) -> UnifiedDataset:
-    """Build a ``UnifiedDataset`` by merging all data sources.
-
-    Parameters
-    ----------
-    aarambh_df : pd.DataFrame
-        Raw Google Sheet data.
-    target_col : str
-        Column name for the Nifty 50 PE target variable.
-    feature_cols : list[str] | None
-        Predictor column names.
-    date_col : str | None
-        Date column name in the sheet.
-    constituents_ohlcv : dict[str, pd.DataFrame] | None
-        Per-constituent OHLCV data.
-    macro_df : pd.DataFrame | None
-        Combined macro indicators.
-
-    Returns
-    -------
-    UnifiedDataset
-        Unified dataset with aligned date indices.
-    """
-    if feature_cols is None:
-        feature_cols = [
-            c for c in aarambh_df.columns
-            if c != target_col and c != date_col
-        ]
-
-    cols = [target_col] + feature_cols
-    if date_col and date_col in aarambh_df.columns:
-        cols.append(date_col)
-    valid_cols = [c for c in cols if c in aarambh_df.columns]
-    data = aarambh_df[valid_cols].copy()
-
-    if date_col and date_col in data.columns:
-        data[date_col] = pd.to_datetime(data[date_col], errors="coerce", dayfirst=True)
-        data = data.dropna(subset=[date_col]).sort_values(date_col)
-
-    for col in [target_col] + feature_cols:
-        data[col] = pd.to_numeric(data[col], errors="coerce")
-
-    numeric_cols = [target_col] + feature_cols
-    data[numeric_cols] = data[numeric_cols].ffill().bfill()
-    data = data.dropna(subset=numeric_cols).reset_index(drop=True)
-
-    if date_col and date_col in data.columns:
-        date_index = pd.DatetimeIndex(data[date_col])
-    else:
-        date_index = pd.DatetimeIndex(
-            pd.date_range(end=pd.Timestamp.today(), periods=len(data), freq="B")
-        )
-
-    nifty50_pe = data[target_col].values
-    predictors = data[feature_cols].copy()
-
-    macro_aligned = (
-        macro_df.reindex(date_index).ffill()
-        if macro_df is not None and not macro_df.empty
-        else pd.DataFrame()
-    )
-
-    if constituents_ohlcv is None:
-        constituents_ohlcv = {}
-
-    return UnifiedDataset(
-        date_index=date_index,
-        nifty50_pe=nifty50_pe,
-        aarambh_predictors=predictors,
-        constituent_ohlcv=constituents_ohlcv,
-        macro_df=macro_aligned,
-        trading_days=list(date_index),
-    )

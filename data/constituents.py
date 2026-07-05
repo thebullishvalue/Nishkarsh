@@ -12,17 +12,12 @@ from __future__ import annotations
 
 import io
 import logging
-import warnings
 
 import pandas as pd
 import requests
 import streamlit as st
-import urllib3
 
 from core.config import NIFTY50_URL, NIFTY50_FALLBACK
-
-# Suppress insecure request warnings just for these external fetches
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Wikipedia fallback URLs for major indices
 _INDIA_INDEX_WIKI = {
@@ -56,11 +51,12 @@ def fetch_nifty50_constituents() -> tuple[list[str], str]:
         Which source provided the data (``"niftyindices"``,
         ``"wikipedia"``, or ``"fallback"``).
     """
-    # Primary: niftyindices.com
+    # Primary: niftyindices.com. TLS verification is ON — the host presents a
+    # valid certificate chain; the previous `verify=False` (with the urllib3
+    # warning suppression that hid it) removed transport integrity for the
+    # constituent list with no corresponding need.
     try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            resp = requests.get(NIFTY50_URL, headers=_HEADERS, verify=False, timeout=10)
+        resp = requests.get(NIFTY50_URL, headers=_HEADERS, timeout=10)
         resp.raise_for_status()
         df = pd.read_csv(io.StringIO(resp.text))
         if "Symbol" in df.columns:
