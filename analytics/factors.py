@@ -93,8 +93,13 @@ def build_causal_macro_factors(
     )
     pca_input = macro_df.drop(columns=pass_cols) if pass_cols else macro_df
 
+    # ffill only — NO bfill. Backfilling a young column's leading NaN rows
+    # with its first observed value injects FUTURE data into the factor
+    # history (a look-ahead that contradicts this module's causality
+    # guarantee). Leading gaps become 0.0 (no information), which the
+    # correlation-based PCA treats as a flat, variance-less prefix.
     clean = (
-        pca_input.apply(pd.to_numeric, errors="coerce").ffill().bfill().fillna(0.0)
+        pca_input.apply(pd.to_numeric, errors="coerce").ffill().fillna(0.0)
     )
     if stationarize:
         # Causal rolling z-score (uses rows ≤ t only — no future) + clip, so

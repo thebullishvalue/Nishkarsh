@@ -12,19 +12,21 @@ from dataclasses import dataclass
 import numpy as np
 from numba import njit
 
-from analytics.utils import MathUtils
-
 
 # ─── Fused single-pass regime kernel (Numba) ─────────────────────────────────
 # A faithful port of the object-based per-constituent loop in engines/nirnay.py
-# (Kalman → GARCH → HMM → CUSUM). The object classes below are kept verbatim and
-# remain the reference implementation; this kernel reproduces their output
-# bit-for-bit (validated to ~1e-12) with zero per-step Python/NumPy dispatch,
-# which is the bulk of the Nirnay cost (one loop per name × ~50 names × ~1700
-# rows). LOGIC IS UNCHANGED from Nishkarsh: the CUSUM z-score window INCLUDES the
-# current point (non-causal, as in CUSUMDetector.update) and the regime cuts use
-# Nishkarsh's structural thresholds (strong = 2/3, weak = 1/3 + 0.07), NOT magic
-# 0.6 / 0.4.
+# (Kalman → GARCH → HMM → CUSUM). The object classes below are kept as the
+# readable reference implementation; the kernel eliminates the per-step
+# Python/NumPy dispatch that dominates the Nirnay cost (one loop per name ×
+# ~50 names × ~1700 rows). Two correctness fixes are applied IDENTICALLY to
+# the kernel and the classes (2026-07 audit):
+#   • the CUSUM z-score window now EXCLUDES the current point (the old window
+#    included the observation being z-scored, biasing |z| downward and
+#    delaying change detection);
+#   • the online HMM enforces a Bull > Neutral > Bear emission-mean ordering
+#    after every adaptation step (label-switching guard).
+# The regime cuts use Nishkarsh's structural thresholds (strong = 2/3,
+# weak = 1/3 + 0.07), NOT magic 0.6 / 0.4.
 
 
 @njit(cache=True)
@@ -211,6 +213,20 @@ def _regime_loop_njit(sig: np.ndarray):
                         nsd = 1e-4
                     em_mean[stt] = 0.9 * em_mean[stt] + 0.1 * nm
                     em_std[stt] = 0.9 * em_std[stt] + 0.1 * nsd
+            # Ordering constraint (state 0=Bull > 1=Neutral > 2=Bear): without
+            # it the online EM update has no identifiability constraint on
+            # which state is "which", so a slow one-sided regime drift can pull
+            # em_mean[0] (Bull) below em_mean[2] (Bear) — the canonical
+            # label-switching failure of unconstrained online HMM/mixture
+            # estimation (Jasra, Holmes & Stephens 2005, Statistical Science
+            # 20(1)); reproduced here on a slow bear→bull ramp (1/8 seeded
+            # runs). After the crossing, hmm_bull silently reports the BEAR
+            # state's probability. A small margin (not a bare >=) stops the
+            # constraint itself from flip-flopping on floating-point noise.
+            if em_mean[0] < em_mean[1] + 0.01:
+                em_mean[0] = em_mean[1] + 0.01
+            if em_mean[2] > em_mean[1] - 0.01:
+                em_mean[2] = em_mean[1] - 0.01
         # _adapt_transitions (last 30 states) — runs when state_history >= 5
         if nobs >= 5:
             w = 30 if nobs >= 30 else nobs
@@ -229,19 +245,21 @@ def _regime_loop_njit(sig: np.ndarray):
         neut_p = sp[1]
         bear_p = sp[2]
 
-        # ── CUSUM update(filtered) — NON-causal window (includes current point),
-        # exactly matching CUSUMDetector.update in Nishkarsh. ──
+        # ── CUSUM update(filtered) — CAUSAL window [lo, i) that EXCLUDES the
+        # current point. Including the observation in the mean/σ used to
+        # z-score that same observation shrinks its own |z| (self-reference)
+        # and delays change detection; matches CUSUMDetector.update below. ──
         cvals[i] = filtered
         nc = i + 1
         if nc >= 3:
-            w = 20 if nc >= 20 else nc
-            lo = i + 1 - w  # window [lo, i+1) INCLUDES the just-appended value
+            w = 20 if nc - 1 >= 20 else nc - 1
+            lo = i - w
             csum = 0.0
-            for j in range(lo, i + 1):
+            for j in range(lo, i):
                 csum += cvals[j]
             run_mean = csum / w
             cv = 0.0
-            for j in range(lo, i + 1):
+            for j in range(lo, i):
                 d = cvals[j] - run_mean
                 cv += d * d
             sd = np.sqrt(cv / w)
@@ -536,6 +554,16 @@ class AdaptiveHMM:
                     0.9 * self.state.emission_stds[state_idx] + 0.1 * new_std
                 )
 
+        # Ordering constraint (Bull > Neutral > Bear, 0.01 margin): the online
+        # EM update has no identifiability constraint, so a slow one-sided
+        # regime drift can label-switch the states (Jasra, Holmes & Stephens
+        # 2005). Mirrors the numba kernel exactly.
+        means = self.state.emission_means
+        if means[0] < means[1] + 0.01:
+            means[0] = means[1] + 0.01
+        if means[2] > means[1] - 0.01:
+            means[2] = means[1] - 0.01
+
     def _adapt_transitions(self) -> None:
         """Adapt transition matrix based on recent state transitions."""
         recent = np.asarray(self.state_history[-30:])
@@ -669,7 +697,11 @@ class CUSUMDetector:
         self.value_history.append(value)
 
         if len(self.value_history) >= 3:
-            recent = self.value_history[-min(20, len(self.value_history)) :]
+            # Causal window: EXCLUDE the just-appended value — z-scoring an
+            # observation against a mean/σ that already contains it shrinks
+            # its own |z| and delays detection. Mirrors the numba kernel.
+            prior = self.value_history[:-1]
+            recent = prior[-min(20, len(prior)):]
             self.running_mean = np.mean(recent)
             self.running_std = max(np.std(recent), 0.1)
 

@@ -2,7 +2,18 @@
 Nishkarsh v1.4.0 — Drift-Diffusion Model (DDM) filter with mean-reverting variance.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
-ANALYTICS — Bounded signal filtering with confidence bands via stochastic DDM.
+ANALYTICS — Bounded signal filtering with a heuristic uncertainty band via a
+stochastic DDM.
+
+NOTE on "confidence bands": ``±1.96·sqrt(variances)`` (computed by callers,
+e.g. convergence/conviction_model.py and engines/aarambh.py) LOOKS like a 95%
+Gaussian confidence interval, but ``variances`` here is not a state-space
+posterior variance estimated from data — the level is a designed, bounded
+heuristic that mean-reverts toward ``long_run_var`` (a fixed constant) with a
+drift-dependent expansion term. Practically the band is still a useful WIDTH
+signal (narrow = the filter's recent evidence has been consistent; wide = it
+has been noisy/conflicting) — just not a calibrated coverage interval, so it
+should be read and labeled as an uncertainty band, not a confidence interval.
 """
 
 from __future__ import annotations
@@ -51,7 +62,15 @@ def drift_diffusion_filter(
     if n == 0:
         return np.array([]), np.array([]), np.array([])
 
-    state = float(np.mean(obs[: min(20, n)])) if n > 0 else 0.0
+    # Seed from the FIRST observation only. The previous seed — the mean of
+    # the first 20 observations — made filtered[0] depend on obs[1..19]
+    # (a look-ahead at the series head, verified: perturbing obs[5] changed
+    # filtered[0]), and a single NaN among the first 20 observations turned
+    # the seed NaN and poisoned the ENTIRE filtered series via
+    # state·(1−leak). A non-finite obs[0] (e.g. the engine's warm-up region)
+    # seeds a NEUTRAL 0.0 belief instead, matching the per-step
+    # `evidence = 0.0` fallback below.
+    state = float(obs[0]) if np.isfinite(obs[0]) else 0.0
     var_est = long_run_var
 
     filtered = np.zeros(n)

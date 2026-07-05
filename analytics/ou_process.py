@@ -1,5 +1,6 @@
 """
-Ornstein-Uhlenbeck process estimation with Andrews (1993) median-unbiased AR(1).
+Ornstein-Uhlenbeck process estimation with a Kendall (1954) / Orcutt & Winokur
+(1969) first-order bias-corrected AR(1) coefficient.
 
 Extracted from correl.py lines 389-448, 560-589.
 """
@@ -13,12 +14,14 @@ def ornstein_uhlenbeck_estimate(
     series: np.ndarray,
     dt: float = 1.0,
 ) -> tuple[float, float, float]:
-    """Estimate OU process parameters via AR(1) regression with Andrews MU correction.
+    """Estimate OU process parameters via AR(1) regression with a bias correction.
 
     Models: ``dx = θ(μ − x)dt + σdW``
 
-    Uses Andrews (1993) median-unbiased estimator for near-unit-root cases,
-    which handles persistent series better than jackknife methods.
+    Uses the Kendall (1954) / Orcutt & Winokur (1969) first-order bias
+    correction for the OLS AR(1) coefficient (additive: a_hat + (1+3a)/n),
+    which is more robust near-unit-root than leaving the OLS estimate
+    uncorrected.
 
     Parameters
     ----------
@@ -61,11 +64,21 @@ def ornstein_uhlenbeck_estimate(
     b = (sy * sxx - sx * sxy) / denom
     a = np.clip(a, 1e-6, 0.999)
 
-    # Andrews (1993) median-unbiased correction
+    # Kendall (1954, Biometrika 41) / Orcutt & Winokur (1969) first-order bias
+    # correction. The OLS AR(1) coefficient is biased DOWNWARD:
+    # E[a_hat] ≈ a − (1+3a)/n, so the correction is ADDITIVE (a_hat + (1+3a)/n
+    # moves the estimate back toward the true a). The correction here used to
+    # SUBTRACT, which doubles the downward bias instead of removing it
+    # (verified by simulation: at a=0.90, n=300, 2000 trials, mean OLS
+    # a_hat=0.8847; the subtractive form yields 0.8725 — further from 0.90 —
+    # while the additive form yields 0.8969). This also was not Andrews
+    # (1993) — that is a quantile-table/simulation-based median-unbiased
+    # estimator, a different (and more involved) method than this
+    # closed-form first-order correction.
     if a > 0.95:
-        a_corrected = a - (1 + 3 * a) / n - 3 * (1 + 3 * a) / (n**2)
+        a_corrected = a + (1 + 3 * a) / n + 3 * (1 + 3 * a) / (n**2)
     else:
-        a_corrected = a - (1 + 3 * a) / n
+        a_corrected = a + (1 + 3 * a) / n
 
     a = np.clip(a_corrected, 0.0, 0.999)
 
@@ -75,16 +88,23 @@ def ornstein_uhlenbeck_estimate(
     residuals = x_curr - a * x_lag - b
     sigma_sq = np.var(residuals)
 
-    if a > 0.98:
-        sigma = max(float(np.std(residuals)) * np.sqrt(2 * max(theta, 1e-4)), 1e-6)
-    else:
-        sigma = np.sqrt(max(sigma_sq * 2 * theta / (1 - a**2), 1e-12))
+    # Single formula for all a: σ² = σ_ε² · 2θ / (1 − a²). The previous
+    # a > 0.98 branch dropped the 1/(1−a²) factor, under-estimating σ (and
+    # hence the projection cone) exactly in the near-unit-root regime; the
+    # denominator floor keeps it finite there instead.
+    sigma = np.sqrt(max(sigma_sq * 2 * theta / max(1 - a**2, 0.001), 1e-12))
 
     return max(float(theta), 1e-4), float(mu), max(float(sigma), 1e-6)
 
 
 def andrews_median_unbiased_ar1(series: np.ndarray) -> tuple[float, float]:
-    """Andrews (1993) median-unbiased AR(1) estimator with half-life.
+    """Kendall (1954) / Orcutt & Winokur (1969) first-order bias-corrected AR(1)
+    estimator with half-life.
+
+    (Despite the function name — kept for import-site compatibility — this is
+    NOT Andrews (1993); that is a quantile-table/simulation-based median-
+    unbiased estimator. This is the simpler closed-form first-order bias
+    correction: E[a_hat] ≈ a − (1+3a)/n, so the correction is ADDITIVE.)
 
     Parameters
     ----------
@@ -94,7 +114,7 @@ def andrews_median_unbiased_ar1(series: np.ndarray) -> tuple[float, float]:
     Returns
     -------
     ar_coef : float
-        Median-unbiased AR(1) coefficient.
+        Bias-corrected AR(1) coefficient.
     half_life : float
         Half-life of mean reversion (``log(0.5) / log(ar_coef)``).
     """
@@ -111,9 +131,9 @@ def andrews_median_unbiased_ar1(series: np.ndarray) -> tuple[float, float]:
     a_ols = np.corrcoef(x_lag, x_curr)[0, 1]
 
     if a_ols > 0.95:
-        a_mu = a_ols - (1 + 3 * a_ols) / n - 3 * (1 + 3 * a_ols) / (n**2)
+        a_mu = a_ols + (1 + 3 * a_ols) / n + 3 * (1 + 3 * a_ols) / (n**2)
     else:
-        a_mu = a_ols - (1 + 3 * a_ols) / n
+        a_mu = a_ols + (1 + 3 * a_ols) / n
 
     a_mu = np.clip(a_mu, 0.0, 0.999)
 
