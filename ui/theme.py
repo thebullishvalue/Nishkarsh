@@ -158,7 +158,11 @@ def inject_css() -> None:
     Injects on every render — Streamlit deduplicates identical <style> blocks.
     """
     if CSS_PATH.exists():
-        css = CSS_PATH.read_text()
+        # Explicit UTF-8: theme.css embeds Devanagari strings, and
+        # Path.read_text() with no encoding falls back to the OS locale
+        # (commonly cp1252 on Windows) → UnicodeDecodeError before anything
+        # renders. Verified: the file does not decode under cp1252.
+        css = CSS_PATH.read_text(encoding="utf-8")
     else:
         css = "/* theme.css not found */"
 
