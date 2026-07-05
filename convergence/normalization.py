@@ -125,24 +125,51 @@ def align_aarambh_nirnay(
         if ts_key not in nirnay_lookup:
             continue
         try:
-            raw_a.append(float(a_dedup.loc[d_val, "ConvictionRaw"]))
-            raw_n.append(nirnay_lookup[ts_key])
-            dates.append(d_val if hasattr(d_val, "date") else pd.Timestamp(ts_key))
+            _va = float(a_dedup.loc[d_val, "ConvictionRaw"])
         except Exception:
-            pass
+            continue
+        _vn = nirnay_lookup[ts_key]
+        # ConvictionRaw is genuinely NaN through the engine's walk-forward
+        # warm-up (no honest forecast exists yet — see the Valid column in
+        # engines/aarambh.py). A NaN/inf pair must not enter the expanding
+        # z-score inputs: it would silently poison every mu/sigma computed
+        # from that point forward, and hence norm_avg / the hero card, with
+        # NaN. Skip warm-up / non-finite rows instead of letting float(nan)
+        # pass silently.
+        if not (np.isfinite(_va) and np.isfinite(_vn)):
+            continue
+        raw_a.append(_va)
+        raw_n.append(_vn)
+        dates.append(d_val if hasattr(d_val, "date") else pd.Timestamp(ts_key))
     return dates, raw_a, raw_n
 
 
 def compute_norm_params(raw_a: list[float], raw_n: list[float]) -> dict[str, float]:
-    """Compute mean/std for z-scoring. ``sigma`` is floored at 1e-10."""
+    """Compute mean/std for z-scoring using only history up to the last point.
+
+    The returned mu/sigma are the CAUSAL state at the END of the series (an
+    expanding window anchored at the first observation), used to normalize
+    the latest value for the metric cards. Applying full-sample terminal μ/σ
+    to *historical* bars is look-ahead (earlier bars appear less extreme than
+    they were at the time because σ includes data that didn't yet exist) —
+    for per-date historical normalization use expanding stats per date, as
+    ``compute_normalized_convergence`` and the Convergence tab now do.
+    ``sigma`` is floored at 1e-10.
+    """
     arr_a = np.array(raw_a, dtype=np.float64) if raw_a else np.array([])
     arr_n = np.array(raw_n, dtype=np.float64) if raw_n else np.array([])
-    return {
-        "mu_a": float(np.mean(arr_a)) if len(arr_a) else 0.0,
-        "sigma_a": max(float(np.std(arr_a)), 1e-10) if len(arr_a) else 1.0,
-        "mu_n": float(np.mean(arr_n)) if len(arr_n) else 0.0,
-        "sigma_n": max(float(np.std(arr_n)), 1e-10) if len(arr_n) else 1.0,
-    }
+
+    def _expanding_stats(arr: np.ndarray) -> tuple[float, float]:
+        if len(arr) == 0:
+            return 0.0, 1.0
+        s = pd.Series(arr)
+        mu = float(s.expanding().mean().iloc[-1])
+        sigma = max(float(s.expanding().std().iloc[-1]), 1e-10) if len(arr) > 1 else 1.0
+        return mu, sigma
+
+    mu_a, sigma_a = _expanding_stats(arr_a)
+    mu_n, sigma_n = _expanding_stats(arr_n)
+    return {"mu_a": mu_a, "sigma_a": sigma_a, "mu_n": mu_n, "sigma_n": sigma_n}
 
 
 def zscore_clip(arr: np.ndarray, mu: float, sigma: float) -> np.ndarray:
@@ -171,11 +198,16 @@ def compute_normalized_convergence(
     _, raw_a, raw_n = align_aarambh_nirnay(aarambh_ts, nirnay_daily)
     if not raw_a:
         return None
-    params = compute_norm_params(raw_a, raw_n)
     arr_a = np.array(raw_a, dtype=np.float64)
     arr_n = np.array(raw_n, dtype=np.float64)
-    norm_a = zscore_clip(arr_a, params["mu_a"], params["sigma_a"])
-    norm_n = zscore_clip(arr_n, params["mu_n"], params["sigma_n"])
+    # Causal expanding-window z-scores: each point is normalized using only
+    # the history available up to that date (no future data leakage; the old
+    # full-sample μ/σ repainted historical readings).
+    s_a, s_n = pd.Series(arr_a), pd.Series(arr_n)
+    exp_sigma_a = s_a.expanding().std().clip(lower=1e-10).fillna(1.0)
+    exp_sigma_n = s_n.expanding().std().clip(lower=1e-10).fillna(1.0)
+    norm_a = np.clip((arr_a - s_a.expanding().mean().to_numpy()) / exp_sigma_a.to_numpy() / 3.0, -1.0, 1.0)
+    norm_n = np.clip((arr_n - s_n.expanding().mean().to_numpy()) / exp_sigma_n.to_numpy() / 3.0, -1.0, 1.0)
     norm_avg = (norm_a + norm_n) / 2.0
     latest = float(norm_avg[-1])
     return {

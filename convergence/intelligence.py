@@ -526,6 +526,32 @@ def _score_frame(
     return mean_ic, score
 
 
+def _score_frame_nonoverlap(
+    frame: pd.DataFrame,
+    weights: dict[str, float],
+    thresholds: dict[str, float],
+    horizons: tuple[int, ...],
+) -> tuple[float, float]:
+    """`_score_frame` on a NON-OVERLAPPING subsample (stride = min horizon).
+
+    Adjacent daily h-day forward returns share up to h−1 days, so a
+    daily-sampled IC's effective sample size is ~n/h, not n. With a smooth
+    (DDM-like) signal the inflation is worse: measured by simulation, a
+    PURE-NOISE AR(0.97) signal shows |IC| > 0.05 on the daily frame in 65%
+    of trials (IC sampling std ≈ 0.10 vs the naive 1/√n ≈ 0.035) — so a
+    daily-sampled "val IC +0.05" is ~0.5σ of noise, not an edge. Every
+    *reported or gated* IC (train/val, incumbent re-score, CV folds,
+    walk-forward test windows) is scored through this; the Optuna search
+    objective itself intentionally stays on the full overlapping frame
+    (smoother search surface — the honest number is what gets REPORTED,
+    the search only needs a consistent ordering).
+    """
+    if frame is None or frame.empty:
+        return float("nan"), -1e6
+    stride = max(1, int(min(horizons))) if horizons else 1
+    return _score_frame(frame.iloc[::stride], weights, thresholds, horizons)
+
+
 # ════════════════════════════════════════════════════════════════════════
 # Rolling walk-forward validation (re-calibrating durability grade)
 # ════════════════════════════════════════════════════════════════════════
@@ -621,7 +647,9 @@ def walk_forward_ic(
         test = frame.iloc[cut + purge: cut + purge + step]
         if len(test) >= 20:
             w, t = _optimize_frame(train, horizons, n_trials, l2_alpha, n_cv_folds)
-            ic, _ = _score_frame(test, w, t, horizons)
+            # Test-window IC is non-overlapping (see _score_frame_nonoverlap)
+            # so the durability grade is on the honest scale.
+            ic, _ = _score_frame_nonoverlap(test, w, t, horizons)
             try:
                 ts = frame.index[cut + purge]
             except Exception:
@@ -816,12 +844,18 @@ class ConvergenceTuner:
         }
         self.best_weights = weights
         self.best_thresholds = thresholds
-        self.train_ic, self.train_score = _score_frame(self.train_frame, weights, thresholds, self.horizons)
+        # Reported (and gated) ICs are non-overlapping — see
+        # _score_frame_nonoverlap. The search objective above stays on the
+        # full frame.
+        self.train_ic, self.train_score = _score_frame_nonoverlap(
+            self.train_frame, weights, thresholds, self.horizons
+        )
         return self._make_profile(), self.study
 
     def evaluate_validation(self) -> tuple[float, float]:
-        """Score the best params on the held-out validation set."""
-        self.val_ic, self.val_score = _score_frame(
+        """Score the best params on the held-out validation set
+        (non-overlapping IC — the honest scale)."""
+        self.val_ic, self.val_score = _score_frame_nonoverlap(
             self.val_frame, self.best_weights, self.best_thresholds, self.horizons,
         )
         return self.val_ic, self.val_score
@@ -830,9 +864,10 @@ class ConvergenceTuner:
         """IC of an *external* (weights, thresholds) set on THIS run's validation
         frame — used to compare an incumbent profile against a fresh candidate
         on the same data (apples-to-apples), instead of comparing stored ICs
-        that were measured on different-sized samples/periods.
+        that were measured on different-sized samples/periods. Non-overlapping,
+        same scale as the candidate's val_ic.
         """
-        ic, _ = _score_frame(self.val_frame, weights, thresholds, self.horizons)
+        ic, _ = _score_frame_nonoverlap(self.val_frame, weights, thresholds, self.horizons)
         return ic
 
     def cross_validated_ic(self, folds: int = 5) -> dict[str, float | list[float]]:
@@ -856,7 +891,9 @@ class ConvergenceTuner:
         fold_ics: list[float] = []
         for k in range(folds):
             blk = frame.iloc[edges[k]:edges[k + 1]]
-            ic, _ = _score_frame(blk, self.best_weights, self.best_thresholds, self.horizons)
+            # Non-overlapping fold ICs — same honest scale as val_ic (the
+            # acceptance gate compares them against the same margin).
+            ic, _ = _score_frame_nonoverlap(blk, self.best_weights, self.best_thresholds, self.horizons)
             if not np.isnan(ic):
                 fold_ics.append(float(ic))
         if not fold_ics:
@@ -956,7 +993,7 @@ def directional_convergence_ic(
     timing edge exists. A stable positive fold IC would be a real signal;
     flat/sign-flipping folds mean convergence carries no directional edge.
     """
-    from convergence.normalization import align_aarambh_nirnay, compute_norm_params, zscore_clip
+    from convergence.normalization import align_aarambh_nirnay
 
     if return_levels is None or len(return_levels) == 0:
         return {}
@@ -964,10 +1001,13 @@ def directional_convergence_ic(
     if len(raw_a) < folds * 10:
         return {}
 
-    params = compute_norm_params(raw_a, raw_n)
-    norm_a = zscore_clip(np.array(raw_a, dtype=np.float64), params["mu_a"], params["sigma_a"])
-    norm_n = zscore_clip(np.array(raw_n, dtype=np.float64), params["mu_n"], params["sigma_n"])
-    directional = (norm_a + norm_n) / 2.0
+    # Causal expanding-window z-scores per date (terminal full-sample μ/σ
+    # applied to history is look-ahead — see normalization.compute_norm_params).
+    s_a = pd.Series(np.array(raw_a, dtype=np.float64))
+    s_n = pd.Series(np.array(raw_n, dtype=np.float64))
+    sig_a = np.clip((s_a - s_a.expanding().mean()) / s_a.expanding().std().clip(lower=1e-10).fillna(1.0) / 3.0, -1.0, 1.0)
+    sig_n = np.clip((s_n - s_n.expanding().mean()) / s_n.expanding().std().clip(lower=1e-10).fillna(1.0) / 3.0, -1.0, 1.0)
+    directional = ((sig_a + sig_n) / 2.0).to_numpy()
 
     sig = pd.Series(directional, index=pd.to_datetime(pd.Index(dates))).sort_index()
     sig = sig[~sig.index.duplicated(keep="last")]
@@ -986,9 +1026,12 @@ def directional_convergence_ic(
 
     n = len(frame)
     edges = np.linspace(0, n, folds + 1).astype(int)
+    _stride = max(1, int(min(horizons))) if horizons else 1
     fold_ics: list[float] = []
     for k in range(folds):
-        blk = frame.iloc[edges[k]:edges[k + 1]]
+        # Non-overlapping subsample per fold (stride = min horizon) — the
+        # daily-sampled fold IC's precision is overlap-inflated otherwise.
+        blk = frame.iloc[edges[k]:edges[k + 1]].iloc[::_stride]
         ics = []
         for h in horizons:
             ic = _spearman_ic(blk["sig"].to_numpy(), blk[f"r{h}"].to_numpy())
@@ -1011,7 +1054,7 @@ def directional_convergence_ic(
 def is_profile_acceptable(
     candidate: IntelligenceProfile | None,
     incumbent: IntelligenceProfile | None = None,
-    min_val_ic: float = 0.02,
+    min_val_ic: float = 0.05,
 ) -> tuple[bool, str]:
     """Decide whether a freshly-calibrated profile should be persisted/applied.
 
@@ -1019,11 +1062,12 @@ def is_profile_acceptable(
     demonstrates out-of-sample edge and does not regress against the incumbent:
 
       1. ``val_ic`` must be finite (degenerate fits are rejected).
-      2. ``val_ic`` must exceed ``min_val_ic`` — a *positive margin* (default
-         0.02), not merely > 0. On the small validation frames here an IC has a
-         sampling std of roughly ±0.05–0.10, so a near-zero "edge" is noise; the
-         margin keeps a noise-overfit profile from being locked in as the live
-         signal.
+      2. ``val_ic`` must exceed ``min_val_ic`` — a *positive margin*, not
+         merely > 0. Val ICs are now scored NON-OVERLAPPING (stride = the
+         shortest hold horizon), so the effective sample is ~n/3 of the
+         daily frame and the IC's sampling std is correspondingly larger;
+         the margin was recalibrated 0.02 → 0.05 for that honest scale
+         (0.02 was calibrated against the old overlap-inflated precision).
       3. If an incumbent profile exists with a finite ``val_ic``, the candidate
          must at least match it (within tolerance) — no silent degradation.
 

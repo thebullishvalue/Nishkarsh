@@ -136,8 +136,13 @@ class CrossValidator:
         breadth_score = max(0.0, min(1.0, breadth_agreement))
 
         # ── Dimension 3: Magnitude Alignment ────────────────────────────
+        # The Nirnay oscillator lives on a ±10 scale, so |avg| / 10 maps it
+        # to [0, 1] like |conviction| / 100 does for Aarambh. (A previous
+        # spurious ×10 before the /10 neutralized the normalization —
+        # min(|avg|, 1) — pinning this dimension at its ceiling for any
+        # |avg| ≥ 1 and washing out the magnitude comparison.)
         aarambh_mag = abs(float(aarambh_signal.get("conviction_score", 0)))
-        nirnay_mag = abs(float(nirnay_day_stats.get("avg_unified_osc", 0))) * 10
+        nirnay_mag = abs(float(nirnay_day_stats.get("avg_unified_osc", 0)))
         aarambh_mag_norm = min(aarambh_mag / 100.0, 1.0)
         nirnay_mag_norm = min(nirnay_mag / 10.0, 1.0)
         magnitude_alignment = 1.0 - abs(aarambh_mag_norm - nirnay_mag_norm)
@@ -241,13 +246,16 @@ class CrossValidator:
         else:
             agreement_ratio = (direction_score + breadth_score + magnitude_score + regime_score) / 4.0
 
-        # Lead-lag indicator
-        if aarambh_direction != nirnay_direction and abs(aarambh_direction) > abs(nirnay_direction) * 1.5:
-            lead_lag = "AARAMBH_LEADS"
-        elif aarambh_direction != nirnay_direction and abs(nirnay_direction) * 1.5 > abs(aarambh_direction):
-            lead_lag = "NIRNAY_LEADS"
-        elif aarambh_direction == nirnay_direction:
+        # Lead-lag indicator — compares the actual normalized MAGNITUDES.
+        # (The previous comparison used abs(sign) values — always 0 or 1 —
+        # with a 1.5× margin: CONTRADICTION was unreachable and every
+        # opposite-sign disagreement classified NIRNAY_LEADS.)
+        if aarambh_direction == nirnay_direction:
             lead_lag = "ALIGNED"
+        elif aarambh_mag_norm > nirnay_mag_norm * 1.5:
+            lead_lag = "AARAMBH_LEADS"
+        elif nirnay_mag_norm > aarambh_mag_norm * 1.5:
+            lead_lag = "NIRNAY_LEADS"
         else:
             lead_lag = "CONTRADICTION"
 
