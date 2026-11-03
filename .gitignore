@@ -1,0 +1,33 @@
+# Python bytecode / build artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Numba JIT cache (app.py redirects it to ~/.cache, but guard the tree anyway)
+*.nbi
+*.nbc
+
+# Test / tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Environments & secrets
+.venv/
+venv/
+.env
+.streamlit/secrets.toml
+
+# Run artifacts (headless pipeline reports)
+runs/
+
+# OS / editor noise
+.DS_Store
+__MACOSX/
+*.swp
+.idea/
+.vscode/
