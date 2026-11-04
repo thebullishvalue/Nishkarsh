@@ -273,6 +273,7 @@ MACRO_LAG_NON_IST = True
 # Tickers / columns that ARE synchronous with the NSE close (never lagged).
 IST_SYNCHRONOUS_SUFFIXES = (".NS", ".BO")
 IST_SYNCHRONOUS_COLUMNS = ("IN10Y", "IN02Y", "IN30Y", "INIRYY", "REPO",
+                           "^NSEI", "^NSEBANK", "^INDIAVIX",
                            "AD_RATIO", "COUNT", "REL_AD_RATIO", "REL_BREADTH",
                            "NIFTY50_PE", "NIFTY50_PB", "NIFTY50_DY")
 # Google-Sheet predictor columns quoting a NON-Indian market close for date D
@@ -453,18 +454,24 @@ UI_CHART_HEIGHT_XLARGE = 540
 UI_CHART_HEIGHT_STACKED = 680
 
 # ─── Nifty 50 Default Constituents (fallback list) ──────────────────────────
-
+# Used ONLY when the live niftyindices.com list (and its cached copy) is
+# unavailable; every run that uses it says so (constituent provenance
+# "fallback"). Membership reflects the index as of NIFTY50_FALLBACK_AS_OF
+# (incl. the 2024–25 changes: TRENT/BEL, ETERNAL/JIOFIN, MAXHEALTH/INDIGO,
+# and TMPV after the Tata Motors demerger). Index membership changes twice a
+# year — verify against niftyindices.com and update both constants together.
+NIFTY50_FALLBACK_AS_OF = "2025-10-01"
 NIFTY50_FALLBACK = [
-    "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS",
-    "HINDUNILVR.NS", "SBIN.NS", "BHARTIARTL.NS", "BAJFINANCE.NS", "KOTAKBANK.NS",
-    "LTM.NS", "HCLTECH.NS", "ITC.NS", "AXISBANK.NS", "ASIANPAINT.NS",
-    "MARUTI.NS", "SUNPHARMA.NS", "TITAN.NS", "ULTRACEMCO.NS", "WIPRO.NS",
-    "ADANIENT.NS", "ADANIPORTS.NS", "APOLLOHOSP.NS", "BRITANNIA.NS", "CIPLA.NS",
-    "COALINDIA.NS", "DIVISLAB.NS", "DRREDDY.NS", "EicherMot.NS", "GRASIM.NS",
-    "HDFCLIFE.NS", "HEROMOTOCO.NS", "JSWSTEEL.NS", "LTIM.NS", "M&M.NS",
-    "NESTLEIND.NS", "ONGC.NS", "POWERGRID.NS", "SBILIFE.NS", "SHRIRAMFIN.NS",
-    "TECHM.NS", "TATACONSUM.NS", "TATAMOTORS.NS", "TATASTEEL.NS", "UPL.NS",
-    "BAJAJFINSV.NS", "BPCL.NS", "INDUSINDBK.NS", "NAUKRI.NS", "PIDILITIND.NS",
+    "ADANIENT.NS", "ADANIPORTS.NS", "APOLLOHOSP.NS", "ASIANPAINT.NS", "AXISBANK.NS",
+    "BAJAJ-AUTO.NS", "BAJFINANCE.NS", "BAJAJFINSV.NS", "BEL.NS", "BHARTIARTL.NS",
+    "CIPLA.NS", "COALINDIA.NS", "DRREDDY.NS", "EICHERMOT.NS", "ETERNAL.NS",
+    "GRASIM.NS", "HCLTECH.NS", "HDFCBANK.NS", "HDFCLIFE.NS", "HINDALCO.NS",
+    "HINDUNILVR.NS", "ICICIBANK.NS", "INDIGO.NS", "INFY.NS", "ITC.NS",
+    "JIOFIN.NS", "JSWSTEEL.NS", "KOTAKBANK.NS", "LT.NS", "M&M.NS",
+    "MARUTI.NS", "MAXHEALTH.NS", "NESTLEIND.NS", "NTPC.NS", "ONGC.NS",
+    "POWERGRID.NS", "RELIANCE.NS", "SBILIFE.NS", "SBIN.NS", "SHRIRAMFIN.NS",
+    "SUNPHARMA.NS", "TATACONSUM.NS", "TMPV.NS", "TATASTEEL.NS", "TCS.NS",
+    "TECHM.NS", "TITAN.NS", "TRENT.NS", "ULTRACEMCO.NS", "WIPRO.NS",
 ]
 
 

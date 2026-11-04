@@ -7,7 +7,7 @@ infers ONE format from the first value. On an ISO column ("2016-01-12") that inf
 format becomes ``%Y-%d-%m``: 2 500 rows → 984 kept, 900 silently mis-dated, row order
 lost. Every call site now goes through :func:`parse_dates`, which
 
-1. parses ISO-8601 strings as ISO (never dayfirst),
+1. parses the column as ISO-8601 when most values are ISO strings (never dayfirst),
 2. parses everything else day-first (the sheet's native ``dd/mm/yyyy`` / ``dd-Mon-yyyy``),
 3. FAILS LOUDLY — ``ValueError`` — when more than 1% of the non-blank values do not
    parse, or when the parsed dates are not monotonic in FILE ORDER (after dropping
@@ -38,13 +38,14 @@ _ISO_RE = re.compile(
 _BLANKS = {"", "nan", "nat", "none", "null", "n/a", "na", "-"}
 
 
-def is_iso_like(values: pd.Series) -> bool:
-    """True when ≥ 99% of the non-blank string values look like ISO-8601 dates."""
+def is_iso_like(values: pd.Series, threshold: float = 0.5) -> bool:
+    """True when more than ``threshold`` of the non-blank values look like ISO-8601 dates
+    (the format choice; the NaT budget then decides whether the column is acceptable)."""
     s = values.dropna().astype(str).str.strip()
     s = s[~s.str.lower().isin(_BLANKS)]
     if s.empty:
         return False
-    return bool(s.str.match(_ISO_RE).mean() >= 1.0 - MAX_NAT_FRACTION)
+    return bool(s.str.match(_ISO_RE).mean() > threshold)
 
 
 def _check(parsed: pd.Series, n_values: int, name: str, how: str,
