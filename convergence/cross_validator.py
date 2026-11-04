@@ -1,319 +1,168 @@
 """
-Nishkarsh v1.4.0 — CrossValidator: Cross-referencing Aarambha and Nirnay outputs.
+Nishkarsh — Agreement anatomy (descriptive, NOT used in the conclusion).
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
-CONVERGENCE — Adaptive-weighted composite of 4 dimensions: Direction, Breadth, Magnitude, Regime — with DDM.
+Four descriptive dimensions of how Aarambh and Nirnay line up on a date. They
+describe the agreement; they do not drive the conclusion (that is
+``convergence/conclusion.py``: Aarambh's forecast is the directional head, Nirnay
+can only shrink it after a measured Convergence-Lift test). The 8-parameter
+calibrated weighting of these dimensions was retired in 2.0.0 — its weights were
+not identified by the data (audit A3-03, Edge Ledger L-06).
 
-Computes a convergence score from four adaptive-weighted dimensions:
-direction agreement, breadth confirmation, magnitude alignment, and
-regime consistency.
+Semantics (fixed, stated):
+
+* ONE Nirnay polarity in every dimension — CONTRARIAN: oversold breadth / a
+  bear-regime majority / a negative average oscillator read BULLISH (audit A2-02:
+  the v1 regime dimension read Nirnay trend-following while the direction
+  dimension read it contrarian, so the two disagreed on ~75% of days).
+* Aarambh's sign convention is the engine's: ``ConvictionBounded`` < 0 = bullish.
+* Fixed base weights ``CONV_WEIGHT_*`` — no adaptive shift, no calibrated path.
+* Computed ONLY on dates where Nirnay has warm data (dates absent from the Nirnay
+  daily frame, or with ``n_live == 0``, are skipped — never neutral-filled) and
+  Aarambh has a valid, finite conviction.
+
+Dimensions (each in [0, 1], 1 = full agreement; NaN when an input is missing):
+
+1. ``dim_direction`` — sign(−ConvictionBounded) vs sign(Oversold_Pct − Overbought_Pct):
+   1 same non-zero sign, 0.5 either side flat, 0 opposite.
+2. ``dim_breadth``   — 1 − |Aarambh OversoldBreadth − Nirnay Oversold_Pct| / 100.
+3. ``dim_magnitude`` — 1 − | |ConvictionBounded|/100 − |Avg_Signal|/10 |  (unsigned).
+4. ``dim_regime``    — Aarambh OVERSOLD/OVERBOUGHT regime vs Nirnay bear/bull majority
+   (contrarian: bear-majority = bullish): 1 aligned, 0.8 both neutral
+   (Aarambh NEUTRAL & |bull − bear| < 20pp), 0.2 otherwise.
+
+``agreement_ratio`` = CONV_WEIGHT_*-weighted mean of the finite dimensions.
 """
 
 from __future__ import annotations
-
-from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
 
 from core.config import (
-    CONV_WEIGHT_DIRECTION,
     CONV_WEIGHT_BREADTH,
+    CONV_WEIGHT_DIRECTION,
     CONV_WEIGHT_MAGNITUDE,
     CONV_WEIGHT_REGIME,
-    CONV_ADAPTIVE_SHIFT_MAX,
-    CONV_STRONG_BULLISH,
-    CONV_MODERATE_BULLISH,
-    CONV_WEAK_BULLISH,
-    CONV_WEAK_BEARISH,
-    CONV_MODERATE_BEARISH,
-    CONV_STRONG_BEARISH,
 )
 
+ANATOMY_COLUMNS = ("dim_direction", "dim_breadth", "dim_magnitude", "dim_regime", "agreement_ratio")
+ANATOMY_WEIGHTS = {
+    "dim_direction": CONV_WEIGHT_DIRECTION,
+    "dim_breadth": CONV_WEIGHT_BREADTH,
+    "dim_magnitude": CONV_WEIGHT_MAGNITUDE,
+    "dim_regime": CONV_WEIGHT_REGIME,
+}
+# Regime dimension: "both neutral" band on the Nirnay bull − bear spread (pp), and
+# the descriptive scores (inherited v1 scale, kept so the panel reads the same).
+REGIME_NEUTRAL_SPREAD_PP = 20.0
+REGIME_SCORE_ALIGNED, REGIME_SCORE_BOTH_NEUTRAL, REGIME_SCORE_OTHER = 1.0, 0.8, 0.2
 
-@dataclass
-class ConvergenceSignal:
-    """Cross-system convergence signal for a single date.
 
-    Attributes
+def _num(df: pd.DataFrame, col: str) -> pd.Series:
+    if col not in df.columns:
+        return pd.Series(np.nan, index=df.index, dtype="float64")
+    return pd.to_numeric(df[col], errors="coerce").astype("float64")
+
+
+def _normalize_index(idx) -> pd.DatetimeIndex:
+    return pd.DatetimeIndex(pd.to_datetime(idx, errors="coerce")).normalize()
+
+
+def compute_agreement_anatomy(aarambh_ts: pd.DataFrame, nirnay_daily: pd.DataFrame) -> pd.DataFrame:
+    """Per-date descriptive agreement anatomy (see module docstring).
+
+    Parameters
     ----------
-    convergence_score : float
-        Composite score in [-100, +100]. Negative = bullish convergence.
-    convergence_zone : str
-        Categorical zone label.
-    agreement_ratio : float
-        Fraction of dimensions that agree [0, 1].
-    lead_lag_indicator : str
-        Which system is leading, or ``ALIGNED`` / ``CONTRADICTION``.
-    confidence : float
-        Composite confidence [0, 1].
-    dimension_scores : dict[str, float]
-        Per-dimension raw scores [0, 1].
-    dimension_weights : dict[str, float]
-        Adaptive weights actually used for this observation.
-    date : str
-        Date string.
-    consensus_direction : float
-        The agreed market direction of the two engines for this date:
-        +1 = both bullish, -1 = both bearish, 0 = they disagree. This is what
-        orients ``convergence_score`` (the four dims are AGREEMENT scores, not
-        bull/bear), so the score is a genuine directional conviction rather than
-        a sign-ambiguous agreement magnitude.
+    aarambh_ts : DataFrame (DatetimeIndex)
+        ``engine.ts_data``: uses ``Valid``, ``ConvictionBounded`` (falls back to
+        ``ConvictionScore``), ``OversoldBreadth``, ``Regime``.
+    nirnay_daily : DataFrame (date index)
+        C-NIR daily aggregate: ``Oversold_Pct``, ``Overbought_Pct``, ``Avg_Signal``,
+        ``Regime_Bull_Pct``, ``Regime_Bear_Pct``, ``n_live`` (optional).
+
+    Returns
+    -------
+    DataFrame indexed by date (DatetimeIndex, Aarambh's timestamps) with columns
+    ``dim_direction, dim_breadth, dim_magnitude, dim_regime, agreement_ratio``;
+    only dates with warm Nirnay data and a finite Aarambh conviction. Empty frame
+    with those columns when there is no such date.
     """
+    empty = pd.DataFrame(columns=list(ANATOMY_COLUMNS), index=pd.DatetimeIndex([], name="Date"), dtype="float64")
+    if aarambh_ts is None or len(aarambh_ts) == 0 or nirnay_daily is None or len(nirnay_daily) == 0:
+        return empty
 
-    convergence_score: float
-    convergence_zone: str
-    agreement_ratio: float
-    lead_lag_indicator: str
-    confidence: float
-    dimension_scores: dict[str, float]
-    dimension_weights: dict[str, float]
-    date: str
-    consensus_direction: float = 0.0
+    a = aarambh_ts[~aarambh_ts.index.duplicated(keep="last")]
+    conv_col = "ConvictionBounded" if "ConvictionBounded" in a.columns else "ConvictionScore"
+    conv = _num(a, conv_col)
+    keep = conv.notna() & np.isfinite(conv)
+    if "Valid" in a.columns:
+        keep &= a["Valid"].fillna(False).astype(bool)
+    a = a[keep]
+    conv = conv[keep]
+    if len(a) == 0:
+        return empty
 
+    n = nirnay_daily.copy()
+    n.index = _normalize_index(n.index)
+    n = n[~n.index.isna()]
+    n = n[~n.index.duplicated(keep="last")]
+    if "n_live" in n.columns:
+        n = n[pd.to_numeric(n["n_live"], errors="coerce").fillna(0) > 0]
+    a_key = _normalize_index(a.index)
+    present = a_key.isin(n.index)
+    if not present.any():
+        return empty
+    a = a[present]
+    conv = conv[present]
+    nn = n.reindex(a_key[present])
+    nn.index = a.index
 
-class CrossValidator:
-    """Cross-references Aarambh and Nirnay outputs per trading date.
+    os_n = _num(nn, "Oversold_Pct")
+    ob_n = _num(nn, "Overbought_Pct")
+    avg_n = _num(nn, "Avg_Signal")
+    bull_n = _num(nn, "Regime_Bull_Pct")
+    bear_n = _num(nn, "Regime_Bear_Pct")
+    os_a = _num(a, "OversoldBreadth")
 
-    Computes an adaptive-weighted composite of four convergence dimensions:
+    # 1. Direction (Aarambh: −conviction = bullish; Nirnay contrarian: OS > OB = bullish)
+    dir_a = np.sign(-conv)
+    dir_n = np.sign(os_n - ob_n)
+    d_dir = pd.Series(np.where(dir_a * dir_n > 0, 1.0, np.where(dir_a * dir_n < 0, 0.0, 0.5)), index=a.index)
+    d_dir[dir_n.isna()] = np.nan
 
-    1. **Direction** (30% base): Both systems pointing the same way.
-    2. **Breadth** (25% base): Oversold breadth alignment.
-    3. **Magnitude** (25% base): Signal strengths are comparable.
-    4. **Regime** (20% base): OU regime aligns with HMM regime.
+    # 2. Breadth (both are "% oversold" readings — same polarity)
+    d_breadth = (1.0 - (os_a - os_n).abs() / 100.0).clip(0.0, 1.0)
 
-    Dimensions with higher clarity (stronger signals) receive up to
-    ±10% additional weight at the expense of weaker dimensions.
-    """
+    # 3. Magnitude (unsigned strengths on their own scales)
+    mag_a = (conv.abs() / 100.0).clip(upper=1.0)
+    mag_n = (avg_n.abs() / 10.0).clip(upper=1.0)
+    d_mag = (1.0 - (mag_a - mag_n).abs()).clip(0.0, 1.0)
 
-    def __init__(self, active_weights: dict[str, float] | None = None) -> None:
-        """Args:
-            active_weights: Optional override for the base dimension weights.
-                Must be a dict with keys ``direction``, ``breadth``,
-                ``magnitude``, ``regime``. Used by Intelligence Mode to
-                inject calibrated weights from a persisted profile. When
-                ``None``, falls back to the static CONV_WEIGHT_* defaults
-                with the heuristic ±10% adaptive shift.
-        """
-        self.history: list[ConvergenceSignal] = []
-        self.active_weights = active_weights
+    # 4. Regime (contrarian Nirnay: a BEAR-regime majority reads bullish)
+    if "Regime" in a.columns:
+        reg = a["Regime"].astype("string").fillna("N/A").str.upper()
+        a_bull = reg.str.contains("OVERSOLD", regex=False).fillna(False).to_numpy(bool)
+        a_bear = reg.str.contains("OVERBOUGHT", regex=False).fillna(False).to_numpy(bool)
+        a_neut = (reg == "NEUTRAL").fillna(False).to_numpy(bool)
+        a_known = a_bull | a_bear | a_neut
+    else:
+        a_bull = a_bear = a_neut = a_known = np.zeros(len(a), dtype=bool)
+    n_bullish = (bear_n > bull_n).to_numpy()
+    n_bearish = (bull_n > bear_n).to_numpy()
+    n_flat = ((bull_n - bear_n).abs() < REGIME_NEUTRAL_SPREAD_PP).to_numpy()
+    d_reg = np.full(len(a), REGIME_SCORE_OTHER)
+    d_reg[(a_bull & n_bullish) | (a_bear & n_bearish)] = REGIME_SCORE_ALIGNED
+    d_reg[a_neut & n_flat & ~((a_bull & n_bullish) | (a_bear & n_bearish))] = REGIME_SCORE_BOTH_NEUTRAL
+    d_reg = pd.Series(d_reg, index=a.index)
+    d_reg[~a_known | bull_n.isna().to_numpy() | bear_n.isna().to_numpy()] = np.nan
 
-    def compute_convergence(
-        self,
-        aarambh_signal: dict[str, object],
-        nirnay_day_stats: dict[str, object],
-        date: str,
-    ) -> ConvergenceSignal:
-        """Compute convergence score for a single date.
-
-        Parameters
-        ----------
-        aarambh_signal : dict
-            Output from ``FairValueEngine.get_current_signal()``.
-        nirnay_day_stats : dict
-            Aggregated Nirnay stats for the date.
-        date : str
-            Date string for this observation.
-        """
-        # ── Dimension 1: Direction Agreement ────────────────────────────
-        # Aarambh: conviction < 0 = bullish (oversold), > 0 = bearish
-        # Nirnay: oversold_pct > overbought_pct = bullish bias
-        aarambh_direction = -np.sign(float(aarambh_signal.get("conviction_score", 0)))
-        nirnay_os = float(nirnay_day_stats.get("oversold_pct", 50))
-        nirnay_ob = float(nirnay_day_stats.get("overbought_pct", 50))
-        nirnay_direction = np.sign(nirnay_os - nirnay_ob)
-
-        if aarambh_direction == nirnay_direction and aarambh_direction != 0:
-            direction_score = 1.0
-        elif aarambh_direction == 0 or nirnay_direction == 0:
-            direction_score = 0.5
-        else:
-            direction_score = 0.0
-
-        # ── Dimension 2: Breadth Confirmation ───────────────────────────
-        aarambh_os_breadth = float(aarambh_signal.get("oversold_breadth", 50))
-        breadth_agreement = 1.0 - abs(aarambh_os_breadth - nirnay_os) / 100.0
-        breadth_score = max(0.0, min(1.0, breadth_agreement))
-
-        # ── Dimension 3: Magnitude Alignment ────────────────────────────
-        # The Nirnay oscillator lives on a ±10 scale, so |avg| / 10 maps it
-        # to [0, 1] like |conviction| / 100 does for Aarambh. (A previous
-        # spurious ×10 before the /10 neutralized the normalization —
-        # min(|avg|, 1) — pinning this dimension at its ceiling for any
-        # |avg| ≥ 1 and washing out the magnitude comparison.)
-        aarambh_mag = abs(float(aarambh_signal.get("conviction_score", 0)))
-        nirnay_mag = abs(float(nirnay_day_stats.get("avg_unified_osc", 0)))
-        aarambh_mag_norm = min(aarambh_mag / 100.0, 1.0)
-        nirnay_mag_norm = min(nirnay_mag / 10.0, 1.0)
-        magnitude_alignment = 1.0 - abs(aarambh_mag_norm - nirnay_mag_norm)
-        magnitude_score = max(0.0, min(1.0, magnitude_alignment))
-
-        # ── Dimension 4: Regime Consistency ─────────────────────────────
-        aarambh_regime = str(aarambh_signal.get("regime", "NEUTRAL"))
-        nirnay_bull_pct = float(nirnay_day_stats.get("regime_bull", 0))
-        nirnay_bear_pct = float(nirnay_day_stats.get("regime_bear", 0))
-
-        aarambh_bullish = "OVERSOLD" in aarambh_regime
-        aarambh_bearish = "OVERBOUGHT" in aarambh_regime
-        nirnay_bullish = nirnay_bull_pct > nirnay_bear_pct
-        nirnay_bearish = nirnay_bear_pct > nirnay_bull_pct
-
-        if aarambh_bullish and nirnay_bullish:
-            regime_score = 1.0
-        elif aarambh_bearish and nirnay_bearish:
-            regime_score = 1.0
-        elif aarambh_regime == "NEUTRAL" and abs(nirnay_bull_pct - nirnay_bear_pct) < 20:
-            regime_score = 0.8
-        else:
-            regime_score = 0.2
-
-        # ── Weighting ───────────────────────────────────────────────────
-        # Two paths:
-        #   (a) Intelligence Mode active → use calibrated weights from the
-        #       persisted profile verbatim. Skip the adaptive shift heuristic
-        #       (the calibration already learned the optimum from data).
-        #   (b) Factory defaults → apply the ±10% adaptive shift heuristic
-        #       on top of the CONV_WEIGHT_* base allocation.
-        if self.active_weights is not None:
-            # Calibrated path: trust the profile.
-            base_weights = {
-                "direction": float(self.active_weights.get("w_direction", CONV_WEIGHT_DIRECTION)),
-                "breadth":   float(self.active_weights.get("w_breadth",   CONV_WEIGHT_BREADTH)),
-                "magnitude": float(self.active_weights.get("w_magnitude", CONV_WEIGHT_MAGNITUDE)),
-                "regime":    float(self.active_weights.get("w_regime",    CONV_WEIGHT_REGIME)),
-            }
-            total_w = sum(base_weights.values()) or 1.0
-            adaptive_weights = {k: v / total_w for k, v in base_weights.items()}
-        else:
-            # Default path: heuristic adaptive shift.
-            base_weights = {
-                "direction": CONV_WEIGHT_DIRECTION,
-                "breadth": CONV_WEIGHT_BREADTH,
-                "magnitude": CONV_WEIGHT_MAGNITUDE,
-                "regime": CONV_WEIGHT_REGIME,
-            }
-            clarities = {
-                "direction": abs(float(aarambh_direction)) * 0.5 + abs(float(nirnay_direction)) * 0.5 + 0.001,
-                "breadth": abs(aarambh_os_breadth - 50) / 50.0 + abs(nirnay_os - 50) / 50.0 + 0.001,
-                "magnitude": (aarambh_mag_norm + nirnay_mag_norm) / 2.0 + 0.001,
-                "regime": abs(nirnay_bull_pct - nirnay_bear_pct) / 100.0 + 0.001,
-            }
-            avg_clarity = np.mean(list(clarities.values()))
-            adaptive_weights = {}
-            for key in base_weights:
-                clarity_ratio = clarities[key] / avg_clarity
-                shift = CONV_ADAPTIVE_SHIFT_MAX * (clarity_ratio - 1.0)
-                adaptive_weights[key] = float(np.clip(base_weights[key] + shift, 0.10, 0.40))
-            total_w = sum(adaptive_weights.values())
-            adaptive_weights = {k: v / total_w for k, v in adaptive_weights.items()}
-
-        # Composite AGREEMENT strength in [-1, +1] (the four dims are agreement
-        # scores, not bull/bear, so this measures HOW STRONGLY the two engines
-        # concur — not in which direction).
-        composite = (
-            adaptive_weights["direction"] * (direction_score * 2 - 1)
-            + adaptive_weights["breadth"] * (2 * breadth_score - 1)
-            + adaptive_weights["magnitude"] * (2 * magnitude_score - 1)
-            + adaptive_weights["regime"] * (2 * regime_score - 1)
-        )
-        # ── Orient the score directionally ──────────────────────────────
-        # On its own `composite` has no direction — a high value could be
-        # agreement on a top or a bottom (the documented agreement-vs-direction
-        # flaw, which made the hero card and DDM contradict in sign). Multiply
-        # by the consensus direction so the score is a genuine directional
-        # conviction (zone convention: negative = bullish). When the two engines
-        # disagree, the directional conviction collapses to ~0 (DIVERGENT).
-        if aarambh_direction == nirnay_direction and aarambh_direction != 0:
-            consensus_direction = float(aarambh_direction)  # +1 bullish, -1 bearish
-        else:
-            consensus_direction = 0.0
-        agreement_strength = (composite + 1.0) / 2.0  # [-1,1] agreement → [0,1]
-        convergence_score = -consensus_direction * agreement_strength * 100.0
-
-        # Agreement ratio
-        # When Intelligence Mode injected calibrated weights, the agreement
-        # metric uses those weights too — so the user-visible AGREEMENT
-        # percentage stays semantically consistent with the calibrated
-        # convergence score. When no calibration is active, fall back to
-        # the plain 4-way mean (the historical definition).
-        if self.active_weights is not None:
-            agreement_ratio = (
-                adaptive_weights["direction"] * direction_score
-                + adaptive_weights["breadth"]   * breadth_score
-                + adaptive_weights["magnitude"] * magnitude_score
-                + adaptive_weights["regime"]    * regime_score
-            )
-        else:
-            agreement_ratio = (direction_score + breadth_score + magnitude_score + regime_score) / 4.0
-
-        # Lead-lag indicator — compares the actual normalized MAGNITUDES.
-        # (The previous comparison used abs(sign) values — always 0 or 1 —
-        # with a 1.5× margin: CONTRADICTION was unreachable and every
-        # opposite-sign disagreement classified NIRNAY_LEADS.)
-        if aarambh_direction == nirnay_direction:
-            lead_lag = "ALIGNED"
-        elif aarambh_mag_norm > nirnay_mag_norm * 1.5:
-            lead_lag = "AARAMBH_LEADS"
-        elif nirnay_mag_norm > aarambh_mag_norm * 1.5:
-            lead_lag = "NIRNAY_LEADS"
-        else:
-            lead_lag = "CONTRADICTION"
-
-        # Confidence
-        confidence = agreement_ratio * min(1.0, float(nirnay_day_stats.get("num_constituents", 50)) / 50.0)
-
-        # Zone classification
-        if convergence_score <= CONV_STRONG_BULLISH:
-            zone = "STRONG_CONVERGENCE_BULLISH"
-        elif convergence_score <= CONV_MODERATE_BULLISH:
-            zone = "MODERATE_BULLISH"
-        elif convergence_score <= CONV_WEAK_BULLISH:
-            zone = "WEAK_BULLISH"
-        elif convergence_score <= CONV_WEAK_BEARISH:
-            zone = "DIVERGENT"
-        elif convergence_score <= CONV_MODERATE_BEARISH:
-            zone = "WEAK_BEARISH"
-        elif convergence_score <= CONV_STRONG_BEARISH:
-            zone = "MODERATE_BEARISH"
-        else:
-            zone = "STRONG_CONVERGENCE_BEARISH"
-
-        result = ConvergenceSignal(
-            convergence_score=round(float(convergence_score), 2),
-            convergence_zone=zone,
-            agreement_ratio=round(float(agreement_ratio), 3),
-            lead_lag_indicator=lead_lag,
-            confidence=round(float(confidence), 3),
-            dimension_scores={
-                "direction": round(float(direction_score), 3),
-                "breadth": round(float(breadth_score), 3),
-                "magnitude": round(float(magnitude_score), 3),
-                "regime": round(float(regime_score), 3),
-            },
-            dimension_weights={k: round(v, 3) for k, v in adaptive_weights.items()},
-            date=date,
-            consensus_direction=float(consensus_direction),
-        )
-        self.history.append(result)
-        return result
-
-    def get_convergence_series(self) -> pd.DataFrame:
-        """Return convergence history as a DataFrame indexed by date."""
-        if not self.history:
-            return pd.DataFrame()
-        rows: list[dict[str, object]] = []
-        for h in self.history:
-            rows.append(
-                {
-                    "date": h.date,
-                    "convergence_score": h.convergence_score,
-                    "convergence_zone": h.convergence_zone,
-                    "agreement_ratio": h.agreement_ratio,
-                    "lead_lag_indicator": h.lead_lag_indicator,
-                    "confidence": h.confidence,
-                    "consensus_direction": h.consensus_direction,
-                    **{f"dim_{k}": v for k, v in h.dimension_scores.items()},
-                    **{f"w_{k}": v for k, v in h.dimension_weights.items()},
-                }
-            )
-        return pd.DataFrame(rows).set_index("date")
+    out = pd.DataFrame({"dim_direction": d_dir, "dim_breadth": d_breadth,
+                        "dim_magnitude": d_mag, "dim_regime": d_reg}, index=a.index).astype("float64")
+    w = pd.Series(ANATOMY_WEIGHTS)
+    dims = out[list(ANATOMY_WEIGHTS)]
+    wmat = dims.notna().astype("float64") * w
+    wsum = wmat.sum(axis=1)
+    out["agreement_ratio"] = (dims.fillna(0.0) * w).sum(axis=1) / wsum.where(wsum > 0)
+    out.index.name = "Date"
+    return out[list(ANATOMY_COLUMNS)]

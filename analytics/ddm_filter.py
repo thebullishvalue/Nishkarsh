@@ -1,19 +1,20 @@
 """
-Nishkarsh v1.4.0 — Drift-Diffusion Model (DDM) filter with mean-reverting variance.
+Nishkarsh — Leaky-integrator ("drift-diffusion") filter with a heuristic band.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
-ANALYTICS — Bounded signal filtering with a heuristic uncertainty band via a
-stochastic DDM.
+ANALYTICS — Causal smoothing of a bounded evidence series. Pure function.
 
-NOTE on "confidence bands": ``±1.96·sqrt(variances)`` (computed by callers,
-e.g. convergence/conviction_model.py and engines/aarambh.py) LOOKS like a 95%
-Gaussian confidence interval, but ``variances`` here is not a state-space
-posterior variance estimated from data — the level is a designed, bounded
-heuristic that mean-reverts toward ``long_run_var`` (a fixed constant) with a
-drift-dependent expansion term. Practically the band is still a useful WIDTH
-signal (narrow = the filter's recent evidence has been consistent; wide = it
-has been noisy/conflicting) — just not a calibrated coverage interval, so it
-should be read and labeled as an uncertainty band, not a confidence interval.
+What it is (exactly):
+  * state:   ``s_t = (1−λ)·s_{t−1} + κ·e_t``  (λ = ``leak_rate``, κ = ``drift_scale``)
+    — an exponential smoother with steady-state GAIN κ/λ (1.875 at the defaults
+    0.15/0.08, i.e. a constant input of 10 settles at 18.75, not 10) and mean lag
+    (1−λ)/λ bars (11.5 at λ=0.08).
+  * "variance": ``v_t = (1−λ)·v_{t−1} + λ·σ²_LR + min(0.5·κ·|e_t|, 0.5·σ²_LR)``.
+    This depends only on the MAGNITUDE of recent evidence, not on its
+    consistency (a constant +40 and an alternating ±40 give the same width), and
+    it is not a posterior variance estimated from data. ``±1.96·sqrt(v)`` is
+    therefore a heuristic band, NOT a calibrated confidence interval, and must
+    be labelled as such wherever it is shown.
 """
 
 from __future__ import annotations
@@ -27,73 +28,64 @@ def drift_diffusion_filter(
     drift_scale: float = 0.15,
     long_run_var: float = 100.0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """1D Drift-Diffusion filter with mean-reverting variance.
+    """Causal leaky integrator with a magnitude-driven heuristic band.
 
-    State equation: ``state_t = (1-λ)×state_{t-1} + λ×drift_t``
-
-    Variance equation: ``var_t = (1-λ)×var_{t-1} + λ×σ²_LR + 0.5×|drift_t|``
-
-    The variance mean-reverts toward ``long_run_var`` with a drift-dependent
-    expansion term capped at ``long_run_var × 0.5`` to prevent ballooning
-    during prolonged regimes.
+    The filter starts at the FIRST finite observation (state seeded to that
+    observation, variance to ``long_run_var``). Rows before it are warm-up and
+    are returned as NaN — never a fabricated neutral 0.0. A non-finite
+    observation after the start contributes zero evidence (the state decays by
+    ``1−λ``); callers that must not display a reading on such rows mask them.
 
     Parameters
     ----------
     observations : np.ndarray
-        Input time-series.
+        Evidence series (NaN allowed).
     leak_rate : float
-        Memory decay rate (``λ``). Higher = faster forgetting.
+        λ — memory decay per step.
     drift_scale : float
-        Scaling factor for new evidence contribution.
+        κ — weight of each new observation.
     long_run_var : float
-        Long-run variance toward which the filter mean-reverts.
+        σ²_LR — level the heuristic variance reverts to.
 
     Returns
     -------
     filtered : np.ndarray
-        Filtered state values.
+        Filtered state (NaN before the first finite observation).
     gains : np.ndarray
-        Dummy array of zeros (gains are implicit in the DDM formulation).
+        Always zeros — the filter has no data-dependent gain; retained only for
+        call-site compatibility of the 3-tuple.
     variances : np.ndarray
-        Estimate variances at each step.
+        Heuristic variance (NaN before the first finite observation).
     """
     obs = np.asarray(observations, dtype=np.float64)
     n = len(obs)
+    filtered = np.full(n, np.nan)
+    variances = np.full(n, np.nan)
+    gains = np.zeros(n)
     if n == 0:
-        return np.array([]), np.array([]), np.array([])
+        return filtered, gains, variances
 
-    # Seed from the FIRST observation only. The previous seed — the mean of
-    # the first 20 observations — made filtered[0] depend on obs[1..19]
-    # (a look-ahead at the series head, verified: perturbing obs[5] changed
-    # filtered[0]), and a single NaN among the first 20 observations turned
-    # the seed NaN and poisoned the ENTIRE filtered series via
-    # state·(1−leak). A non-finite obs[0] (e.g. the engine's warm-up region)
-    # seeds a NEUTRAL 0.0 belief instead, matching the per-step
-    # `evidence = 0.0` fallback below.
-    state = float(obs[0]) if np.isfinite(obs[0]) else 0.0
-    var_est = long_run_var
+    finite = np.isfinite(obs)
+    if not finite.any():
+        return filtered, gains, variances
 
-    filtered = np.zeros(n)
-    variances = np.zeros(n)
-    filtered[0] = state
-    variances[0] = var_est
+    i0 = int(np.argmax(finite))
+    state = float(obs[i0])
+    var_est = float(long_run_var)
+    filtered[i0] = state
+    variances[i0] = var_est
 
-    for i in range(1, n):
-        evidence = obs[i] if np.isfinite(obs[i]) else 0.0
+    for i in range(i0 + 1, n):
+        evidence = obs[i] if finite[i] else 0.0
         drift = evidence * drift_scale
-
-        # Leaky integration with mean-reversion
         state = state * (1 - leak_rate) + drift
-
-        # Mean-reverting variance with capped drift-dependent expansion
         var_est = (
             var_est * (1 - leak_rate)
             + leak_rate * long_run_var
             + min(abs(drift) * 0.5, long_run_var * 0.5)
         )
-        var_est = max(var_est, 1e-6)  # Prevent collapse
-
+        var_est = max(var_est, 1e-6)
         filtered[i] = state
         variances[i] = var_est
 
-    return filtered, np.zeros(n), variances
+    return filtered, gains, variances

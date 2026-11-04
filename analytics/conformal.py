@@ -1,14 +1,16 @@
 """
-Nishkarsh v1.4.0 — Conformal prediction z-scores with fat-tail adjustment.
+Nishkarsh — Rolling conformal (empirical-quantile) z-scores.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
-ANALYTICS — Conformal prediction bounds for walk-forward regression residuals.
+ANALYTICS — Causal, quantile-based standardization of a residual / forecast series.
+Pure function, no IO, no state.
 """
 
 from __future__ import annotations
 
 import numpy as np
 from numba import njit
+from scipy.stats import norm
 
 
 @njit(cache=True)
@@ -27,7 +29,7 @@ def _percentile_linear(sorted_v: np.ndarray, q: float) -> float:
 
 
 @njit(cache=True)
-def _conformal_njit(series, window, min_periods, alpha):
+def _conformal_njit(series, window, min_periods, alpha, width_in_sigmas):
     n = series.shape[0]
     z_scores = np.full(n, np.nan)
     lower_bounds = np.full(n, np.nan)
@@ -49,9 +51,11 @@ def _conformal_njit(series, window, min_periods, alpha):
         ql = _percentile_linear(sv, q_lo)
         qu = _percentile_linear(sv, q_hi)
         qm = _percentile_linear(sv, 0.5)
-        iqr = qu - ql
-        if iqr > 1e-10:
-            z_scores[i] = (series[i] - qm) / (iqr / 1.35)
+        width = qu - ql
+        if width > 1e-10:
+            # Robust sigma: the central (1-alpha) interval of a normal spans
+            # 2·Φ⁻¹(1-alpha/2) sigmas (3.92σ at alpha=0.05).
+            z_scores[i] = (series[i] - qm) / (width / width_in_sigmas)
         lower_bounds[i] = ql
         upper_bounds[i] = qu
     return z_scores, lower_bounds, upper_bounds
@@ -63,37 +67,40 @@ def compute_conformal_zscores(
     min_periods: int = 5,
     alpha: float = 0.05,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Conformal prediction-based z-scores with fat-tail adjustment.
+    """Causal rolling z-score standardized by empirical quantiles.
 
-    Uses empirical quantiles instead of mean/std for robustness
-    to fat-tailed distributions.
+    ``z_t = (x_t − median(W_t)) / σ̂_t`` where ``W_t`` is the finite values of
+    ``series[t−window : t]`` (the CURRENT point is excluded — no look-ahead) and
+    ``σ̂_t = (q_{1−α/2}(W_t) − q_{α/2}(W_t)) / (2·Φ⁻¹(1−α/2))`` — the width of the
+    empirical central ``1−α`` interval expressed in normal-equivalent sigmas
+    (``/3.92`` at ``α=0.05``). On Gaussian data ``z`` is therefore on the ordinary
+    σ scale (std ≈ 1, ``P(|z|>1) ≈ 0.32``) once the window is long enough for the
+    tail quantiles to be estimated; short windows (≲20) under-estimate the tail
+    width and give over-dispersed ``z``. (Before 2.0.0 the width was divided by
+    1.35 — the IQR constant applied to a 95% width — which shrank ``z`` 2.7–2.9×.)
 
     Parameters
     ----------
     series : np.ndarray
-        Input time-series.
+        Input time-series (NaN allowed; skipped by the window statistics).
     window : int
-        Rolling window size for conformal intervals.
+        Rolling window size (prior rows).
     min_periods : int
-        Minimum valid observations required within the window.
+        Minimum finite observations required within the window.
     alpha : float
-        Significance level for conformal intervals (default 0.05 → 95%).
+        Tail mass of the central interval used for the scale (default 0.05).
 
     Returns
     -------
     z_scores : np.ndarray
-        Quantile-normalized z-scores.
-    lower_bounds : np.ndarray
-        Lower conformal interval bound at level ``1 - alpha``.
-    upper_bounds : np.ndarray
-        Upper conformal interval bound at level ``1 - alpha``.
+        Quantile-standardized z-scores (NaN where not computable).
+    lower_bounds, upper_bounds : np.ndarray
+        Empirical ``α/2`` and ``1−α/2`` quantiles of the prior window
+        (descriptive; no coverage guarantee is claimed).
     """
     n = len(series)
     if n <= window:
         return np.full(n, np.nan), np.full(n, np.nan), np.full(n, np.nan)
-    # Numba kernel: faithful port of the rolling-quantile loop. Excludes the
-    # current point (no look-ahead) and replicates numpy's nanpercentile /
-    # nanmedian (linear interpolation) exactly. ~10× faster than the Python
-    # loop over np.nanpercentile (which sorts each window 3×).
     arr = np.ascontiguousarray(series, dtype=np.float64)
-    return _conformal_njit(arr, int(window), int(min_periods), float(alpha))
+    width_in_sigmas = 2.0 * float(norm.ppf(1.0 - float(alpha) / 2.0))
+    return _conformal_njit(arr, int(window), int(min_periods), float(alpha), width_in_sigmas)

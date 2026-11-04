@@ -1,52 +1,19 @@
 """
-Nishkarsh v1.4.0 — Math utilities: pure mathematical functions.
+Nishkarsh — Math utilities: pure, stateless functions.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
-ANALYTICS — Stateless, side-effect free functions operating on NumPy arrays and pandas structures.
+ANALYTICS — Side-effect free functions on NumPy arrays and pandas structures.
+This module is the SINGLE source of the causal oscillator helpers used by the
+Nirnay engine (``sigmoid``, ``zscore_clipped``, ``calculate_atr``,
+``causal_gram_schmidt_orthogonalize``) and of the classification / significance
+helpers used by the Aarambh engine.
 """
 
 from __future__ import annotations
 
-from typing import Literal
-
 import numpy as np
 import pandas as pd
 from scipy import stats
-
-# ─── Array operations ────────────────────────────────────────────────────────
-
-
-def _safe_array_operation(
-    arr: np.ndarray,
-    operation: Literal["mean", "std", "min", "max", "sum"],
-    default: float = 0.0,
-) -> float:
-    """Compute common array operations with NaN/Inf handling.
-
-    Parameters
-    ----------
-    arr : np.ndarray
-        Input array.
-    operation : str
-        One of ``mean``, ``std``, ``min``, ``max``, ``sum``.
-    default : float
-        Value returned when no valid data exists.
-    """
-    arr = np.asarray(arr)
-    valid = np.isfinite(arr)
-    if not np.any(valid):
-        return default
-    clean = arr[valid]
-    ops: dict[str, callable] = {
-        "mean": lambda c: float(np.mean(c)),
-        "std": lambda c: float(np.std(c)) if len(c) > 1 else default,
-        "min": lambda c: float(np.min(c)),
-        "max": lambda c: float(np.max(c)),
-        "sum": lambda c: float(np.sum(c)),
-    }
-    fn = ops.get(operation)
-    return fn(clean) if fn else default
-
 
 # ─── Transformations ─────────────────────────────────────────────────────────
 
@@ -67,51 +34,29 @@ def sigmoid(x: np.ndarray | float, scale: float = 1.0) -> np.ndarray | float:
 
 
 def zscore_clipped(series: pd.Series, window: int, clip: float = 3.0) -> pd.Series:
-    """Rolling z-score with outlier clipping.
+    """Causal rolling z-score with outlier clipping.
+
+    The mean / std at row ``t`` are computed over the ``window`` rows BEFORE
+    ``t`` (``rolling(...).shift(1)``), so today's value never enters its own
+    normalisation and an outlier cannot shrink its own z. The series is
+    forward-filled first (then a leading gap becomes 0.0). No backfill: row 0
+    has no prior statistic and stays neutral (0.0), as does any row whose
+    prior-window std is 0 or undefined.
 
     Parameters
     ----------
     series : pd.Series
         Input time-series.
     window : int
-        Rolling window size.
+        Rolling window size (``min_periods=1`` on the prior window).
     clip : float
         Maximum absolute z-score before clipping.
     """
-    roll_mean = series.rolling(window).mean()
-    roll_std = series.rolling(window).std()
-    z = (series - roll_mean) / roll_std.replace(0, np.nan)
+    series_filled = series.ffill().fillna(0)
+    roll_mean = series_filled.rolling(window=window, min_periods=1).mean().shift(1)
+    roll_std = series_filled.rolling(window=window, min_periods=1).std().shift(1)
+    z = (series_filled - roll_mean) / roll_std.replace(0, np.nan)
     return z.clip(-clip, clip).fillna(0)
-
-
-def percentile_rank(value: float, history: np.ndarray) -> float:
-    """Percentile rank of a value within a historical distribution.
-
-    Parameters
-    ----------
-    value : float
-        The value to rank.
-    history : np.ndarray
-        Historical observations.
-    """
-    if len(history) == 0:
-        return 0.5
-    return float(np.sum(history <= value) / len(history))
-
-
-def adaptive_threshold(history: np.ndarray, percentile: float) -> float:
-    """Value at the given percentile of historical observations.
-
-    Parameters
-    ----------
-    history : np.ndarray
-        Historical observations.
-    percentile : float
-        Percentile (0-100) to compute.
-    """
-    if len(history) == 0:
-        return 0.0
-    return float(np.percentile(history, percentile))
 
 
 def causal_gram_schmidt_orthogonalize(matrix: np.ndarray) -> np.ndarray:
@@ -172,27 +117,10 @@ def causal_gram_schmidt_orthogonalize(matrix: np.ndarray) -> np.ndarray:
     return U
 
 
-def gaussian_pdf(x: float, mean: float, std: float) -> float:
-    """Gaussian probability density function.
-
-    Parameters
-    ----------
-    x : float
-        Point to evaluate.
-    mean : float
-        Distribution mean.
-    std : float
-        Distribution standard deviation.
-    """
-    if std < 1e-8:
-        return 1.0 if abs(x - mean) < 1e-8 else 0.0
-    return float(np.exp(-0.5 * ((x - mean) / std) ** 2) / (std * np.sqrt(2 * np.pi)))
-
-
 def calculate_atr(df: pd.DataFrame, length: int = 14) -> pd.Series:
-    """Average True Range — exponential moving average variant.
+    """Average True Range — Wilder/EMA variant (``alpha = 1/length``).
 
-    Matches the original Nirnay implementation.
+    Causal: the true range at ``t`` uses only bar ``t`` and the prior close.
 
     Parameters
     ----------

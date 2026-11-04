@@ -1,8 +1,42 @@
 """
-Nishkarsh v1.4.0 — Regime detection: Kalman Filter, HMM, GARCH, CUSUM.
+Nishkarsh — Regime detection: Kalman filter, online HMM, GARCH, CUSUM.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
 ANALYTICS — Multi-model regime classification for constituent-level analysis.
+
+Two implementations of ONE model, kept in lockstep:
+
+* ``_regime_loop_njit`` — the fused single-pass Numba kernel the engine runs
+  (one loop per constituent; eliminates per-bar Python dispatch).
+* ``AdaptiveKalmanFilter`` / ``AdaptiveHMM`` / ``GARCHDetector`` /
+  ``CUSUMDetector`` driven by ``regime_loop_reference`` — the readable object
+  implementation, kept as the PARITY TEST ORACLE (kernel vs classes ≤ 1e-12).
+
+Per bar ``t`` the inputs are the constituent's Unified signal ``u_t`` ∈ [-1, 1]
+and its Close log return ``r_t`` (0 on the first bar):
+
+1. **Kalman** (local level, adaptive measurement variance) smooths ``u_t`` →
+   ``f_t``; its innovation ``e_t = u_t − f_{t|t−1}`` is standardised by the
+   filter's own innovation-variance estimate from BEFORE the bar,
+   ``ν_t = e_t / √R_{t−1}`` (R is an EWMA of the trailing-20 innovation
+   variance, so ν has ≈ unit variance under no change).
+2. **HMM** (3 states Bull / Neutral / Bear, online EM on ``f_t``) gives state
+   probabilities. Emission std is floored at ``std_floor``
+   (``core.config.NIRNAY_HMM_STD_FLOOR``): a 1e-4 floor let a state collapse
+   onto a frozen mean, making labels path / start-date dependent (A2-01).
+   A Bull > Neutral > Bear mean ordering is enforced after every adaptation
+   (label-switching guard; Jasra, Holmes & Stephens 2005).
+3. **GARCH(1,1), variance-targeted, on Close log returns** — ``Vol_Regime`` is
+   genuine PRICE volatility: the ratio of the conditional vol to its causal
+   long-run level (A2-09). Scale-free: ω = (1 − α − β)·L_{t−1}.
+4. **CUSUM** (two-sided Page, k = 0.5, h = 4) on the standardised Kalman
+   innovations ν_t — ≈ iid under no change, so the alarm rate is the design
+   rate instead of the 1-in-8-to-18 bars it fired on the autocorrelated
+   filtered level (A2-09).
+
+Regime label: TRANSITION on a CUSUM alarm, else BULL / BEAR when that state's
+probability > 2/3, WEAK_BULL / WEAK_BEAR when > 1/3 + 0.07, else NEUTRAL.
+Everything is causal: the outputs at ``t`` depend on bars ≤ ``t`` only.
 """
 
 from __future__ import annotations
@@ -12,21 +46,35 @@ from dataclasses import dataclass
 import numpy as np
 from numba import njit
 
+from core.config import NIRNAY_HMM_STD_FLOOR
+
+# ─── Model constants (shared by the kernel and the classes) ──────────────────
+# Regime cuts are structural to the 3-state space (uniform = 1/3).
+_STRONG_P = 2.0 / 3.0
+_WEAK_P = 1.0 / 3.0 + 0.07
+# GARCH(1,1) persistence; the long-run level L is an EWMA (0.95/0.05) of the
+# trailing-50 realised variance, seeded with the expanding variance of the
+# first 10 shocks.
+_G_ALPHA = 0.1
+_G_BETA = 0.85
+_G_MIN_SHOCKS = 10
+# Vol-ratio bands (current conditional vol / long-run vol), centred on 1.0 so
+# "current vol ≈ its long-run level" is NORMAL (the old 0.6/0.9/1.4 bands
+# labelled ratio = 1.0 HIGH). Symmetric in log for LOW/HIGH (0.8 = 1/1.25).
+_VOL_LOW = 0.8
+_VOL_HIGH = 1.25
+_VOL_EXTREME = 1.6
+# CUSUM (Page) reference value k and decision interval h, in units of ν.
+_C_DRIFT = 0.5
+_C_THRESHOLD = 4.0
+# Below this innovation variance the standardisation scale is floored.
+_R_MIN = 1e-12
+
+_REGIME_NAMES = ("NEUTRAL", "BULL", "BEAR", "WEAK_BULL", "WEAK_BEAR", "TRANSITION")
+_VOL_NAMES = ("LOW", "NORMAL", "HIGH", "EXTREME")
+
 
 # ─── Fused single-pass regime kernel (Numba) ─────────────────────────────────
-# A faithful port of the object-based per-constituent loop in engines/nirnay.py
-# (Kalman → GARCH → HMM → CUSUM). The object classes below are kept as the
-# readable reference implementation; the kernel eliminates the per-step
-# Python/NumPy dispatch that dominates the Nirnay cost (one loop per name ×
-# ~50 names × ~1700 rows). Two correctness fixes are applied IDENTICALLY to
-# the kernel and the classes (2026-07 audit):
-#   • the CUSUM z-score window now EXCLUDES the current point (the old window
-#    included the observation being z-scored, biasing |z| downward and
-#    delaying change detection);
-#   • the online HMM enforces a Bull > Neutral > Bear emission-mean ordering
-#    after every adaptation step (label-switching guard).
-# The regime cuts use Nishkarsh's structural thresholds (strong = 2/3,
-# weak = 1/3 + 0.07), NOT magic 0.6 / 0.4.
 
 
 @njit(cache=True)
@@ -55,14 +103,17 @@ def _pop_var(buf: np.ndarray, lo: int, hi: int) -> float:
 
 
 @njit(cache=True)
-def _regime_loop_njit(sig: np.ndarray):
-    """Single-pass port of the Nirnay regime-intelligence loop.
+def _regime_loop_njit(sig: np.ndarray, logret: np.ndarray, std_floor: float):
+    """Single-pass Kalman → GARCH → HMM → CUSUM regime loop.
 
-    Returns, per step:
+    ``sig`` is the Unified signal, ``logret`` the Close log returns (same
+    length; non-finite entries must already be 0.0), ``std_floor`` the HMM
+    emission-std floor. Returns, per step:
         regime_code  0=NEUTRAL 1=BULL 2=BEAR 3=WEAK_BULL 4=WEAK_BEAR 5=TRANSITION
-        hmm_bull, hmm_bear, confidence  (floats)
+        hmm_bull, hmm_bear  (floats)
         vol_code     0=LOW 1=NORMAL 2=HIGH 3=EXTREME
         change       (0/1)
+        confidence   (max state probability)
     """
     n = sig.shape[0]
     regime_code = np.zeros(n, dtype=np.int64)
@@ -72,11 +123,6 @@ def _regime_loop_njit(sig: np.ndarray):
     confidence = np.zeros(n, dtype=np.float64)
     change_pts = np.zeros(n, dtype=np.int64)
 
-    # Regime cuts (structural to the 3-state space — see nirnay.py).
-    uniform_p = 1.0 / 3.0
-    strong_p = 2.0 * uniform_p
-    weak_p = uniform_p + 0.07
-
     # ── Kalman state ──
     k_est = 0.0
     k_cov = 1.0
@@ -85,11 +131,8 @@ def _regime_loop_njit(sig: np.ndarray):
     innov = np.empty(n, dtype=np.float64)
 
     # ── GARCH state ──
-    g_var = 0.04
-    g_omega = 0.0001
-    g_alpha = 0.1
-    g_beta = 0.85
-    g_ltm = 0.04
+    g_var = 0.0
+    g_ltm = 0.0
     shocks = np.empty(n, dtype=np.float64)
 
     # ── HMM state ──
@@ -105,23 +148,20 @@ def _regime_loop_njit(sig: np.ndarray):
     # ── CUSUM state ──
     pos_cusum = 0.0
     neg_cusum = 0.0
-    c_thr = 4.0
-    c_drift = 0.5
-    cvals = np.empty(n, dtype=np.float64)
-    run_mean = 0.0
-    run_std = 1.0
-
-    prev_sig = 0.0
-    has_prev = False
 
     for i in range(n):
         s = sig[i]
 
-        # ── Kalman update ──
+        # ── Kalman update; standardised innovation uses R from BEFORE bar i ──
         pred_est = k_est
         pred_cov = k_cov + k_proc
         innovation = s - pred_est
         innov[i] = innovation
+        r_prev = k_meas
+        if r_prev > _R_MIN:
+            nu = innovation / np.sqrt(r_prev)
+        else:
+            nu = innovation / np.sqrt(_R_MIN)
         innov_cov = pred_cov + k_meas
         gain = pred_cov / innov_cov
         k_est = pred_est + gain * innovation
@@ -133,29 +173,28 @@ def _regime_loop_njit(sig: np.ndarray):
             k_meas = 0.9 * k_meas + 0.1 * iv
         filtered = k_est
 
-        # ── GARCH update(shock) ──
-        shock = (s - prev_sig) if has_prev else 0.0
+        # ── GARCH(1,1), variance-targeted, on the Close log return ──
+        shock = logret[i]
         shocks[i] = shock
-        new_var = g_omega + g_alpha * (shock * shock) + g_beta * g_var
-        if new_var < 0.001:
-            new_var = 0.001
-        elif new_var > 1.0:
-            new_var = 1.0
-        g_var = new_var
         ns = i + 1
-        if ns >= 10:
+        if ns < _G_MIN_SHOCKS:
+            g_ltm = _pop_var(shocks, 0, ns)
+            g_var = g_ltm
+        else:
+            g_var = ((1.0 - _G_ALPHA - _G_BETA) * g_ltm
+                     + _G_ALPHA * (shock * shock) + _G_BETA * g_var)
             w = 50 if ns >= 50 else ns
             realized = _pop_var(shocks, i + 1 - w, i + 1)
             g_ltm = 0.95 * g_ltm + 0.05 * realized
-        # get_regime()
-        cur_vol = np.sqrt(g_var)
-        lt_vol = np.sqrt(g_ltm)
-        ratio = cur_vol / lt_vol if lt_vol > 0 else 1.0
-        if ratio < 0.6:
+        if g_ltm > 0.0:
+            ratio = np.sqrt(g_var) / np.sqrt(g_ltm)
+        else:
+            ratio = 1.0
+        if ratio < _VOL_LOW:
             vol_code[i] = 0
-        elif ratio < 0.9:
+        elif ratio < _VOL_HIGH:
             vol_code[i] = 1
-        elif ratio < 1.4:
+        elif ratio < _VOL_EXTREME:
             vol_code[i] = 2
         else:
             vol_code[i] = 3
@@ -209,20 +248,13 @@ def _regime_loop_njit(sig: np.ndarray):
                             d = obs_hist[j] - nm
                             vv += d * d
                     nsd = np.sqrt(vv / cnt)
-                    if nsd < 1e-4:
-                        nsd = 1e-4
+                    if nsd < std_floor:
+                        nsd = std_floor
                     em_mean[stt] = 0.9 * em_mean[stt] + 0.1 * nm
                     em_std[stt] = 0.9 * em_std[stt] + 0.1 * nsd
-            # Ordering constraint (state 0=Bull > 1=Neutral > 2=Bear): without
-            # it the online EM update has no identifiability constraint on
-            # which state is "which", so a slow one-sided regime drift can pull
-            # em_mean[0] (Bull) below em_mean[2] (Bear) — the canonical
-            # label-switching failure of unconstrained online HMM/mixture
-            # estimation (Jasra, Holmes & Stephens 2005, Statistical Science
-            # 20(1)); reproduced here on a slow bear→bull ramp (1/8 seeded
-            # runs). After the crossing, hmm_bull silently reports the BEAR
-            # state's probability. A small margin (not a bare >=) stops the
-            # constraint itself from flip-flopping on floating-point noise.
+            # Ordering constraint (state 0=Bull > 1=Neutral > 2=Bear, 0.01
+            # margin): without it the online EM has no identifiability
+            # constraint and a slow one-sided drift can label-switch the states.
             if em_mean[0] < em_mean[1] + 0.01:
                 em_mean[0] = em_mean[1] + 0.01
             if em_mean[2] > em_mean[1] - 0.01:
@@ -245,48 +277,29 @@ def _regime_loop_njit(sig: np.ndarray):
         neut_p = sp[1]
         bear_p = sp[2]
 
-        # ── CUSUM update(filtered) — CAUSAL window [lo, i) that EXCLUDES the
-        # current point. Including the observation in the mean/σ used to
-        # z-score that same observation shrinks its own |z| (self-reference)
-        # and delays change detection; matches CUSUMDetector.update below. ──
-        cvals[i] = filtered
-        nc = i + 1
-        if nc >= 3:
-            w = 20 if nc - 1 >= 20 else nc - 1
-            lo = i - w
-            csum = 0.0
-            for j in range(lo, i):
-                csum += cvals[j]
-            run_mean = csum / w
-            cv = 0.0
-            for j in range(lo, i):
-                d = cvals[j] - run_mean
-                cv += d * d
-            sd = np.sqrt(cv / w)
-            run_std = sd if sd > 0.1 else 0.1
-        z = (filtered - run_mean) / run_std
-        pos_cusum = pos_cusum + z - c_drift
+        # ── CUSUM on the standardised innovation ──
+        pos_cusum = pos_cusum + nu - _C_DRIFT
         if pos_cusum < 0.0:
             pos_cusum = 0.0
-        neg_cusum = neg_cusum - z - c_drift
+        neg_cusum = neg_cusum - nu - _C_DRIFT
         if neg_cusum < 0.0:
             neg_cusum = 0.0
-        change = (pos_cusum > c_thr) or (neg_cusum > c_thr)
+        change = (pos_cusum > _C_THRESHOLD) or (neg_cusum > _C_THRESHOLD)
         if change:
             pos_cusum = 0.0
             neg_cusum = 0.0
         change_pts[i] = 1 if change else 0
 
-        # ── Regime classification (Nishkarsh structural thresholds) ──
+        # ── Regime classification ──
         if change:
             regime_code[i] = 5  # TRANSITION
-        elif bull_p > strong_p:
+        elif bull_p > _STRONG_P:
             regime_code[i] = 1  # BULL
-        elif bear_p > strong_p:
+        elif bear_p > _STRONG_P:
             regime_code[i] = 2  # BEAR
-        elif bull_p > weak_p:
+        elif bull_p > _WEAK_P:
             regime_code[i] = 3  # WEAK_BULL
-        elif bear_p > weak_p:
+        elif bear_p > _WEAK_P:
             regime_code[i] = 4  # WEAK_BEAR
         else:
             regime_code[i] = 0  # NEUTRAL
@@ -300,39 +313,96 @@ def _regime_loop_njit(sig: np.ndarray):
             c = neut_p
         confidence[i] = c
 
-        prev_sig = s
-        has_prev = True
-
     return regime_code, hmm_bull, hmm_bear, vol_code, change_pts, confidence
 
 
-_REGIME_NAMES = ("NEUTRAL", "BULL", "BEAR", "WEAK_BULL", "WEAK_BEAR", "TRANSITION")
-_VOL_NAMES = ("LOW", "NORMAL", "HIGH", "EXTREME")
-
-
-def run_regime_loop(unified_vals: np.ndarray):
-    """Vectorized driver for the per-constituent regime loop.
-
-    Returns ``(regimes, hmm_bulls, hmm_bears, vol_regimes, change_points,
-    confidences)`` matching the object-based loop's output exactly. NaNs in
-    ``unified_vals`` are treated as 0.0 (as the original loop does).
-    """
+def _prepare_inputs(unified_vals, close_vals) -> tuple[np.ndarray, np.ndarray]:
+    """Unified (NaN → 0.0) and Close log returns (first bar / non-finite → 0.0)."""
     sig = np.nan_to_num(np.asarray(unified_vals, dtype=np.float64), nan=0.0)
-    rc, hb, hbe, vc, cp, conf = _regime_loop_njit(sig)
+    close = np.asarray(close_vals, dtype=np.float64)
+    if close.shape != sig.shape:
+        raise ValueError(f"unified ({sig.shape}) and close ({close.shape}) lengths differ")
+    logret = np.zeros_like(sig)
+    if close.size > 1:
+        with np.errstate(divide="ignore", invalid="ignore"):
+            lr = np.log(close[1:]) - np.log(close[:-1])
+        logret[1:] = np.where(np.isfinite(lr), lr, 0.0)
+    return sig, logret
+
+
+def run_regime_loop(unified_vals, close_vals, std_floor: float = NIRNAY_HMM_STD_FLOOR):
+    """Single entry point for the per-constituent regime loop.
+
+    Parameters
+    ----------
+    unified_vals : array-like
+        The constituent's Unified signal (NaN treated as 0.0).
+    close_vals : array-like
+        The constituent's Close, same length (drives the GARCH vol regime).
+    std_floor : float
+        HMM emission-std floor (default ``core.config.NIRNAY_HMM_STD_FLOOR``).
+
+    Returns
+    -------
+    ``(regimes, hmm_bulls, hmm_bears, vol_regimes, change_points, confidences)``
+    — label lists / float arrays, identical to ``regime_loop_reference``.
+    """
+    sig, logret = _prepare_inputs(unified_vals, close_vals)
+    rc, hb, hbe, vc, cp, conf = _regime_loop_njit(sig, logret, float(std_floor))
     regimes = [_REGIME_NAMES[c] for c in rc]
     vol_regimes = [_VOL_NAMES[c] for c in vc]
     change_points = [bool(x) for x in cp]
     return regimes, hb, hbe, vol_regimes, change_points, conf
 
 
+def regime_loop_reference(unified_vals, close_vals, std_floor: float = NIRNAY_HMM_STD_FLOOR):
+    """Object-based oracle of ``_regime_loop_njit`` (parity test reference).
+
+    Drives the four classes below bar by bar. Returns the kernel's raw tuple
+    ``(regime_code, hmm_bull, hmm_bear, vol_code, change, confidence)`` as
+    NumPy arrays so the two can be compared element-wise.
+    """
+    sig, logret = _prepare_inputs(unified_vals, close_vals)
+    kf = AdaptiveKalmanFilter()
+    hmm = AdaptiveHMM(std_floor=std_floor)
+    garch = GARCHDetector()
+    cusum = CUSUMDetector()
+    vmap = {name: k for k, name in enumerate(_VOL_NAMES)}
+    n = sig.shape[0]
+    rc = np.zeros(n, dtype=np.int64)
+    vc = np.zeros(n, dtype=np.int64)
+    cp = np.zeros(n, dtype=np.int64)
+    hb = np.zeros(n)
+    hbe = np.zeros(n)
+    conf = np.zeros(n)
+    for i in range(n):
+        filtered = kf.update(sig[i])
+        nu = kf.last_standardized_innovation
+        garch.update(logret[i])
+        vol, _ = garch.get_regime()
+        probs = hmm.update(filtered)
+        change = cusum.update(nu)
+        b, ne, be = probs["BULL"], probs["NEUTRAL"], probs["BEAR"]
+        if change:
+            rc[i] = 5
+        elif b > _STRONG_P:
+            rc[i] = 1
+        elif be > _STRONG_P:
+            rc[i] = 2
+        elif b > _WEAK_P:
+            rc[i] = 3
+        elif be > _WEAK_P:
+            rc[i] = 4
+        vc[i] = vmap[vol]
+        cp[i] = int(change)
+        hb[i], hbe[i] = b, be
+        conf[i] = max(b, be, ne)
+    return rc, hb, hbe, vc, cp, conf
+
+
 def _hmm_forward_step(transition_matrix: np.ndarray, state_probabilities: np.ndarray,
                       emissions: np.ndarray) -> np.ndarray:
-    """One forward-algorithm step (vectorized NumPy).
-
-    Kept as plain NumPy: the operation is a 3×3 matrix-vector product invoked
-    once per bar per constituent. Numba JIT warm-up cost exceeded the per-call
-    saving at this size and added a compile-time dependency for no benefit.
-    """
+    """One forward-algorithm step (plain NumPy, 3×3)."""
     predicted = transition_matrix.T @ state_probabilities
     updated = emissions * predicted
     total = np.sum(updated)
@@ -373,7 +443,7 @@ class HMMState:
 
     def __post_init__(self) -> None:
         if self.transition_matrix is None:
-            # Extreme structural hysteresis: 98% chance to remain, punishing noise flips.
+            # Strong structural hysteresis: 98% chance to remain.
             self.transition_matrix = np.array([
                 [0.98, 0.01, 0.01],
                 [0.01, 0.98, 0.01],
@@ -389,13 +459,12 @@ class HMMState:
 
 @dataclass
 class GARCHState:
-    """Internal state of the GARCH volatility detector."""
+    """Internal state of the variance-targeted GARCH(1,1) detector."""
 
-    current_variance: float = 0.04
-    omega: float = 0.0001
-    alpha: float = 0.1
-    beta: float = 0.85
-    long_term_mean: float = 0.04
+    current_variance: float = 0.0
+    alpha: float = _G_ALPHA
+    beta: float = _G_BETA
+    long_term_mean: float = 0.0
 
 
 @dataclass
@@ -404,22 +473,23 @@ class CUSUMState:
 
     positive_cusum: float = 0.0
     negative_cusum: float = 0.0
-    threshold: float = 4.0
-    drift: float = 0.5
+    threshold: float = _C_THRESHOLD
+    drift: float = _C_DRIFT
 
 
 # ─── Adaptive Kalman Filter ──────────────────────────────────────────────────
 
 
 class AdaptiveKalmanFilter:
-    """Kalman filter with adaptive noise estimation for signal smoothing.
+    """Local-level Kalman filter with adaptive measurement-noise estimation.
 
     Parameters
     ----------
     process_var : float
-        Initial process variance.
+        Process (level) variance.
     measurement_var : float
-        Initial measurement variance.
+        Initial measurement variance; thereafter an EWMA (0.9/0.1) of the
+        trailing-20 innovation variance.
     """
 
     def __init__(
@@ -430,9 +500,13 @@ class AdaptiveKalmanFilter:
             measurement_variance=measurement_var,
         )
         self.innovation_history: list[float] = []
+        self.last_standardized_innovation: float = 0.0
 
     def update(self, measurement: float) -> float:
         """Update the filter with a new measurement.
+
+        Also sets ``last_standardized_innovation`` = innovation / √R, with R
+        the measurement-variance estimate from BEFORE this bar (causal).
 
         Returns
         -------
@@ -443,6 +517,8 @@ class AdaptiveKalmanFilter:
         predicted_covariance = self.state.error_covariance + self.state.process_variance
 
         innovation = measurement - predicted_estimate
+        r_prev = self.state.measurement_variance
+        self.last_standardized_innovation = innovation / np.sqrt(max(r_prev, _R_MIN))
         self.innovation_history.append(innovation)
         if len(self.innovation_history) > 50:
             self.innovation_history.pop(0)
@@ -473,6 +549,7 @@ class AdaptiveKalmanFilter:
         self.state.estimate = initial
         self.state.error_covariance = 1.0
         self.innovation_history = []
+        self.last_standardized_innovation = 0.0
 
 
 # ─── Adaptive HMM ────────────────────────────────────────────────────────────
@@ -482,17 +559,19 @@ class AdaptiveHMM:
     """HMM for regime state estimation with online learning.
 
     Maintains three states: Bull (state 0), Neutral (state 1), Bear (state 2).
-    Emission parameters adapt online based on recent observations.
+    Emission parameters adapt online based on recent observations; the
+    emission std is floored at ``std_floor``.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, std_floor: float = NIRNAY_HMM_STD_FLOOR) -> None:
         self.state = HMMState()
+        self.std_floor = float(std_floor)
         self.observation_history: list[float] = []
         self.state_history: list[int] = []
 
     def _emission_prob(self, observation: float, state_idx: int) -> float:
-        """Emission probability for a given state with static epsilon shrinkage."""
-        std = self.state.emission_stds[state_idx] + 1e-4  # Epsilon diagonal penalty
+        """Gaussian emission probability (std + 1e-4 epsilon)."""
+        std = self.state.emission_stds[state_idx] + 1e-4
         return _gaussian_pdf(
             observation,
             self.state.emission_means[state_idx],
@@ -500,7 +579,7 @@ class AdaptiveHMM:
         )
 
     def _forward_step(self, observation: float) -> np.ndarray:
-        """Single step of the forward algorithm vectorized via Numba."""
+        """Single step of the forward algorithm."""
         emissions = np.array([self._emission_prob(observation, s) for s in range(3)])
         updated = _hmm_forward_step(
             self.state.transition_matrix,
@@ -534,8 +613,6 @@ class AdaptiveHMM:
     def _adapt_emissions(self) -> None:
         """Adapt emission parameters based on recent observations."""
         recent_obs = np.asarray(self.observation_history[-50:], dtype=float)
-        # Convert the state window ONCE (the old code rebuilt this array inside
-        # the per-state loop, 3× per row across ~1700 rows × 50 stocks).
         recent_states = np.asarray(self.state_history[-len(recent_obs) :])
 
         for state_idx in range(3):
@@ -543,9 +620,8 @@ class AdaptiveHMM:
             if mask.sum() >= 2:
                 state_obs = recent_obs[mask]
                 new_mean = np.mean(state_obs)
-                # np.std(x) == sqrt(mean((x − mean)²)); reuse new_mean to skip the
-                # second internal mean pass np.std would do. Bit-identical result.
-                new_std = max(np.sqrt(np.mean((state_obs - new_mean) ** 2)), 1e-4)
+                # == np.std(state_obs), reusing new_mean.
+                new_std = max(np.sqrt(np.mean((state_obs - new_mean) ** 2)), self.std_floor)
 
                 self.state.emission_means[state_idx] = (
                     0.9 * self.state.emission_means[state_idx] + 0.1 * new_mean
@@ -554,10 +630,8 @@ class AdaptiveHMM:
                     0.9 * self.state.emission_stds[state_idx] + 0.1 * new_std
                 )
 
-        # Ordering constraint (Bull > Neutral > Bear, 0.01 margin): the online
-        # EM update has no identifiability constraint, so a slow one-sided
-        # regime drift can label-switch the states (Jasra, Holmes & Stephens
-        # 2005). Mirrors the numba kernel exactly.
+        # Ordering constraint (Bull > Neutral > Bear, 0.01 margin) — mirrors
+        # the kernel exactly.
         means = self.state.emission_means
         if means[0] < means[1] + 0.01:
             means[0] = means[1] + 0.01
@@ -569,7 +643,6 @@ class AdaptiveHMM:
         recent = np.asarray(self.state_history[-30:])
         counts = np.zeros((3, 3))
         if len(recent) > 1:
-            # Vectorized equivalent of the per-transition Python loop.
             np.add.at(counts, (recent[:-1], recent[1:]), 1)
 
         for i in range(3):
@@ -604,9 +677,13 @@ class AdaptiveHMM:
 
 
 class GARCHDetector:
-    """GARCH-inspired volatility regime detection.
+    """Variance-targeted GARCH(1,1) volatility-regime detector.
 
-    Models variance as: ``σ²_t = ω + α×ε²_{t-1} + β×σ²_{t-1}``
+    Fed Close log returns ``r_t``. For the first 10 shocks the conditional and
+    long-run variances are both the expanding variance of the shocks so far;
+    thereafter ``σ²_t = (1 − α − β)·L_{t−1} + α·r_t² + β·σ²_{t−1}`` and
+    ``L_t = 0.95·L_{t−1} + 0.05·Var(last 50 shocks)``. Scale-free: the regime
+    is the ratio ``σ_t / √L_t``.
     """
 
     def __init__(self) -> None:
@@ -614,32 +691,29 @@ class GARCHDetector:
         self.shock_history: list[float] = []
 
     def update(self, shock: float) -> float:
-        """Update with a new shock value.
+        """Update with a new shock (log return).
 
         Returns
         -------
         float
-            Current volatility estimate (``√σ²``).
+            Current conditional volatility estimate (``√σ²``).
         """
         self.shock_history.append(shock)
-        shock_sq = shock**2
-        new_var = (
-            self.state.omega
-            + self.state.alpha * shock_sq
-            + self.state.beta * self.state.current_variance
-        )
-        new_var = np.clip(new_var, 0.001, 1.0)
-        self.state.current_variance = new_var
-
-        if len(self.shock_history) >= 10:
-            realized = np.var(
-                self.shock_history[-min(50, len(self.shock_history)) :]
+        ns = len(self.shock_history)
+        if ns < _G_MIN_SHOCKS:
+            self.state.long_term_mean = float(np.var(self.shock_history))
+            self.state.current_variance = self.state.long_term_mean
+        else:
+            self.state.current_variance = (
+                (1.0 - self.state.alpha - self.state.beta) * self.state.long_term_mean
+                + self.state.alpha * shock ** 2
+                + self.state.beta * self.state.current_variance
             )
+            realized = np.var(self.shock_history[-min(50, ns):])
             self.state.long_term_mean = (
                 0.95 * self.state.long_term_mean + 0.05 * realized
             )
-
-        return float(np.sqrt(new_var))
+        return float(np.sqrt(self.state.current_variance))
 
     def get_regime(self) -> tuple[str, float]:
         """Classify the current volatility regime.
@@ -647,20 +721,23 @@ class GARCHDetector:
         Returns
         -------
         regime : str
-            One of ``"LOW"``, ``"NORMAL"``, ``"HIGH"``, ``"EXTREME"``.
+            ``"LOW"`` (ratio < 0.8), ``"NORMAL"`` (< 1.25), ``"HIGH"`` (< 1.6)
+            or ``"EXTREME"``, where ratio = current vol / long-run vol.
         sensitivity : float
             Multiplier for signal adjustment (low vol → amplify,
             high vol → dampen).
         """
-        current_vol = np.sqrt(self.state.current_variance)
-        long_term_vol = np.sqrt(self.state.long_term_mean)
-        ratio = current_vol / long_term_vol if long_term_vol > 0 else 1.0
+        long_term = self.state.long_term_mean
+        if long_term > 0.0:
+            ratio = np.sqrt(self.state.current_variance) / np.sqrt(long_term)
+        else:
+            ratio = 1.0
 
-        if ratio < 0.6:
+        if ratio < _VOL_LOW:
             return "LOW", 1.3
-        if ratio < 0.9:
+        if ratio < _VOL_HIGH:
             return "NORMAL", 1.0
-        if ratio < 1.4:
+        if ratio < _VOL_EXTREME:
             return "HIGH", 0.8
         return "EXTREME", 0.6
 
@@ -674,44 +751,29 @@ class GARCHDetector:
 
 
 class CUSUMDetector:
-    """Cumulative Sum (CUSUM) change point detection.
+    """Two-sided Page CUSUM on a standardised input.
 
-    Detects shifts in the mean of a time-series by tracking
-    cumulative deviations from a running mean.
+    ``update(z)`` expects ``z`` ≈ iid N(0, 1) under no change (the engine
+    feeds the standardised Kalman innovation). An alarm fires when either
+    cumulative sum exceeds ``threshold`` (h); both sums then reset.
     """
 
-    def __init__(self, threshold: float = 4.0, drift: float = 0.5) -> None:
+    def __init__(self, threshold: float = _C_THRESHOLD, drift: float = _C_DRIFT) -> None:
         self.state = CUSUMState(threshold=threshold, drift=drift)
-        self.value_history: list[float] = []
-        self.running_mean: float = 0.0
-        self.running_std: float = 1.0
 
-    def update(self, value: float) -> bool:
-        """Update with a new value.
+    def update(self, z: float) -> bool:
+        """Update with a new standardised value.
 
         Returns
         -------
         bool
             ``True`` if a change point is detected.
         """
-        self.value_history.append(value)
-
-        if len(self.value_history) >= 3:
-            # Causal window: EXCLUDE the just-appended value — z-scoring an
-            # observation against a mean/σ that already contains it shrinks
-            # its own |z| and delays detection. Mirrors the numba kernel.
-            prior = self.value_history[:-1]
-            recent = prior[-min(20, len(prior)):]
-            self.running_mean = np.mean(recent)
-            self.running_std = max(np.std(recent), 0.1)
-
-        z = (value - self.running_mean) / self.running_std
-
         self.state.positive_cusum = max(
-            0, self.state.positive_cusum + z - self.state.drift
+            0.0, self.state.positive_cusum + z - self.state.drift
         )
         self.state.negative_cusum = max(
-            0, self.state.negative_cusum - z - self.state.drift
+            0.0, self.state.negative_cusum - z - self.state.drift
         )
 
         change_detected = (
@@ -720,12 +782,11 @@ class CUSUMDetector:
         )
 
         if change_detected:
-            self.state.positive_cusum = 0
-            self.state.negative_cusum = 0
+            self.state.positive_cusum = 0.0
+            self.state.negative_cusum = 0.0
 
         return change_detected
 
     def reset(self) -> None:
         """Reset to initial conditions."""
-        self.state = CUSUMState()
-        self.value_history = []
+        self.state = CUSUMState(threshold=self.state.threshold, drift=self.state.drift)

@@ -1,8 +1,9 @@
 """
-Ornstein-Uhlenbeck process estimation with a Kendall (1954) / Orcutt & Winokur
-(1969) first-order bias-corrected AR(1) coefficient.
+Nishkarsh — Ornstein-Uhlenbeck estimation from a discretely sampled series.
+निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
-Extracted from correl.py lines 389-448, 560-589.
+ANALYTICS — AR(1) regression with the Kendall (1954) / Orcutt & Winokur (1969)
+first-order bias correction of the autoregressive coefficient. Pure function.
 """
 
 from __future__ import annotations
@@ -14,37 +15,29 @@ def ornstein_uhlenbeck_estimate(
     series: np.ndarray,
     dt: float = 1.0,
 ) -> tuple[float, float, float]:
-    """Estimate OU process parameters via AR(1) regression with a bias correction.
+    """Estimate OU parameters ``dx = θ(μ − x)dt + σdW`` via a bias-corrected AR(1).
 
-    Models: ``dx = θ(μ − x)dt + σdW``
+    1. OLS fit ``x_t = a·x_{t−1} + b + ε``.
+    2. Kendall / Orcutt-Winokur correction (OLS ``a`` is biased DOWN by ≈(1+3a)/n,
+       so the correction is ADDITIVE), with a second-order term above a=0.95.
+    3. The intercept is re-estimated CONSISTENTLY with the corrected slope,
+       ``b = mean(x_t) − a_c·mean(x_{t−1})``, so ``μ = b/(1−a_c)`` is the sample
+       level of the series. (Before 2.0.0 the uncorrected OLS intercept was
+       paired with the corrected slope, biasing μ away from the true mean —
+       median 7.68 vs a true 5 at a=0.97, n=300.)
+    4. ``θ = −ln(a_c)/dt``; ``σ² = Var(ε)·2θ/(1−a_c²)`` (denominator floored).
 
-    Uses the Kendall (1954) / Orcutt & Winokur (1969) first-order bias
-    correction for the OLS AR(1) coefficient (additive: a_hat + (1+3a)/n),
-    which is more robust near-unit-root than leaving the OLS estimate
-    uncorrected.
-
-    Parameters
-    ----------
-    series : np.ndarray
-        Input time-series (typically residuals from the fair-value model).
-    dt : float
-        Time step (default 1.0 for daily data).
-
-    Returns
-    -------
-    theta : float
-        Mean-reversion speed.
-    mu : float
-        Equilibrium level.
-    sigma : float
-        Volatility.
+    Returns ``(theta, mu, sigma)``. Series shorter than 20 finite points return
+    the documented fallback ``(0.05, mean(x), std(x))``.
     """
     x = np.asarray(series, dtype=np.float64)
     x = x[np.isfinite(x)]
 
     if len(x) < 20:
         if len(x) > 1:
-            return 0.05, 0.0, max(float(np.std(x)), 1e-6)
+            return 0.05, float(np.mean(x)), max(float(np.std(x)), 1e-6)
+        if len(x) == 1:
+            return 0.05, float(x[0]), 1.0
         return 0.05, 0.0, 1.0
 
     x_lag = x[:-1]
@@ -61,82 +54,22 @@ def ornstein_uhlenbeck_estimate(
         return 0.05, float(np.mean(x)), max(float(np.std(x)), 1e-6)
 
     a = (n * sxy - sx * sy) / denom
-    b = (sy * sxx - sx * sxy) / denom
     a = np.clip(a, 1e-6, 0.999)
 
-    # Kendall (1954, Biometrika 41) / Orcutt & Winokur (1969) first-order bias
-    # correction. The OLS AR(1) coefficient is biased DOWNWARD:
-    # E[a_hat] ≈ a − (1+3a)/n, so the correction is ADDITIVE (a_hat + (1+3a)/n
-    # moves the estimate back toward the true a). The correction here used to
-    # SUBTRACT, which doubles the downward bias instead of removing it
-    # (verified by simulation: at a=0.90, n=300, 2000 trials, mean OLS
-    # a_hat=0.8847; the subtractive form yields 0.8725 — further from 0.90 —
-    # while the additive form yields 0.8969). This also was not Andrews
-    # (1993) — that is a quantile-table/simulation-based median-unbiased
-    # estimator, a different (and more involved) method than this
-    # closed-form first-order correction.
     if a > 0.95:
         a_corrected = a + (1 + 3 * a) / n + 3 * (1 + 3 * a) / (n**2)
     else:
         a_corrected = a + (1 + 3 * a) / n
+    a = float(np.clip(a_corrected, 0.0, 0.999))
 
-    a = np.clip(a_corrected, 0.0, 0.999)
+    # Intercept consistent with the corrected slope (A1-07).
+    b = float(np.mean(x_curr) - a * np.mean(x_lag))
 
     theta = -np.log(a) / dt if a > 1e-6 else 0.05
     mu = b / (1 - a) if abs(1 - a) > 1e-6 else float(np.mean(x))
 
     residuals = x_curr - a * x_lag - b
     sigma_sq = np.var(residuals)
-
-    # Single formula for all a: σ² = σ_ε² · 2θ / (1 − a²). The previous
-    # a > 0.98 branch dropped the 1/(1−a²) factor, under-estimating σ (and
-    # hence the projection cone) exactly in the near-unit-root regime; the
-    # denominator floor keeps it finite there instead.
     sigma = np.sqrt(max(sigma_sq * 2 * theta / max(1 - a**2, 0.001), 1e-12))
 
     return max(float(theta), 1e-4), float(mu), max(float(sigma), 1e-6)
-
-
-def andrews_median_unbiased_ar1(series: np.ndarray) -> tuple[float, float]:
-    """Kendall (1954) / Orcutt & Winokur (1969) first-order bias-corrected AR(1)
-    estimator with half-life.
-
-    (Despite the function name — kept for import-site compatibility — this is
-    NOT Andrews (1993); that is a quantile-table/simulation-based median-
-    unbiased estimator. This is the simpler closed-form first-order bias
-    correction: E[a_hat] ≈ a − (1+3a)/n, so the correction is ADDITIVE.)
-
-    Parameters
-    ----------
-    series : np.ndarray
-        Input time-series.
-
-    Returns
-    -------
-    ar_coef : float
-        Bias-corrected AR(1) coefficient.
-    half_life : float
-        Half-life of mean reversion (``log(0.5) / log(ar_coef)``).
-    """
-    x = np.asarray(series, dtype=np.float64)
-    x = x[np.isfinite(x)]
-    n = len(x)
-
-    if n < 20:
-        return 0.0, np.inf
-
-    x_lag = x[:-1]
-    x_curr = x[1:]
-
-    a_ols = np.corrcoef(x_lag, x_curr)[0, 1]
-
-    if a_ols > 0.95:
-        a_mu = a_ols + (1 + 3 * a_ols) / n + 3 * (1 + 3 * a_ols) / (n**2)
-    else:
-        a_mu = a_ols + (1 + 3 * a_ols) / n
-
-    a_mu = np.clip(a_mu, 0.0, 0.999)
-
-    half_life = np.log(0.5) / np.log(a_mu) if a_mu > 0.01 else np.inf
-
-    return float(a_mu), float(half_life)
