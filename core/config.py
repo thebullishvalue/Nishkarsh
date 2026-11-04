@@ -1,37 +1,60 @@
 """
-Nishkarsh v1.4.0 — Configuration constants, thresholds, column mappings, and shared defaults.
-निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
+Nishkarsh — Configuration: the single source of truth for every constant, threshold
+and default. निष्कर्ष (Nishkarsha) — "Conclusion / Inference".
 
-CORE — Merged from both Aarambh (correl.py) and Nirnay (nirnay_core.py) monoliths.
+Rules:
+  * No other module may hard-code a value that lives here.
+  * Test-mode values are injected through function arguments / fixtures, NEVER by
+    editing this file (the v1.6.0 upload shipped test-mode 15/30 training windows
+    from this file — see CHANGELOG 2.0.0 Erratum).
+  * ``validate_config()`` (bottom of file) runs at import and fails loudly on an
+    incoherent configuration.
 """
 
 # ─── Version / Product ───────────────────────────────────────────────────────
 
-VERSION = "1.6.0"
+VERSION = "2.0.0"
 PRODUCT_NAME = "NISHKARSH"
 COMPANY = "@thebullishvalue"
 
 # ─── Aarambh Engine Defaults ─────────────────────────────────────────────────
 
 LOOKBACK_WINDOWS = (5, 10, 20, 50, 100)
-# Walk-forward training window (trading days). The engine fits a ~14-feature
-# regularized ensemble, so the window must be >> feature count to stay
-# well-conditioned. MIN bootstraps the expanding window at ~6 trading years;
-# MAX caps it at ~8 so the model stays adaptive to regime drift. (History:
-# 15/30 originally — degenerate p/n; 252/756 after the 1.4.22 sweep; raised
-# to 1500/2000 for the current long-history PE sheet.) NOTE the walk-forward
-# refit cadence is DERIVED in the engine (clip(n/200, 2, 5) rows), not a
-# config constant.
-MIN_TRAIN_SIZE = 15
-MAX_TRAIN_SIZE = 30
-RIDGE_ALPHAS = (0.01, 0.1, 1.0, 10.0, 100.0)
+# Walk-forward training window, in LABEL-COMPLETE trading-day rows (rows whose
+# forward label is fully realized before the forecast point — the purge gap is
+# applied on top, never instead). The engine fits a ~14-feature regularized
+# ensemble, so the window must be >> feature count to stay well-conditioned.
+# MIN bootstraps the expanding window at ~6 trading years; MAX caps it at ~8 so
+# the model stays adaptive to regime drift. (History: 15/30 originally —
+# degenerate p/n whose apparent edge was an overlapping-label artifact; 252/756
+# after the 1.4.22 sweep; 1500/2000 from 1.4.22 on. v1.6.0 accidentally shipped
+# 15/30, under which the forward-label purge never applied — restored in 2.0.0.)
+MIN_TRAIN_SIZE = 1500
+MAX_TRAIN_SIZE = 2000
+# Fixed walk-forward refit cadence (rows between ensemble refits). A constant —
+# a cadence derived from n made every forecast repaint whenever n crossed a
+# threshold (audit A1-14).
+AARAMBH_WF_REFIT = 5
+# Exponential sample-weight half-life (trading days) inside each training window.
+AARAMBH_SAMPLE_HALFLIFE = 252
+# Purged inner CV for the Ridge / ElasticNet regularization search
+# (TimeSeriesSplit with gap = forecast horizon; LOO on overlapping labels
+# under-regularizes — audit A1-15).
+AARAMBH_INNER_CV_SPLITS = 3
+# Widened upward: on 1500–2000-row windows the old ceiling (100) was binding.
+RIDGE_ALPHAS = (0.01, 0.1, 1.0, 10.0, 100.0, 1000.0, 10000.0)
 HUBER_EPSILON = 1.35
 # 200 is bit-identical to 500 here: on real data the walk-forward Huber fits
 # converge well before the cap (0 of 140 chunks hit 150 iters), and OOS R²/IC
 # are unchanged from max_iter 200→500. Trimmed purely to drop wasted headroom.
 HUBER_MAX_ITER = 200
 OU_PROJECTION_DAYS = 90
-MIN_DATA_POINTS = 30
+# Predictor history guard: a predictor still NaN anywhere in the most recent
+# MIN_DATA_POINTS rows cannot support the walk-forward and is dropped.
+MIN_DATA_POINTS = 1500
+# Minimum number of genuine out-of-sample forecast rows a run must produce.
+# Total rows required = MIN_TRAIN_SIZE + AARAMBH_FWD_HORIZON (purge) + MIN_OOS_ROWS.
+MIN_OOS_ROWS = 252
 
 # When True, Aarambh trains on causal-PCA factors of (sheet predictors + the
 # full macro panel) instead of the raw sheet predictors. Combines everything,
@@ -97,7 +120,7 @@ PCA_PASSTHROUGH = ("IN10Y", "IN02Y", "IN30Y")
 # real target LEVEL (not the basket fallback) — see app.py label resolution.
 CALIBRATION_RETURN_LABEL = "nsei"
 
-# ── Experimental: predictive returns mode for Aarambh (default OFF) ──────────
+# ── Predictive returns mode for Aarambh (SHIPPED DEFAULT: ON) ────────────────
 # When True, Aarambh stops regressing the PE *level* (a near-tautological fit
 # with no forward edge — see docs/FINDINGS.md) and instead FORECASTS the forward
 # AARAMBH_FWD_HORIZON-day change of the target from trailing AARAMBH_FWD_MOM_K-day
@@ -160,7 +183,19 @@ NIRNAY_REGIME_SENSITIVITY = 1.5
 NIRNAY_BASE_WEIGHT = 0.6
 NIRNAY_MMR_NUM_VARS = 5
 
-# Nirnay signal thresholds (oscillator scale: -10 to +10)
+# Online-HMM emission std floor. 1e-4 let a state's emission collapse onto a
+# frozen mean (50/50 synthetic stocks), making regime labels path/start-date
+# dependent; 0.10 removes the collapse (audit A2-01).
+NIRNAY_HMM_STD_FLOOR = 0.10
+# First N genuine (non-NaN Close) bars of each constituent are warm-up: flagged
+# `Warmup`, excluded from daily breadth and from the convergence layer (A2-03/13).
+NIRNAY_WARMUP_BARS = 50
+
+# Nirnay signal thresholds (oscillator scale: -10 to +10).
+# NOTE: these are COLD-START PRIORS / flat-band fallbacks only. The live
+# oversold/overbought cuts are each stock's causal expanding 30th/70th
+# percentile of its own Unified oscillator (≈ ±1.9 in practice), so ~30% / 30%
+# of stock-days are flagged oversold / overbought by construction.
 NIRNAY_OVERSOLD = -5
 NIRNAY_OVERBOUGHT = 5
 NIRNAY_STRONG_BUY = -7
@@ -193,6 +228,58 @@ CONV_DDM_LONG_RUN_VAR = 50.0
 # Divergence detection
 DIV_LOOKBACK = 20
 DIV_PERSISTENCE_THRESHOLD = 5
+
+# ─── Conclusion Layer v2 — "Two systems. One conclusion." as a MEASURED claim ─
+# Aarambh's forecast is the directional head (causally z-scored). Nirnay is a
+# conditioning variable: it can only SHRINK conviction (×κ ≤ 1) on days it
+# contradicts Aarambh, and only after a Convergence-Lift test shows that
+# Aarambh is measurably more accurate when the two systems agree than when they
+# contradict (out-of-sample, non-overlapping, one-sided Fisher-z test).
+# See docs/ARCHITECTURE.md and convergence/conclusion.py.
+CONV2_TAU = 0.25                 # |zN| needed for Nirnay to CONFIRM / CONTRADICT (fixed, not fitted)
+CONV2_ZMIN_PERIODS = 126         # min prior observations before a causal z-score exists
+CONV2_ZCLIP = 4.0                # causal z-score clip
+CONV2_REFIT_EVERY = 126          # walk-forward κ refit cadence (rows)
+CONV2_MIN_HISTORY = 500          # rows of overlap before the first κ refit
+CONV2_LIFT_ALPHA = 0.05          # one-sided significance for the Convergence-Lift test
+CONV2_MIN_BUCKET = 30            # min h-spaced windows in each of CONFIRM / CONTRADICT
+CONV2_DIV_EXTREME = 1.5          # |z| for an engine to be "leading" a divergence
+CONV2_DIV_CALM = 0.5             # |z| below which the other engine counts as calm
+CONV2_DIV_PERSIST = (5, 20)      # CONTRADICTION: ≥5 CONTRADICT days in the last 20 trading days
+# Fixed conclusion tiers on C = 100·tanh(zA/2)·m  (positive = bullish).
+CONV2_TIER_STRONG = 60.0         # |zA| ≈ 1.39
+CONV2_TIER_MODERATE = 30.0       # |zA| ≈ 0.62
+CONV2_TIER_WEAK = 10.0
+
+# ─── Edge evidence (one scale for UI, run log and hero) ─────────────────────
+EDGE_ALPHA = 0.05                # significance for "edge" claims (Fisher-z / HAC)
+EDGE_TRADEABLE_T = 2.0           # net-of-cost HAC t needed for "TRADEABLE EDGE"
+EDGE_BOOTSTRAP_REPS = 2000       # stationary block bootstrap replications (seeded)
+EDGE_BOOTSTRAP_SEED = 20260704
+BACKTEST_COST_BPS = (0.0, 2.0, 5.0, 10.0)  # one-way cost grid (bps per unit turnover)
+BACKTEST_REFERENCE_BPS = 5.0     # the cost level verdicts are graded at
+
+# ─── Pipeline / data window ──────────────────────────────────────────────────
+# yfinance history (constituents + macro). The start is ANCHORED to 1 January of
+# (current year − HISTORY_YEARS) so the window slides once a year, not daily — a
+# daily-sliding start repainted expanding statistics / PCA / HMM history on every
+# run (audit A2-06). NOTE: constituents are TODAY's index members, so a longer
+# window adds survivorship bias; 7y is the deliberate ceiling.
+HISTORY_YEARS = 7
+# Shift non-IST-synchronous macro columns (US / EU / FX / commodities, whose
+# close for date D prints after the NSE close of D) by one NSE session before
+# joining them onto NSE dates — removes a same-date look-ahead (audit A2-04).
+MACRO_LAG_NON_IST = True
+# Tickers / columns that ARE synchronous with the NSE close (never lagged).
+IST_SYNCHRONOUS_SUFFIXES = (".NS", ".BO")
+IST_SYNCHRONOUS_COLUMNS = ("IN10Y", "IN02Y", "IN30Y", "INIRYY", "REPO",
+                           "AD_RATIO", "COUNT", "REL_AD_RATIO", "REL_BREADTH",
+                           "NIFTY50_PE", "NIFTY50_PB", "NIFTY50_DY")
+# Google-Sheet predictor columns quoting a NON-Indian market close for date D
+# (prints after the NSE close of D). Lagged one row before they enter EITHER
+# engine. Judgement call: if the sheet already records these with a one-day
+# lag, set this to () — the sheet's provenance is not visible to the code.
+NON_IST_SHEET_COLUMNS = ("US02Y", "US10Y", "US30Y")
 
 # ─── Column Normalization ────────────────────────────────────────────────────
 
@@ -379,3 +466,42 @@ NIFTY50_FALLBACK = [
     "TECHM.NS", "TATACONSUM.NS", "TATAMOTORS.NS", "TATASTEEL.NS", "UPL.NS",
     "BAJAJFINSV.NS", "BPCL.NS", "INDUSINDBK.NS", "NAUKRI.NS", "PIDILITIND.NS",
 ]
+
+
+# ─── Configuration invariants (fail loudly at import) ───────────────────────
+
+def validate_config() -> None:
+    """Raise ``ValueError`` if the configuration is internally incoherent.
+
+    Guards the failure mode that shipped in v1.6.0: test-mode walk-forward
+    windows (15/30) edited into this file silently disabled the forward-label
+    purge and turned look-ahead into apparent edge.
+    """
+    errors: list[str] = []
+    n_feat = len(DEFAULT_PREDICTORS)
+    if MIN_TRAIN_SIZE < 10 * n_feat + AARAMBH_FWD_HORIZON:
+        errors.append(
+            f"MIN_TRAIN_SIZE={MIN_TRAIN_SIZE} < 10·p + h = {10 * n_feat + AARAMBH_FWD_HORIZON} "
+            "(degenerate p/n; overlapping-label fits interpolate)"
+        )
+    if MAX_TRAIN_SIZE < MIN_TRAIN_SIZE:
+        errors.append(f"MAX_TRAIN_SIZE={MAX_TRAIN_SIZE} < MIN_TRAIN_SIZE={MIN_TRAIN_SIZE}")
+    if not (1 <= AARAMBH_WF_REFIT <= AARAMBH_FWD_HORIZON):
+        errors.append(f"AARAMBH_WF_REFIT={AARAMBH_WF_REFIT} must be in [1, AARAMBH_FWD_HORIZON]")
+    if AARAMBH_FWD_HORIZON < 1 or AARAMBH_FWD_MOM_K < 1:
+        errors.append("AARAMBH_FWD_HORIZON and AARAMBH_FWD_MOM_K must be ≥ 1")
+    if abs(CONV_WEIGHT_DIRECTION + CONV_WEIGHT_BREADTH + CONV_WEIGHT_MAGNITUDE + CONV_WEIGHT_REGIME - 1.0) > 1e-9:
+        errors.append("CONV_WEIGHT_* must sum to 1")
+    if not (0 < CONV2_TIER_WEAK < CONV2_TIER_MODERATE < CONV2_TIER_STRONG < 100):
+        errors.append("CONV2 tiers must satisfy 0 < WEAK < MODERATE < STRONG < 100")
+    if not (0 < EDGE_ALPHA < 0.5 and 0 < CONV2_LIFT_ALPHA < 0.5):
+        errors.append("EDGE_ALPHA / CONV2_LIFT_ALPHA must be in (0, 0.5)")
+    if BACKTEST_REFERENCE_BPS not in BACKTEST_COST_BPS:
+        errors.append("BACKTEST_REFERENCE_BPS must be one of BACKTEST_COST_BPS")
+    if CALIBRATION_RETURN_LABEL not in ("nsei", "target", "basket"):
+        errors.append(f"CALIBRATION_RETURN_LABEL={CALIBRATION_RETURN_LABEL!r} invalid")
+    if errors:
+        raise ValueError("Incoherent core/config.py:\n  - " + "\n  - ".join(errors))
+
+
+validate_config()
