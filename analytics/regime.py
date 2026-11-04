@@ -16,10 +16,10 @@ Per bar ``t`` the inputs are the constituent's Unified signal ``u_t`` ∈ [-1, 1
 and its Close log return ``r_t`` (0 on the first bar):
 
 1. **Kalman** (local level, adaptive measurement variance) smooths ``u_t`` →
-   ``f_t``; its innovation ``e_t = u_t − f_{t|t−1}`` is standardised by the
-   filter's own innovation-variance estimate from BEFORE the bar,
-   ``ν_t = e_t / √R_{t−1}`` (R is an EWMA of the trailing-20 innovation
-   variance, so ν has ≈ unit variance under no change).
+   ``f_t``; its innovation ``e_t = u_t − f_{t|t−1}`` is standardised by a
+   causal EWMA (λ = 0.98) of the PAST squared innovations,
+   ``ν_t = e_t / √V_{t−1}``, ``V_t = 0.98·V_{t−1} + 0.02·e_t²`` (V₀ = 0.1), so
+   ν has ≈ unit variance and is ≈ iid when no change occurs.
 2. **HMM** (3 states Bull / Neutral / Bear, online EM on ``f_t``) gives state
    probabilities. Emission std is floored at ``std_floor``
    (``core.config.NIRNAY_HMM_STD_FLOOR``): a 1e-4 floor let a state collapse
@@ -67,7 +67,10 @@ _VOL_EXTREME = 1.6
 # CUSUM (Page) reference value k and decision interval h, in units of ν.
 _C_DRIFT = 0.5
 _C_THRESHOLD = 4.0
-# Below this innovation variance the standardisation scale is floored.
+# Innovation standardisation: EWMA of past squared innovations (λ, V₀);
+# below _R_MIN the scale is floored.
+_NU_LAMBDA = 0.98
+_NU_VAR0 = 0.1
 _R_MIN = 1e-12
 
 _REGIME_NAMES = ("NEUTRAL", "BULL", "BEAR", "WEAK_BULL", "WEAK_BEAR", "TRANSITION")
@@ -129,6 +132,7 @@ def _regime_loop_njit(sig: np.ndarray, logret: np.ndarray, std_floor: float):
     k_proc = 0.01
     k_meas = 0.1
     innov = np.empty(n, dtype=np.float64)
+    nu_var = _NU_VAR0
 
     # ── GARCH state ──
     g_var = 0.0
@@ -157,11 +161,11 @@ def _regime_loop_njit(sig: np.ndarray, logret: np.ndarray, std_floor: float):
         pred_cov = k_cov + k_proc
         innovation = s - pred_est
         innov[i] = innovation
-        r_prev = k_meas
-        if r_prev > _R_MIN:
-            nu = innovation / np.sqrt(r_prev)
+        if nu_var > _R_MIN:
+            nu = innovation / np.sqrt(nu_var)
         else:
             nu = innovation / np.sqrt(_R_MIN)
+        nu_var = _NU_LAMBDA * nu_var + (1.0 - _NU_LAMBDA) * innovation * innovation
         innov_cov = pred_cov + k_meas
         gain = pred_cov / innov_cov
         k_est = pred_est + gain * innovation
@@ -500,13 +504,14 @@ class AdaptiveKalmanFilter:
             measurement_variance=measurement_var,
         )
         self.innovation_history: list[float] = []
+        self.innovation_scale_var: float = _NU_VAR0
         self.last_standardized_innovation: float = 0.0
 
     def update(self, measurement: float) -> float:
         """Update the filter with a new measurement.
 
-        Also sets ``last_standardized_innovation`` = innovation / √R, with R
-        the measurement-variance estimate from BEFORE this bar (causal).
+        Also sets ``last_standardized_innovation`` = innovation / √V, with V
+        the EWMA (λ = 0.98) of squared innovations from BEFORE this bar.
 
         Returns
         -------
@@ -517,8 +522,10 @@ class AdaptiveKalmanFilter:
         predicted_covariance = self.state.error_covariance + self.state.process_variance
 
         innovation = measurement - predicted_estimate
-        r_prev = self.state.measurement_variance
-        self.last_standardized_innovation = innovation / np.sqrt(max(r_prev, _R_MIN))
+        self.last_standardized_innovation = innovation / np.sqrt(max(self.innovation_scale_var, _R_MIN))
+        self.innovation_scale_var = (
+            _NU_LAMBDA * self.innovation_scale_var + (1.0 - _NU_LAMBDA) * innovation * innovation
+        )
         self.innovation_history.append(innovation)
         if len(self.innovation_history) > 50:
             self.innovation_history.pop(0)
@@ -549,6 +556,7 @@ class AdaptiveKalmanFilter:
         self.state.estimate = initial
         self.state.error_covariance = 1.0
         self.innovation_history = []
+        self.innovation_scale_var = _NU_VAR0
         self.last_standardized_innovation = 0.0
 
 

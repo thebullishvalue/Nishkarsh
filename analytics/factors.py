@@ -40,7 +40,9 @@ def build_causal_macro_factors(
 
     Causality: standardization and PCA are refit on the EXPANDING window every
     ``refit_every`` rows; the factor value at row ``t`` is produced by the most
-    recent fit trained only on rows ``< t``. No future information enters any
+    recent fit trained only on rows ``< t``. Columns enter the fit only once
+    they have ``min_train`` real (non-imputed) rows, and the fit uses the
+    common window on which all its columns are real. No future information enters any
     historical factor value, so the output is backtest-safe (consistent with
     the rest of the system's causal guarantees). Component *signs* are aligned
     across refits to avoid spurious sign-flip jumps in the factor series.
@@ -54,7 +56,10 @@ def build_causal_macro_factors(
     refit_every : int
         Rows between PCA refits (≈ monthly at 21).
     min_train : int
-        Minimum rows before the first fit; earlier rows are NaN (warm-up).
+        Minimum REAL rows a column needs (before row t) to enter the fit at t;
+        rows before the first fit are NaN (warm-up). A column's leading NaN
+        prefix is never imputed. Components beyond the window's effective rank
+        are NaN (never null-space directions).
     stationarize : bool
         If True, replace each column with its causal rolling z-score (window
         ``z_window``, clipped to ±5) BEFORE the PCA. Essential when the panel
@@ -93,21 +98,22 @@ def build_causal_macro_factors(
     )
     pca_input = macro_df.drop(columns=pass_cols) if pass_cols else macro_df
 
-    # ffill only — NO bfill. Backfilling a young column's leading NaN rows
-    # with its first observed value injects FUTURE data into the factor
-    # history (a look-ahead that contradicts this module's causality
-    # guarantee). Leading gaps become 0.0 (no information), which the
-    # correlation-based PCA treats as a flat, variance-less prefix.
-    clean = (
-        pca_input.apply(pd.to_numeric, errors="coerce").ffill().fillna(0.0)
-    )
+    # ffill only — NO bfill and NO zero-fill. A column's leading never-observed
+    # prefix is NOT data: it stays NaN and the column is simply absent from the
+    # PCA until it has `min_train` real rows (A2-11). Zero-filling it made the
+    # expanding standardization see a 0 → price-level step (|PC| up to ~116)
+    # and gave zero-variance columns null-space eigenvectors.
+    clean = pca_input.apply(pd.to_numeric, errors="coerce").ffill()
     if stationarize:
         # Causal rolling z-score (uses rows ≤ t only — no future) + clip, so
-        # trending price levels become bounded, stationary oscillators.
+        # trending price levels become bounded, stationary oscillators. Leading
+        # warm-up rows stay NaN (not real); an inner flat window (σ = 0) is z = 0.
         _mp = max(z_window // 4, 20)
         mu = clean.rolling(z_window, min_periods=_mp).mean()
         sd = clean.rolling(z_window, min_periods=_mp).std()
-        clean = ((clean - mu) / sd.replace(0, np.nan)).clip(-5.0, 5.0).fillna(0.0)
+        z = ((clean - mu) / sd.replace(0, np.nan)).clip(-5.0, 5.0)
+        started = z.notna().cummax()
+        clean = z.where(~started | z.notna(), 0.0)
     feature_names = list(clean.columns)
     X = clean.to_numpy(dtype=np.float64)
     n, m = X.shape
@@ -116,65 +122,86 @@ def build_causal_macro_factors(
         small = pass_raw.copy() if pass_raw is not None else pd.DataFrame(index=macro_df.index)
         return (small, pd.DataFrame()) if return_loadings else small
 
-    k = int(min(n_components, m))
+    k = int(min(n_components, m))   # output width: a function of the panel's columns only
     factors = np.full((n, k), np.nan)
-    prev_comp: np.ndarray | None = None
+    prev_comp = np.zeros((k, m))     # last fit's loadings embedded in all-m coordinates
+    have_prev = np.zeros(k, dtype=bool)
 
-    # Causal expanding-window PCA, computed INCREMENTALLY. The factor at row t is
-    # produced by a fit trained only on rows < t; refits happen on block
-    # boundaries so the series is prefix-invariant (backtest-safe). Rather than
-    # re-fit sklearn on the whole window every block — O(refits · window · m²) —
-    # we carry running sufficient statistics (Σx and Σxxᵀ) and extend them by one
-    # block per step, making the whole pass O(n · m²). The window correlation
-    # matrix is eigendecomposed directly; this reproduces the previous
-    # StandardScaler + PCA(covariance_eigh) output to ~1e-13 while being far
-    # cheaper on a weak single-thread CPU, and it is deterministic and
-    # independent of sklearn's solver/sign internals (its own sign convention is
-    # applied below). Covariance is translation-invariant, so we accumulate
-    # around a fixed CAUSAL shift (the first-window mean) purely for
-    # floating-point stability — it changes nothing and uses no future data.
-    shift = X[:min_train].mean(axis=0)
-    Xs = X - shift
-    s1 = np.zeros(m)
-    s2 = np.zeros((m, m))
-    _seed = Xs[:min_train]
-    s1 += _seed.sum(axis=0)
-    s2 += _seed.T @ _seed
+    # First real row per column (after ffill a column is real from there on).
+    real = np.isfinite(X)
+    first_real = np.where(real.any(axis=0), real.argmax(axis=0), n)
+
+    # Causal expanding-window PCA over the COMMON real window. At refit row t
+    # the eligible set E = {columns with ≥ min_train real rows before t}; the
+    # window is [s, t) with s = max first_real over E, on which every column
+    # of E is real. The factor at row t uses a fit on rows < t only, refits
+    # happen on fixed block boundaries, and eligibility is decided from rows
+    # < t, so the series is prefix-invariant (backtest-safe). Sufficient
+    # statistics (Σx, Σxxᵀ around a fixed causal shift, for fp stability) are
+    # extended block by block — O(n·m²); when a column joins E the window
+    # start moves to its first real row and the sums are rebuilt over
+    # [s, t) (that span is < min_train + refit_every rows).
+    elig = np.zeros(0, dtype=np.int64)
+    s_win = 0
+    shift = np.zeros(0)
+    s1 = np.zeros(0)
+    s2 = np.zeros((0, 0))
+    last_comp: np.ndarray | None = None
+    last_cols = np.zeros(0, dtype=np.int64)
 
     t = min_train
     while t < n:
-        # Population moments over rows < t (true window mean = mean_s + shift).
-        mean_s = s1 / t
-        cov = s2 / t - np.outer(mean_s, mean_s)
-        scale = np.sqrt(np.maximum(np.diag(cov), 0.0))
-        scale[scale == 0.0] = 1.0  # match StandardScaler's handle_zeros_in_scale
-        corr = cov / np.outer(scale, scale)
-        eigvals, eigvecs = np.linalg.eigh(corr)  # ascending; corr is symmetric
-        top = np.argsort(eigvals)[::-1][:k]
-        comp = eigvecs[:, top].T.copy()  # (k, m) — top-k components
-        # Deterministic sign: make the largest-magnitude loading positive.
-        for r in range(comp.shape[0]):
-            j = int(np.argmax(np.abs(comp[r])))
-            if comp[r, j] < 0:
-                comp[r] = -comp[r]
-        if prev_comp is not None:
-            # Align signs to the previous fit so the factor series doesn't flip
-            # at refit boundaries (component sign is otherwise arbitrary).
-            for j in range(min(len(comp), len(prev_comp))):
-                if float(np.dot(comp[j], prev_comp[j])) < 0:
-                    comp[j] = -comp[j]
-        prev_comp = comp
-
         block_end = min(t + refit_every, n)
-        # z-score the block on the window's mean/scale, then project. The PCA mean
-        # of the standardized training data is exactly 0, so there is no extra
-        # centering term: factors = ((X[block] − window_mean) / scale) · compᵀ.
-        z_block = (X[t:block_end] - (mean_s + shift)) / scale
-        factors[t:block_end] = z_block @ comp.T
+        new_elig = np.flatnonzero(first_real <= t - min_train)
+        if new_elig.size != elig.size:
+            elig = new_elig
+            s_win = int(first_real[elig].max())
+            W = X[s_win:t][:, elig]
+            shift = W.mean(axis=0)
+            Ws = W - shift
+            s1 = Ws.sum(axis=0)
+            s2 = Ws.T @ Ws
+        if elig.size:
+            nw = t - s_win
+            mean_s = s1 / nw
+            cov = s2 / nw - np.outer(mean_s, mean_s)
+            var = np.maximum(np.diag(cov), 0.0)
+            mean_true = mean_s + shift
+            # Zero-variance columns (pegged / flat over the window) carry no
+            # information and would only add null-space directions: drop them.
+            keep = var > (1e-9 * np.maximum(1.0, np.abs(mean_true))) ** 2
+            if keep.any():
+                kc = np.flatnonzero(keep)
+                scale = np.sqrt(var[kc])
+                corr = cov[np.ix_(kc, kc)] / np.outer(scale, scale)
+                eigvals, eigvecs = np.linalg.eigh(corr)  # ascending; symmetric
+                order = np.argsort(eigvals)[::-1]
+                # Effective rank: never extract a component from the null space.
+                rank = int(np.sum(eigvals > max(eigvals.max(), 0.0) * 1e-10))
+                k_t = min(k, rank)
+                cols_t = elig[kc]
+                comp = np.zeros((k_t, m))
+                comp[:, cols_t] = eigvecs[:, order[:k_t]].T
+                for r in range(k_t):
+                    # Deterministic sign: largest-magnitude loading positive,
+                    # then align to the previous fit of the same component so
+                    # the factor series doesn't flip at refit boundaries.
+                    j = int(np.argmax(np.abs(comp[r])))
+                    if comp[r, j] < 0:
+                        comp[r] = -comp[r]
+                    if have_prev[r] and float(np.dot(comp[r], prev_comp[r])) < 0:
+                        comp[r] = -comp[r]
+                    prev_comp[r] = comp[r]
+                    have_prev[r] = True
+                # factors = ((X[block] − window_mean) / scale) · compᵀ
+                z_block = (X[t:block_end][:, cols_t] - mean_true[kc]) / scale
+                factors[t:block_end, :k_t] = z_block @ comp[:, cols_t].T
+                last_comp, last_cols = comp, cols_t
 
-        _blk = Xs[t:block_end]
-        s1 += _blk.sum(axis=0)
-        s2 += _blk.T @ _blk
+        if elig.size:
+            _blk = X[t:block_end][:, elig] - shift
+            s1 = s1 + _blk.sum(axis=0)
+            s2 = s2 + _blk.T @ _blk
         t = block_end
 
     cols = [f"MACRO_PC{i + 1}" for i in range(k)]
@@ -183,9 +210,11 @@ def build_causal_macro_factors(
     if pass_raw is not None:
         factors_df = pd.concat([factors_df, pass_raw], axis=1)
     if return_loadings:
+        # Most recent fit's loadings (PC × feature; 0 for columns not in that
+        # fit). PCs beyond that fit's effective rank are omitted.
         loadings = (
-            pd.DataFrame(prev_comp, index=cols, columns=feature_names)
-            if prev_comp is not None else pd.DataFrame()
+            pd.DataFrame(last_comp, index=cols[: len(last_comp)], columns=feature_names)
+            if last_comp is not None else pd.DataFrame()
         )
         return factors_df, loadings
     return factors_df

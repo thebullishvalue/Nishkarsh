@@ -1,8 +1,11 @@
 """
-Nishkarsh v1.4.0 — Nirnay Engine: Per-stock MSF + MMR with regime intelligence.
+Nishkarsh — Nirnay Engine: per-stock MSF + MMR with regime intelligence.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
-NIRNAY — Per-constituent MSF + MMR analysis with HMM/GARCH/CUSUM regime intelligence aggregation.
+NIRNAY — per-constituent MSF + MMR oscillators with a Kalman/HMM/GARCH/CUSUM
+regime ensemble, aggregated into daily breadth over the LIVE (real-bar,
+warmed-up) names only. Everything is causal: a row's values depend on that
+stock's bars up to and including that row.
 """
 
 from __future__ import annotations
@@ -14,46 +17,18 @@ import numpy as np
 import pandas as pd
 
 from analytics.regime import run_regime_loop
-from analytics.utils import causal_gram_schmidt_orthogonalize
-from core.config import (
-    NIRNAY_OVERSOLD,
-    NIRNAY_OVERBOUGHT,
-    NIRNAY_STRONG_BUY,
-    NIRNAY_STRONG_SELL,
+from analytics.utils import (
+    calculate_atr,
+    causal_gram_schmidt_orthogonalize,
+    sigmoid,
+    zscore_clipped,
 )
-
-
-# ─── Utility functions ───────────────────────────────────────────────────────
-
-
-def _sigmoid(x: np.ndarray | float, scale: float = 1.0) -> np.ndarray | float:
-    """Sigmoid transformation bounding to [-1, 1].
-
-    Formula: ``2 / (1 + exp(-x/scale)) - 1`` (original Nirnay formula).
-    """
-    return 2.0 / (1.0 + np.exp(-x / scale)) - 1.0
-
-
-def _zscore_clipped(series: pd.Series, window: int, clip: float = 3.0) -> pd.Series:
-    """Rolling causal z-score with outlier clipping. Uses shift(1) to prevent
-    today's outlier from biasing the denominator. No bfill on the shifted
-    stats: backfilling row 0 from row 1's statistic reintroduces the current
-    observation into its own z-score at the series head — row 0 simply stays
-    neutral (the trailing ``fillna(0)``)."""
-    series_filled = series.ffill().fillna(0)
-    roll_mean = series_filled.rolling(window=window, min_periods=1).mean().shift(1)
-    roll_std = series_filled.rolling(window=window, min_periods=1).std().shift(1)
-    z = (series_filled - roll_mean) / roll_std.replace(0, np.nan)
-    return z.clip(-clip, clip).fillna(0)
-
-
-def _calculate_atr(df: pd.DataFrame, length: int = 14) -> pd.Series:
-    """Exponential moving average True Range."""
-    high_low = df["High"] - df["Low"]
-    high_close = (df["High"] - df["Close"].shift()).abs()
-    low_close = (df["Low"] - df["Close"].shift()).abs()
-    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-    return tr.ewm(alpha=1 / length, adjust=False).mean()
+from core.config import (
+    NIRNAY_HMM_STD_FLOOR,
+    NIRNAY_OVERBOUGHT,
+    NIRNAY_OVERSOLD,
+    NIRNAY_WARMUP_BARS,
+)
 
 
 # ─── Market Strength Factor ──────────────────────────────────────────────────
@@ -84,16 +59,18 @@ def calculate_msf(
 
     Returns
     -------
-    msf_signal, micro_norm, momentum_norm, accum_norm
+    msf_signal, micro_norm, momentum_norm, flow_norm
         The diagnostic component series returned are the *pre*-orthogonalization
         values (for display); ``msf_signal`` is the orthogonalized composite.
+        ``flow_norm`` is the flow component that enters the composite
+        (accumulation ratio + volatility-adaptive regime count, /√2).
     """
     close = df["Close"]
 
     # Momentum
     roc_raw = close.pct_change(roc_len, fill_method=None)
-    roc_z = _zscore_clipped(roc_raw, length, clip)
-    momentum_norm = _sigmoid(roc_z, 1.5)
+    roc_z = zscore_clipped(roc_raw, length, clip)
+    momentum_norm = sigmoid(roc_z, 1.5)
 
     # Microstructure
     intrabar_dir = (df["High"] + df["Low"]) / 2 - df["Open"]
@@ -103,23 +80,23 @@ def calculate_msf(
     price_change_imp = close.diff(5)
     vw_impact = (price_change_imp * vol_ratio).rolling(length).mean()
     micro_raw = vw_direction - vw_impact
-    micro_z = _zscore_clipped(micro_raw, length, clip)
-    micro_norm = _sigmoid(micro_z, 1.5)
+    micro_z = zscore_clipped(micro_raw, length, clip)
+    micro_norm = sigmoid(micro_z, 1.5)
 
     # Trend
     trend_fast = close.rolling(5).mean()
     trend_slow = close.rolling(length).mean()
-    trend_diff_z = _zscore_clipped(trend_fast - trend_slow, length, clip)
+    trend_diff_z = zscore_clipped(trend_fast - trend_slow, length, clip)
     mom_accel_raw = close.diff(5).diff(5)
-    mom_accel_z = _zscore_clipped(mom_accel_raw, length, clip)
-    atr = _calculate_atr(df, 14)
+    mom_accel_z = zscore_clipped(mom_accel_raw, length, clip)
+    atr = calculate_atr(df, 14)
     vol_adj_mom_raw = close.diff(5) / atr
-    vol_adj_mom_z = _zscore_clipped(vol_adj_mom_raw, length, clip)
-    mean_rev_z = _zscore_clipped(close - trend_slow, length, clip)
+    vol_adj_mom_z = zscore_clipped(vol_adj_mom_raw, length, clip)
+    mean_rev_z = zscore_clipped(close - trend_slow, length, clip)
     composite_trend_z = (
         trend_diff_z + mom_accel_z + vol_adj_mom_z + mean_rev_z
     ) / np.sqrt(4.0)
-    composite_trend_norm = _sigmoid(composite_trend_z, 1.5)
+    composite_trend_norm = sigmoid(composite_trend_z, 1.5)
 
     # Flow
     typical_price = (df["High"] + df["Low"] + close) / 3
@@ -151,8 +128,8 @@ def calculate_msf(
     )
     regime_count = pd.Series(regime_signals, index=df.index).cumsum()
     regime_raw = regime_count - regime_count.rolling(length).mean()
-    regime_z = _zscore_clipped(regime_raw, length, clip)
-    regime_norm = _sigmoid(regime_z, 1.5)
+    regime_z = zscore_clipped(regime_raw, length, clip)
+    regime_norm = sigmoid(regime_z, 1.5)
 
     # Combine — causal Gram-Schmidt orthogonalize the four components first.
     # They share inputs (momentum, trend and vol-adjusted momentum are all
@@ -170,9 +147,9 @@ def calculate_msf(
     ])
     ortho = causal_gram_schmidt_orthogonalize(comp_matrix)
     msf_raw = ortho.sum(axis=1)
-    msf_signal = pd.Series(_sigmoid(msf_raw, 1.0), index=df.index)
+    msf_signal = pd.Series(sigmoid(msf_raw, 1.0), index=df.index)
 
-    return msf_signal, micro_norm, momentum_norm, accum_norm
+    return msf_signal, micro_norm, momentum_norm, flow_norm
 
 
 # ─── Macro-Micro Regime ──────────────────────────────────────────────────────
@@ -184,11 +161,18 @@ def calculate_mmr(
     num_vars: int = 5,
     macro_columns: list[str] | None = None,
 ) -> tuple[pd.Series, list[dict[str, Any]], pd.Series]:
-    """Calculate Macro-Micro Regime via rolling R²-weighted regression.
+    """Calculate Macro-Micro Regime via rolling R²-weighted level fits.
 
-    Finds the top ``num_vars`` macro indicators most correlated with price,
-    builds a weighted composite prediction, and measures the deviation of
-    actual price from that prediction.
+    For every macro column a 20-bar (``length``) univariate level fit of Close
+    on the macro is estimated from rows < t (slope = r·σy/σx, intercept from
+    the prior-window means); at each row the ``num_vars`` fits with the
+    highest prior r² are blended (r²-weighted) into a fitted level ŷ_t. The
+    MMR signal is the causal z of ``Close − ŷ`` squashed to [-1, 1].
+
+    ``mmr_quality`` = √max(0, 1 − MSE(Close − ŷ) / MSE(ΔClose)) over the
+    trailing ``length`` rows: the skill of the "20d level-fit vs RW" (random
+    walk "today ≈ yesterday"), MSE-based so a biased fit is not scored as
+    perfect (A2-07). 0 = no better than a random walk.
 
     Returns
     -------
@@ -205,14 +189,14 @@ def calculate_mmr(
     # No bfill on any shifted rolling stat: backfilling the warm-up rows with
     # the first post-warm-up value fills them from a FUTURE window (for
     # roll_corr that was ~`length` rows of look-ahead). Warm-up rows stay NaN
-    # and fall through to the y_mean fallback in the row loop below.
+    # and fall through to the y_mean fallback in the driver selection below.
     y_mean = target.rolling(length, min_periods=1).mean().shift(1)
     y_std = target.rolling(length, min_periods=1).std().shift(1)
 
     preds_list = []
     r2_list = []
 
-    # Vectorized causal rolling computations
+    # Per-driver causal rolling level fits (coefficients from rows < t)
     for ticker in available_macros:
         x = df[ticker].ffill().fillna(0)
         x_mean = x.rolling(length, min_periods=1).mean().shift(1)
@@ -243,55 +227,41 @@ def calculate_mmr(
         preds_list.append(pred)
         r2_list.append(r2)
 
-    all_preds = pd.concat(preds_list, axis=1)
-    all_r2 = pd.concat(r2_list, axis=1)
-    
-    # Causally select top `num_vars` drivers per row!
-    all_preds_arr = all_preds.values
-    all_r2_arr = all_r2.values
-    
-    n_rows = len(df)
-    y_predicted = np.empty(n_rows, dtype=np.float64)
+    all_preds_arr = np.column_stack([p.to_numpy(dtype=np.float64) for p in preds_list])
+    all_r2_arr = np.column_stack([r.to_numpy(dtype=np.float64) for r in r2_list])
 
-    for i in range(n_rows):
-        row_r2 = all_r2_arr[i]
-        # isfinite, not ~isnan: +inf passes an isnan check and always sorts
-        # last in the argsort below — the driver-hijack path (audit B2). The
-        # per-driver predictions must be finite too, or a sane r² can still
-        # smuggle a non-finite prediction into the weighted sum.
-        valid_mask = np.isfinite(row_r2) & np.isfinite(all_preds_arr[i])
-        if np.sum(valid_mask) < num_vars:
-            y_predicted[i] = y_mean.iloc[i]
-            continue
-
-        top_indices = np.argsort(row_r2[valid_mask])[-num_vars:]
-        top_real_indices = np.where(valid_mask)[0][top_indices]
-
-        r2_sel = row_r2[top_real_indices]
-        preds_sel = all_preds_arr[i, top_real_indices]
-
-        r2_sum = np.sum(r2_sel)
-        if np.isfinite(r2_sum) and r2_sum > 1e-6:
-            y_predicted[i] = np.sum(preds_sel * r2_sel) / r2_sum
-        else:
-            y_predicted[i] = y_mean.iloc[i]
+    # Causally select the top `num_vars` drivers per row (vectorized). A driver
+    # is eligible only if both its r² and its prediction are finite (an inf r²
+    # from a pegged column would otherwise always win). Ineligible entries are
+    # masked to −inf so a STABLE argsort of the full row reproduces the stable
+    # argsort of the compacted eligible vector exactly (ties → lower column
+    # index first), then the last `num_vars` are the top drivers.
+    valid = np.isfinite(all_r2_arr) & np.isfinite(all_preds_arr)
+    masked = np.where(valid, all_r2_arr, -np.inf)
+    top = np.argsort(masked, axis=1, kind="stable")[:, -num_vars:]
+    r2_sel = np.take_along_axis(all_r2_arr, top, axis=1)
+    preds_sel = np.take_along_axis(all_preds_arr, top, axis=1)
+    y_mean_arr = y_mean.to_numpy(dtype=np.float64)
+    with np.errstate(invalid="ignore"):
+        r2_sum = r2_sel.sum(axis=1)
+        ok = (valid.sum(axis=1) >= num_vars) & np.isfinite(r2_sum) & (r2_sum > 1e-6)
+        blended = (preds_sel * r2_sel).sum(axis=1) / np.where(ok, r2_sum, 1.0)
+    y_predicted = np.where(ok, blended, y_mean_arr)
 
     deviation = target - pd.Series(y_predicted, index=df.index)
-    mmr_z = _zscore_clipped(deviation, length, 3.0)
-    mmr_signal = _sigmoid(mmr_z, 1.5)
+    mmr_z = zscore_clipped(deviation, length, 3.0)
+    mmr_signal = sigmoid(mmr_z, 1.5)
 
-    # Rolling out-of-sample skill of the composite fair-value model, benchmarked
-    # against a RANDOM WALK (naive last-value predictor) rather than the raw
-    # price-level variance. R² vs price-level is dominated by trend and inflates
-    # toward 1 for any model that merely tracks the drift; R² vs random walk
-    # asks the honest question — does the macro model beat "tomorrow ≈ today"?
-    #   R²_rw = 1 - Var(target - ŷ) / Var(target - target₋₁)
+    # Skill of the 20d level fit vs a RANDOM WALK ("today ≈ yesterday"),
+    # MSE-based (mean of squares, not variance: a fit that is always 5 points
+    # off has zero residual variance but a large MSE — A2-07):
+    #   skill = 1 − MSE(Close − ŷ) / MSE(ΔClose)   over the trailing `length` rows
+    #   MMR_Quality = √clip(skill, 0, 1)
     min_p = max(length // 2, 5)
-    resid_var = deviation.rolling(length, min_periods=min_p).var()
-    rw_resid = target.diff()
-    rw_var = rw_resid.rolling(length, min_periods=min_p).var().replace(0, np.nan)
-    r2_roll = (1.0 - resid_var / rw_var).clip(lower=0.0, upper=1.0)
-    mmr_quality = np.sqrt(r2_roll.fillna(0.0))
+    fit_mse = (deviation ** 2).rolling(length, min_periods=min_p).mean()
+    rw_mse = (target.diff() ** 2).rolling(length, min_periods=min_p).mean().replace(0, np.nan)
+    skill = (1.0 - fit_mse / rw_mse).clip(lower=0.0, upper=1.0)
+    mmr_quality = np.sqrt(skill.fillna(0.0))
 
     # For display purposes (not trading logic), get the trailing global top
     # drivers. Ranked by |r| but the SIGNED correlation is reported — an
@@ -321,6 +291,16 @@ def calculate_mmr(
 
 # ─── Full Analysis Pipeline ──────────────────────────────────────────────────
 
+# Columns run_full_analysis adds to the input frame (in order).
+_OUTPUT_COLUMNS = (
+    "MSF", "Micro", "Momentum", "Flow", "MMR", "MMR_Quality",
+    "Unified", "Unified_Osc", "MSF_Osc", "MMR_Osc", "MSF_Weight", "MMR_Weight",
+    "Agreement", "OS_Cut", "OB_Cut", "Buy_Signal", "Sell_Signal", "Bullish_Div",
+    "Bearish_Div", "Condition", "Warmup",
+    "Regime", "HMM_Bull", "HMM_Bear", "Vol_Regime", "Change_Point", "Confidence",
+)
+_BOOL_OUTPUTS = ("Buy_Signal", "Sell_Signal", "Bullish_Div", "Bearish_Div", "Warmup", "Change_Point")
+
 
 def run_full_analysis(
     df: pd.DataFrame,
@@ -333,28 +313,54 @@ def run_full_analysis(
 ) -> tuple[pd.DataFrame, list[dict[str, Any]]]:
     """Run the complete Nirnay pipeline on a single stock DataFrame.
 
+    Rows whose ``Close`` is NaN (pre-listing prefix of a union-indexed
+    download, or an inner missing bar) are DROPPED first: the output holds the
+    stock's genuine bars only, so phantom rows can neither be counted nor pin
+    the expanding quantiles (A2-03). The caller's frame is not mutated.
+
     Steps
     -----
-    1. Calculate MSF and MMR signals
-    2. Compute adaptive clarity-based weights
-    3. Blend signals with agreement multiplier
-    4. Classify conditions (Oversold/Overbought/Neutral)
-    5. Run regime intelligence loop (Kalman → GARCH → HMM → CUSUM)
+    1. MSF and MMR signals
+    2. Adaptive clarity-based weights, blend, agreement multiplier
+    3. Condition (Oversold / Overbought / Neutral) against causal per-stock
+       cuts — the expanding 30th / 70th percentile of this stock's own
+       oscillator over the bars BEFORE t (``OS_Cut`` / ``OB_Cut`` record the
+       cut actually applied on each row; ~30% / 30% of live stock-days are
+       flagged by construction). The config ±``NIRNAY_OVERSOLD`` prior applies
+       only until ``NIRNAY_WARMUP_BARS`` prior bars exist (or on a degenerate
+       flat band).
+    4. ``Warmup`` = the first ``NIRNAY_WARMUP_BARS`` genuine bars; excluded
+       from the daily aggregation.
+    5. Regime ensemble (Kalman → GARCH on Close log returns → HMM → CUSUM on
+       standardized Kalman innovations), see ``analytics.regime``.
     """
     if macro_columns is None:
         macro_columns = []
 
-    # Guarantee a unique, sorted DatetimeIndex. A duplicate date (yfinance
-    # occasionally returns one; a join against a duplicated macro index can also
-    # introduce them) would make every downstream `.loc[date]` return a frame
-    # instead of a row, corrupting the daily aggregation.
+    # Genuine bars only, unique sorted DatetimeIndex. A duplicate date would
+    # make every downstream `.loc[date]` return a frame instead of a row.
+    df = df.loc[df["Close"].notna()]
     if df.index.duplicated().any():
         df = df[~df.index.duplicated(keep="last")]
-    df = df.sort_index()
+    df = df.sort_index().copy()
 
-    df["MSF"], df["Micro"], df["Momentum"], df["Flow"] = calculate_msf(df, length, roc_len)
-    df["MMR"], drivers, df["MMR_Quality"] = calculate_mmr(
+    if df.empty:
+        empty = pd.DataFrame(
+            {c: pd.Series(dtype=object if c in ("Condition", "Regime", "Vol_Regime")
+                          else bool if c in _BOOL_OUTPUTS else float)
+             for c in _OUTPUT_COLUMNS},
+            index=df.index,
+        )
+        return pd.concat([df, empty], axis=1), []
+
+    msf, micro, momentum, flow = calculate_msf(df, length, roc_len)
+    mmr, drivers, mmr_quality = calculate_mmr(
         df, length, num_vars=num_vars, macro_columns=macro_columns
+    )
+    df = pd.concat(
+        [df, pd.DataFrame({"MSF": msf, "Micro": micro, "Momentum": momentum, "Flow": flow,
+                           "MMR": mmr, "MMR_Quality": mmr_quality}, index=df.index)],
+        axis=1,
     )
 
     # Adaptive weighting based on signal clarity
@@ -384,31 +390,24 @@ def run_full_analysis(
         1.0 - 0.1 * agree_strength,
     )
 
-    # Compute all derived columns as local arrays first, then join in ONE
-    # block-build via pd.concat. Note: df.assign() also triggers the
-    # PerformanceWarning on newer pandas because internally it does a per-kwarg
-    # column insert loop. pd.concat with a fresh inner DataFrame builds the
-    # twelve new columns as a single block and merges them in one operation.
     unified = np.asarray((unified_signal * multiplier).clip(-1.0, 1.0))
     unified_osc = unified * 10.0
     msf_osc = df["MSF"].to_numpy() * 10.0
     mmr_osc = df["MMR"].to_numpy() * 10.0
-    close_arr = df["Close"].to_numpy()
+    close_arr = df["Close"].to_numpy(dtype=np.float64)
+    agreement_arr = agreement.to_numpy()
 
-    agreement_arr = agreement.to_numpy() if hasattr(agreement, "to_numpy") else np.asarray(agreement)
-
-    # Market-led, CAUSAL oscillator bands: expanding-window quantiles of THIS
-    # name's own oscillator / agreement history, shifted one bar so the cut-point
-    # at t uses only information available *before* t — no look-ahead, so the
-    # historical Condition / Buy / Sell / Divergence flags are backtest-safe.
-    # Config NIRNAY_* / 0.3 are the cold-start prior until ≥50 (20) bars exist.
+    # Causal per-stock bands: expanding quantiles of THIS name's own history,
+    # shifted one bar (cut at t uses bars < t only). The first adaptive cut
+    # needs NIRNAY_WARMUP_BARS prior bars, i.e. exactly the Warmup rows run on
+    # the config cold-start prior.
     osc_s = pd.Series(unified_osc, index=df.index)
     os_cut_arr = (
-        osc_s.expanding(min_periods=50).quantile(0.30).shift(1)
+        osc_s.expanding(min_periods=NIRNAY_WARMUP_BARS).quantile(0.30).shift(1)
         .fillna(float(NIRNAY_OVERSOLD)).to_numpy()
     )
     ob_cut_arr = (
-        osc_s.expanding(min_periods=50).quantile(0.70).shift(1)
+        osc_s.expanding(min_periods=NIRNAY_WARMUP_BARS).quantile(0.70).shift(1)
         .fillna(float(NIRNAY_OVERBOUGHT)).to_numpy()
     )
     # Guard degenerate (flat) windows where the band would collapse.
@@ -442,7 +441,13 @@ def run_full_analysis(
         "Oversold",
         np.where(unified_osc > ob_cut_arr, "Overbought", "Neutral"),
     )
+    warmup = np.arange(len(df)) < NIRNAY_WARMUP_BARS
 
+    regimes, hmm_bulls, hmm_bears, vol_regimes, change_points, confidences = (
+        run_regime_loop(unified, close_arr, std_floor=NIRNAY_HMM_STD_FLOOR)
+    )
+
+    # One block-build + one merge (per-column inserts fragment the frame).
     df = pd.concat(
         [
             df,
@@ -452,40 +457,17 @@ def run_full_analysis(
                     "Unified_Osc": unified_osc,
                     "MSF_Osc": msf_osc,
                     "MMR_Osc": mmr_osc,
-                    "MSF_Weight": msf_w_norm,
-                    "MMR_Weight": mmr_w_norm,
-                    "Agreement": agreement.to_numpy() if hasattr(agreement, "to_numpy") else np.asarray(agreement),
+                    "MSF_Weight": msf_w_norm.to_numpy(),
+                    "MMR_Weight": mmr_w_norm.to_numpy(),
+                    "Agreement": agreement_arr,
+                    "OS_Cut": os_cut_arr,
+                    "OB_Cut": ob_cut_arr,
                     "Buy_Signal": buy_signal,
                     "Sell_Signal": sell_signal,
                     "Bullish_Div": bullish_div,
                     "Bearish_Div": bearish_div,
                     "Condition": condition,
-                },
-                index=df.index,
-            ),
-        ],
-        axis=1,
-    )
-
-    # Regime intelligence loop — single-pass Numba kernel (port of the
-    # Kalman → GARCH → HMM → CUSUM object loop; see analytics/regime.py for
-    # the two 2026-07 correctness fixes applied to BOTH implementations:
-    # causal CUSUM window and the HMM state-ordering constraint). Same
-    # structural HMM cuts (strong = 2/3, weak = 1/3 + 0.07); the per-step
-    # Python/NumPy dispatch is eliminated.
-    regimes, hmm_bulls, hmm_bears, vol_regimes, change_points, confidences = (
-        run_regime_loop(df["Unified"].values)
-    )
-
-    # Join the six regime-intelligence columns as ONE block via pd.concat.
-    # df.assign() also fragments under newer pandas because it inserts kwargs
-    # one-by-one internally; pd.concat with a pre-built inner DataFrame avoids
-    # that entirely (single block-build, single merge).
-    df = pd.concat(
-        [
-            df,
-            pd.DataFrame(
-                {
+                    "Warmup": warmup,
                     "Regime": regimes,
                     "HMM_Bull": hmm_bulls,
                     "HMM_Bear": hmm_bears,
@@ -498,120 +480,175 @@ def run_full_analysis(
         ],
         axis=1,
     )
-
     return df, drivers
 
 
 # ─── Constituent Aggregation ─────────────────────────────────────────────────
 
+_BULL_LABELS = ("BULL", "WEAK_BULL")
+_BEAR_LABELS = ("BEAR", "WEAK_BEAR")
+
+# Daily frame schema (aggregate_constituent_timeseries), in order.
+_DAILY_COLUMNS = (
+    "n_universe", "n_live", "coverage",
+    "Oversold", "Overbought", "Neutral", "Buy_Signals", "Sell_Signals",
+    "Total_Analyzed", "Avg_Signal", "Signal_Sum", "Dispersion",
+    "Bull_Div", "Bear_Div", "Regime_Bull", "Regime_Bear", "Regime_Transition",
+    "Vol_High", "Vol_Low", "Change_Points",
+    "Oversold_Pct", "Overbought_Pct", "Neutral_Pct",
+    "Regime_Bull_Pct", "Regime_Bear_Pct", "Regime_Neutral_Pct", "Regime_Transition_Pct",
+    "Vol_High_Pct", "avg_hmm_bull", "avg_hmm_bear", "avg_msf_osc", "avg_mmr_osc",
+)
+
+
+def _live_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """A constituent's LIVE rows: genuine bar (finite Close), past warm-up,
+    finite oscillator; one row per calendar day (tz dropped, normalized)."""
+    sub = df
+    if isinstance(sub.columns, pd.MultiIndex):
+        sub = sub.copy()
+        sub.columns = [c[0] for c in sub.columns]
+    mask = pd.Series(True, index=sub.index)
+    if "Close" in sub.columns:
+        mask &= pd.to_numeric(sub["Close"], errors="coerce").notna()
+    if "Warmup" in sub.columns:
+        mask &= ~sub["Warmup"].fillna(True).astype(bool)
+    else:  # frame from an older engine: derive warm-up from genuine-bar order
+        mask &= mask.cumsum() > NIRNAY_WARMUP_BARS
+    osc = pd.to_numeric(sub.get("Unified_Osc", pd.Series(np.nan, index=sub.index)), errors="coerce")
+    mask &= np.isfinite(osc)
+    sub = sub.loc[mask.to_numpy()]
+    idx = pd.DatetimeIndex(sub.index)
+    if idx.tz is not None:
+        idx = idx.tz_localize(None)
+    sub = sub.set_axis(idx.normalize(), axis=0)
+    if sub.index.has_duplicates:
+        sub = sub[~sub.index.duplicated(keep="last")]
+    return sub
+
 
 def aggregate_constituent_timeseries(
     constituent_results: dict[str, pd.DataFrame],
 ) -> pd.DataFrame:
-    """Aggregate per-constituent Nirnay results into daily statistics.
+    """Aggregate per-constituent Nirnay results into daily breadth.
 
-    Produces the same column schema as the original Nirnay system:
-    Oversold/Overbought counts and percentages, signal counts, regime
-    distributions, and average oscillator values.
+    Only LIVE names enter a day: a genuine bar that day, past the
+    ``NIRNAY_WARMUP_BARS`` warm-up, finite oscillator. Missing / pre-listing /
+    warm-up names are excluded — never neutral-filled (A2-03/13).
+
+    Columns (DatetimeIndex ``Date``; days with ``n_live == 0`` are DROPPED, so
+    absence of a date means NO_DATA downstream):
+
+    - ``n_universe`` — constituents supplied to this run (constant per run);
+      ``n_live`` — live names that day, the DENOMINATOR of every pct / mean;
+      ``coverage`` = n_live / n_universe; ``Total_Analyzed`` = n_live.
+    - Counts: ``Oversold``, ``Overbought``, ``Neutral``, ``Buy_Signals``,
+      ``Sell_Signals``, ``Bull_Div``, ``Bear_Div``, ``Regime_Bull``,
+      ``Regime_Bear``, ``Regime_Transition``, ``Vol_High`` (HIGH+EXTREME),
+      ``Vol_Low``, ``Change_Points``.
+    - Pct of n_live: ``Oversold_Pct``, ``Overbought_Pct``, ``Neutral_Pct``,
+      ``Regime_Bull_Pct`` (BULL + WEAK_BULL), ``Regime_Bear_Pct``
+      (BEAR + WEAK_BEAR), ``Regime_Neutral_Pct``, ``Regime_Transition_Pct``
+      (the four regime pcts sum to 100), ``Vol_High_Pct``.
+    - Means over live names: ``Avg_Signal`` (Unified_Osc, ±10 scale),
+      ``avg_hmm_bull``, ``avg_hmm_bear``, ``avg_msf_osc``, ``avg_mmr_osc``;
+      ``Signal_Sum`` (sum of Unified_Osc); ``Dispersion`` = cross-sectional
+      population std (ddof=0) of Unified_Osc.
     """
+    empty = pd.DataFrame({c: pd.Series(dtype=float) for c in _DAILY_COLUMNS},
+                         index=pd.DatetimeIndex([], name="Date"))
     if not constituent_results:
-        return pd.DataFrame()
-
-    # Vectorized aggregation. The previous implementation looped dates × stocks
-    # with a per-cell df.loc[date] label lookup (≈ 1700 × 50 ≈ 86k lookups, each
-    # followed by ~15 row.get() calls) — ~13s locally / ~35s on a weak CPU. This
-    # stacks every constituent into one frame and groups by date, which is the
-    # same daily counts/means but ~50x faster (bit-identical output to ~1e-14).
-    _num_defaults = {"Unified_Osc": 0.0, "MSF_Osc": 0.0, "MMR_Osc": 0.0,
-                     "HMM_Bull": 0.33, "HMM_Bear": 0.33}
-    _str_defaults = {"Condition": "Neutral", "Regime": "NEUTRAL", "Vol_Regime": "NORMAL"}
-    _bool_cols = ["Buy_Signal", "Sell_Signal", "Bullish_Div", "Bearish_Div", "Change_Point"]
-    _cols = list(_num_defaults) + list(_str_defaults) + _bool_cols
+        return empty
+    n_universe = len(constituent_results)
 
     parts: list[pd.DataFrame] = []
-    for sym, df in constituent_results.items():
-        sub = df[[c for c in _cols if c in df.columns]].copy()
-        # A duplicate date would otherwise double-count that stock for the day;
-        # collapse to the last row (matches the old isinstance→iloc[-1] guard).
-        if sub.index.has_duplicates:
-            sub = sub[~sub.index.duplicated(keep="last")]
-        for c in _cols:  # fill any columns a constituent is missing with defaults
-            if c not in sub.columns:
-                sub[c] = {**_num_defaults, **_str_defaults, **{b: False for b in _bool_cols}}[c]
-        parts.append(sub)
+    for df in constituent_results.values():
+        if df is None or len(df) == 0:
+            continue
+        sub = _live_rows(df)
+        if sub.empty:
+            continue
+
+        def _num(col: str, default: float) -> np.ndarray:
+            if col in sub.columns:
+                return pd.to_numeric(sub[col], errors="coerce").to_numpy(dtype=np.float64)
+            return np.full(len(sub), default)
+
+        def _flag(col: str) -> np.ndarray:
+            if col in sub.columns:
+                return sub[col].fillna(False).astype(bool).to_numpy(dtype=np.int64)
+            return np.zeros(len(sub), dtype=np.int64)
+
+        cond = sub["Condition"].astype(str) if "Condition" in sub.columns else pd.Series("Neutral", index=sub.index)
+        reg = sub["Regime"].astype(str) if "Regime" in sub.columns else pd.Series("NEUTRAL", index=sub.index)
+        vol = sub["Vol_Regime"].astype(str) if "Vol_Regime" in sub.columns else pd.Series("NORMAL", index=sub.index)
+        is_bull = reg.isin(_BULL_LABELS)
+        is_bear = reg.isin(_BEAR_LABELS)
+        is_tr = reg == "TRANSITION"
+        osc = _num("Unified_Osc", np.nan)
+        parts.append(pd.DataFrame(
+            {
+                "n_live": 1,
+                "Signal_Sum": osc,
+                "osc_sq": osc * osc,
+                "Oversold": (cond == "Oversold").to_numpy(dtype=np.int64),
+                "Overbought": (cond == "Overbought").to_numpy(dtype=np.int64),
+                "Neutral": (~cond.isin(("Oversold", "Overbought"))).to_numpy(dtype=np.int64),
+                "Buy_Signals": _flag("Buy_Signal"),
+                "Sell_Signals": _flag("Sell_Signal"),
+                "Bull_Div": _flag("Bullish_Div"),
+                "Bear_Div": _flag("Bearish_Div"),
+                "Regime_Bull": is_bull.to_numpy(dtype=np.int64),
+                "Regime_Bear": is_bear.to_numpy(dtype=np.int64),
+                "Regime_Transition": is_tr.to_numpy(dtype=np.int64),
+                "Regime_Neutral": (~is_bull & ~is_bear & ~is_tr).to_numpy(dtype=np.int64),
+                "Vol_High": vol.isin(("HIGH", "EXTREME")).to_numpy(dtype=np.int64),
+                "Vol_Low": (vol == "LOW").to_numpy(dtype=np.int64),
+                "Change_Points": _flag("Change_Point"),
+                "avg_hmm_bull": _num("HMM_Bull", np.nan),
+                "avg_hmm_bear": _num("HMM_Bear", np.nan),
+                "avg_msf_osc": _num("MSF_Osc", np.nan),
+                "avg_mmr_osc": _num("MMR_Osc", np.nan),
+            },
+            index=sub.index,
+        ))
+    if not parts:
+        return empty
 
     big = pd.concat(parts, axis=0)
-    cond = big["Condition"].astype(str)
-    reg = big["Regime"].astype(str)
-    vol = big["Vol_Regime"].astype(str)
-    is_bull = reg.str.contains("BULL")
-    is_bear = reg.str.contains("BEAR")
-    is_volhigh = vol.isin(("HIGH", "EXTREME"))
+    grp = big.groupby(level=0, sort=True)
+    count_cols = ["n_live", "Signal_Sum", "osc_sq", "Oversold", "Overbought", "Neutral",
+                  "Buy_Signals", "Sell_Signals", "Bull_Div", "Bear_Div", "Regime_Bull",
+                  "Regime_Bear", "Regime_Transition", "Regime_Neutral", "Vol_High",
+                  "Vol_Low", "Change_Points"]
+    agg = grp[count_cols].sum()
+    means = grp[["Signal_Sum", "avg_hmm_bull", "avg_hmm_bear", "avg_msf_osc", "avg_mmr_osc"]].mean()
+    disp = grp["Signal_Sum"].std(ddof=0)
 
-    f = pd.DataFrame(index=big.index)
-    f["Total_Analyzed"] = 1
-    f["Signal_Sum"] = pd.to_numeric(big["Unified_Osc"], errors="coerce").fillna(0.0).to_numpy()
-    f["Oversold"] = (cond == "Oversold").to_numpy(dtype=int)
-    f["Overbought"] = (cond == "Overbought").to_numpy(dtype=int)
-    f["Neutral"] = (~cond.isin(("Oversold", "Overbought"))).to_numpy(dtype=int)
-    f["Buy_Signals"] = big["Buy_Signal"].astype(bool).to_numpy(dtype=int)
-    f["Sell_Signals"] = big["Sell_Signal"].astype(bool).to_numpy(dtype=int)
-    f["Bull_Div"] = big["Bullish_Div"].astype(bool).to_numpy(dtype=int)
-    f["Bear_Div"] = big["Bearish_Div"].astype(bool).to_numpy(dtype=int)
-    # Priority matches the original if/elif chain: BULL > BEAR > TRANSITION > else.
-    f["Regime_Bull"] = is_bull.to_numpy(dtype=int)
-    f["Regime_Bear"] = (~is_bull & is_bear).to_numpy(dtype=int)
-    f["Regime_Transition"] = (~is_bull & ~is_bear & (reg == "TRANSITION")).to_numpy(dtype=int)
-    f["Regime_Neutral"] = (~is_bull & ~is_bear & (reg != "TRANSITION")).to_numpy(dtype=int)
-    f["Vol_High"] = is_volhigh.to_numpy(dtype=int)
-    f["Vol_Low"] = ((~is_volhigh) & (vol == "LOW")).to_numpy(dtype=int)
-    f["Change_Points"] = big["Change_Point"].astype(bool).to_numpy(dtype=int)
-    f["avg_hmm_bull"] = pd.to_numeric(big["HMM_Bull"], errors="coerce").fillna(0.33).to_numpy()
-    f["avg_hmm_bear"] = pd.to_numeric(big["HMM_Bear"], errors="coerce").fillna(0.33).to_numpy()
-    f["avg_msf_osc"] = pd.to_numeric(big["MSF_Osc"], errors="coerce").fillna(0.0).to_numpy()
-    f["avg_mmr_osc"] = pd.to_numeric(big["MMR_Osc"], errors="coerce").fillna(0.0).to_numpy()
-
-    grp = f.groupby(f.index, sort=True)
-    sum_cols = ["Oversold", "Overbought", "Neutral", "Buy_Signals", "Sell_Signals",
-                "Total_Analyzed", "Avg_Signal", "Signal_Sum", "Bull_Div", "Bear_Div",
-                "Regime_Bull", "Regime_Bear", "Regime_Neutral", "Regime_Transition",
-                "Vol_High", "Vol_Low", "Change_Points"]
-    agg = grp[["Total_Analyzed", "Signal_Sum", "Oversold", "Overbought", "Neutral",
-               "Buy_Signals", "Sell_Signals", "Bull_Div", "Bear_Div", "Regime_Bull",
-               "Regime_Bear", "Regime_Neutral", "Regime_Transition", "Vol_High",
-               "Vol_Low", "Change_Points"]].sum()
-    means = grp[["avg_hmm_bull", "avg_hmm_bear", "avg_msf_osc", "avg_mmr_osc"]].mean()
-
-    n = agg["Total_Analyzed"]
-    out = pd.DataFrame(index=agg.index)
-    out["Oversold"] = agg["Oversold"]
-    out["Overbought"] = agg["Overbought"]
-    out["Neutral"] = agg["Neutral"]
-    out["Buy_Signals"] = agg["Buy_Signals"]
-    out["Sell_Signals"] = agg["Sell_Signals"]
+    agg = agg[agg["n_live"] > 0]
+    n = agg["n_live"].astype(np.int64)
+    out = pd.DataFrame(index=pd.DatetimeIndex(agg.index, name="Date"))
+    out["n_universe"] = np.int64(n_universe)
+    out["n_live"] = n
+    out["coverage"] = n / float(n_universe)
+    for c in ("Oversold", "Overbought", "Neutral", "Buy_Signals", "Sell_Signals"):
+        out[c] = agg[c].astype(np.int64)
     out["Total_Analyzed"] = n
-    out["Avg_Signal"] = (agg["Signal_Sum"] / n).where(n > 0, 0.0)
+    out["Avg_Signal"] = means["Signal_Sum"].reindex(out.index)
     out["Signal_Sum"] = agg["Signal_Sum"]
-    out["Bull_Div"] = agg["Bull_Div"]
-    out["Bear_Div"] = agg["Bear_Div"]
-    out["Regime_Bull"] = agg["Regime_Bull"]
-    out["Regime_Bear"] = agg["Regime_Bear"]
-    out["Regime_Neutral"] = agg["Regime_Neutral"]
-    out["Regime_Transition"] = agg["Regime_Transition"]
-    out["Vol_High"] = agg["Vol_High"]
-    out["Vol_Low"] = agg["Vol_Low"]
-    out["Change_Points"] = agg["Change_Points"]
-    out["Oversold_Pct"] = agg["Oversold"] / n * 100
-    out["Overbought_Pct"] = agg["Overbought"] / n * 100
-    out["Neutral_Pct"] = agg["Neutral"] / n * 100
-    out["Regime_Bull_Pct"] = agg["Regime_Bull"] / n * 100
-    out["Regime_Bear_Pct"] = agg["Regime_Bear"] / n * 100
-    out["Vol_High_Pct"] = agg["Vol_High"] / n * 100
-    out["avg_hmm_bull"] = means["avg_hmm_bull"]
-    out["avg_hmm_bear"] = means["avg_hmm_bear"]
-    out["avg_msf_osc"] = means["avg_msf_osc"]
-    out["avg_mmr_osc"] = means["avg_mmr_osc"]
-
-    out.index = [d.date() if hasattr(d, "date") else d for d in out.index]
-    out.index.name = "Date"
-    return out
+    out["Dispersion"] = disp.reindex(out.index)
+    for c in ("Bull_Div", "Bear_Div", "Regime_Bull", "Regime_Bear", "Regime_Transition",
+              "Vol_High", "Vol_Low", "Change_Points"):
+        out[c] = agg[c].astype(np.int64)
+    pct = 100.0 / n
+    out["Oversold_Pct"] = agg["Oversold"] * pct
+    out["Overbought_Pct"] = agg["Overbought"] * pct
+    out["Neutral_Pct"] = agg["Neutral"] * pct
+    out["Regime_Bull_Pct"] = agg["Regime_Bull"] * pct
+    out["Regime_Bear_Pct"] = agg["Regime_Bear"] * pct
+    out["Regime_Neutral_Pct"] = agg["Regime_Neutral"] * pct
+    out["Regime_Transition_Pct"] = agg["Regime_Transition"] * pct
+    out["Vol_High_Pct"] = agg["Vol_High"] * pct
+    for c in ("avg_hmm_bull", "avg_hmm_bear", "avg_msf_osc", "avg_mmr_osc"):
+        out[c] = means[c].reindex(out.index)
+    return out[list(_DAILY_COLUMNS)]
