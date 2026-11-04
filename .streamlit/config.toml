@@ -1,0 +1,25 @@
+# Nishkarsh — production Streamlit settings.
+
+[server]
+# No file watching / rerun-on-save in production (also avoids inotify limits on hosts).
+fileWatcherType = "none"
+runOnSave = false
+headless = true
+# Sheet uploads (CSV/XLSX) — tens of thousands of rows fit well under this.
+maxUploadSize = 25
+enableXsrfProtection = true
+
+[browser]
+gatherUsageStats = false
+
+[client]
+# Exception types + generic messages only in the browser; full tracebacks stay in the
+# server log (tracebacks can carry URLs / paths).
+showErrorDetails = "type"
+toolbarMode = "minimal"
+
+[runner]
+magicEnabled = false
+
+[theme]
+base = "dark"

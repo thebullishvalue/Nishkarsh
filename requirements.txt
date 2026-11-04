@@ -1,38 +1,38 @@
-# Nishkarsh — Unified Convergence Analysis System
-# @thebullishvalue Product
+# Nishkarsh — Unified Convergence Analysis System (@thebullishvalue)
+# Floors = oldest versions the code is known to need; caps = next breaking major/minor.
+# Verified together on Python 3.13: streamlit 1.66.1, pandas 3.0.5, numpy 2.5.3,
+# scikit-learn 1.9.1, statsmodels 0.15.0, scipy 1.18.1, numba 0.68.1, pyarrow 26.0.1,
+# yfinance 1.7.0, requests 2.34.2, threadpoolctl 3.7.0, plotly 7.1.0.
 
-# Core Framework
-# streamlit >= 1.42: the UI uses the `width='stretch'` argument on
-# st.button / st.plotly_chart / st.dataframe / st.download_button, introduced
-# in 1.42 — on the previously-declared 1.30 floor the app crashes at first
-# render (TypeError: unexpected keyword 'width').
-streamlit>=1.42.0
-pandas>=2.1.0
-numpy>=1.24.0
-plotly>=5.18.0
-# numba: JIT kernels in analytics/conformal.py and analytics/regime.py.
-numba>=0.59
+# Core framework
+# streamlit >= 1.42: `width='stretch'` on st.button / st.plotly_chart / st.dataframe.
+streamlit>=1.42.0,<2
+# pandas 3: string dtype + copy-on-write semantics are what the code is tested against.
+pandas>=3.0,<4
+numpy>=2.0,<3
+plotly>=5.18,<8
+# numba: JIT kernels in analytics/conformal.py and analytics/regime.py (tracks numpy closely).
+numba>=0.60,<0.70
 
-# Scientific Computing
-scipy>=1.11.0
-# scikit-learn >= 1.7: engines/aarambh.py uses the integer form
-# ElasticNetCV(alphas=10) (n_alphas was deprecated in 1.7 and removed in 1.9;
-# the integer-alphas replacement only exists from 1.7). 1.5+ also provides
-# PCA svd_solver="covariance_eigh".
-scikit-learn>=1.7
-statsmodels>=0.14.0
+# Scientific computing
+scipy>=1.11,<2
+# scikit-learn >= 1.7: ElasticNetCV(alphas=<int>) (n_alphas removed in 1.9);
+# capped below 1.10 because sklearn removes deprecated APIs in minor releases.
+scikit-learn>=1.7,<1.10
+statsmodels>=0.14.2,<0.16
+# BLAS thread pinning for headless/pipeline runs (A5-18).
+threadpoolctl>=3.1,<4
 
-# Self-Calibration / Intelligence Mode (Optuna TPE optimizer)
-optuna>=3.5.0
-
-# Data Sources (yfinance pulls requests transitively)
-yfinance>=0.2.31
-
-# HTML parsers for the Wikipedia constituent-list fallback
-# (pandas.read_html in data/constituents.py). lxml is the primary parser;
-# html5lib is a lenient fallback for malformed markup.
-lxml>=4.9.0
+# Data layer
+# pyarrow: the pickle-free Parquet disk cache and snapshot replay (data/cache.py, data/sources.py).
+pyarrow>=15,<30
+# requests: Google Sheets (timeout + content-type check) and niftyindices / Wikipedia.
+requests>=2.31,<3
+# yfinance 1.x: MultiIndex (Ticker, Price) batch output parsed in data/fetcher.py.
+yfinance>=0.2.54,<2
+# HTML parsers for the Wikipedia constituent-list fallback (pandas.read_html).
+lxml>=4.9
 html5lib>=1.1
 
-# Terminal Support
+# Terminal support (ANSI on Windows consoles)
 colorama>=0.4.6
