@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from scipy import stats as _sstats
 
 from analytics.hurst import hurst_dfa
 
@@ -33,17 +34,15 @@ from analytics.hurst import hurst_dfa
 # the recent regime. PURE Mahalanobis state-matching is the clear winner — it
 # recovers the decayed recent edge (10d recent IC −0.010 → +0.079; 20d −0.083 →
 # +0.095) while holding full-sample IC. So trajectory + recency are dropped (weight
-# 0 → their computation is skipped entirely, also a live speedup).
-ANALOG_W_MAHA = 1.0    # Mahalanobis distance weight (covariance-aware state match)
-ANALOG_W_TRAJ = 0.0    # trajectory cosine-similarity — DROPPED (no lift, hurt recent)
-ANALOG_W_RECV = 0.0    # exponential recency-decay — DROPPED (degraded recent regime)
+# 0; their dead code paths were removed in 2.0.0 — the score is the Mahalanobis
+# similarity alone, bit-identical to the old 1/0/0 blend).
 
 
 # ════════════════════════════════════════════════════════════════════════════
 # Core matcher — ported verbatim from Arthagati (arthagati.py)
 # ════════════════════════════════════════════════════════════════════════════
 
-def _ledoit_wolf_shrinkage(S: np.ndarray, n: int) -> np.ndarray:
+def _oas_shrinkage(S: np.ndarray, n: int) -> np.ndarray:
     """Oracle Approximating Shrinkage estimator (Chen, Wiesel, Eldar & Hero
     2010, IEEE Trans. Signal Processing 58(10), eq. 23, with the O(1/p)
     ``2/p`` correction term omitted — negligible for large p, and that
@@ -54,8 +53,9 @@ def _ledoit_wolf_shrinkage(S: np.ndarray, n: int) -> np.ndarray:
     Σ* = ρ·F + (1−ρ)·S  where F = (tr(S)/p)·I  (scaled identity target).
     Returns the shrunk covariance matrix — always well-conditioned.
 
-    (Name kept for import-site compatibility; this is OAS, not Ledoit & Wolf
-    2004 — a related but distinct shrinkage intensity. The previous formula
+    (Renamed from ``_ledoit_wolf_shrinkage`` in 2.0.0 — this is OAS, not Ledoit &
+    Wolf 2004, a related but distinct shrinkage intensity; the old name is kept
+    as an alias for import-site compatibility. The previous formula
     was mis-transcribed — it had ‖S − μI‖²_F in the numerator and tr(S²) in
     the denominator, the reverse of the OAS closed form — which under-shrinks
     exactly where shrinkage matters most: near-isotropic S, where the true ρ
@@ -72,6 +72,9 @@ def _ledoit_wolf_shrinkage(S: np.ndarray, n: int) -> np.ndarray:
     rho_den = (n + 1.0) * (alpha - mu_sq / p)
     rho = min(max(rho_num / rho_den, 0.0), 1.0) if rho_den != 0 else 1.0
     return (1.0 - rho) * S + rho * mu * np.eye(p)
+
+
+_ledoit_wolf_shrinkage = _oas_shrinkage  # backward-compatible alias (audit A4-13)
 
 
 def select_analogs_theiler(
@@ -116,12 +119,12 @@ def select_analogs_theiler(
 def mahalanobis_distance_batch(features: np.ndarray, center: np.ndarray,
                                cov_matrix: np.ndarray) -> np.ndarray:
     """Mahalanobis distance: d_M = √((x−μ)ᵀ Σ⁻¹ (x−μ)).
-    Uses Ledoit-Wolf analytical shrinkage for a well-conditioned covariance
+    Uses OAS (Oracle Approximating Shrinkage) for a well-conditioned covariance
     inverse, replacing ad-hoc diagonal regularization.
     """
     diff = features - center
     n_samples = features.shape[0]
-    shrunk_cov = _ledoit_wolf_shrinkage(cov_matrix, n_samples)
+    shrunk_cov = _oas_shrinkage(cov_matrix, n_samples)
     try:
         cov_inv = np.linalg.inv(shrunk_cov)
     except np.linalg.LinAlgError:
@@ -129,15 +132,6 @@ def mahalanobis_distance_batch(features: np.ndarray, center: np.ndarray,
     left = diff @ cov_inv
     d_sq = np.maximum(np.sum(left * diff, axis=1), 0)
     return np.sqrt(d_sq)
-
-
-def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
-    """Cosine similarity — trajectory shape match irrespective of magnitude."""
-    a, b = np.asarray(a, dtype=np.float64), np.asarray(b, dtype=np.float64)
-    norm_a, norm_b = np.linalg.norm(a), np.linalg.norm(b)
-    if norm_a < 1e-12 or norm_b < 1e-12:
-        return 0.0
-    return np.dot(a, b) / (norm_a * norm_b)
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -148,11 +142,16 @@ def _rolling_hurst(price: np.ndarray, window: int = 120, step: int = 5) -> np.nd
     """Rolling Hurst (DFA) over a trailing window, computed every ``step`` points
     and forward-filled — a regime persistence/mean-reversion feature. Mirrors
     Arthagati's stepped rolling-Hurst approach to keep it cheap on ~2k-row series.
+
+    Off-grid rows carry the latest on-grid estimate (causal forward fill; 0.5 only
+    before the first estimate). The v1 placeholder was 0.5 on every row, so the
+    ``.replace(0.0, nan).ffill()`` never fired and 4 of every 5 rows read 0.5 —
+    the analog match keyed on (row mod 5) (audit A4-01).
     """
     n = len(price)
-    out = np.full(n, 0.5, dtype=np.float64)
     if n < window:
-        return out
+        return np.full(n, 0.5, dtype=np.float64)
+    out = np.full(n, np.nan, dtype=np.float64)
     log_p = np.log(np.where(price > 0, price, np.nan))
     rets = np.diff(log_p)
     for i in range(window, n, step):
@@ -160,7 +159,7 @@ def _rolling_hurst(price: np.ndarray, window: int = 120, step: int = 5) -> np.nd
         seg = seg[np.isfinite(seg)]
         if len(seg) >= 30:
             out[i] = hurst_dfa(seg)
-    return pd.Series(out).replace(0.0, np.nan).ffill().fillna(0.5).to_numpy()
+    return pd.Series(out).ffill().fillna(0.5).to_numpy(dtype=np.float64, copy=True)
 
 
 def _build_feature_frame(ts: pd.DataFrame, mom_window: int) -> tuple[pd.DataFrame, list[str]]:
@@ -228,15 +227,12 @@ def find_similar_periods(
     *,
     mom_window: int = 20,
     top_n: int = 10,
-    recency_weight: float = ANALOG_W_RECV,
 ) -> list[dict]:
-    """Analog finder — ported scoring machinery, tuned weights.
+    """Analog finder — covariance-aware Mahalanobis state match.
 
-    Scoring = ANALOG_W_MAHA · Mahalanobis + ANALOG_W_TRAJ · trajectory-cosine
-    + ANALOG_W_RECV · recency. The SHIPPED weights are **1 / 0 / 0** (pure
-    covariance-aware Mahalanobis state match — see the module header for the
-    study that dropped trajectory/recency; their computation is skipped
-    entirely at weight 0). Candidates are drawn from genuinely-forecast
+    Score = Mahalanobis similarity (1 − d/max_d; RELATIVE to the farthest
+    candidate, not an absolute probability). Trajectory/recency terms were
+    dropped (weight 0, see the module header) and their code removed. Candidates are drawn from genuinely-forecast
     history only (engine warm-up rows excluded) and selected under a Theiler
     exclusion window so each returned analog is a distinct episode.
 
@@ -285,42 +281,9 @@ def find_similar_periods(
     max_dist = maha_dist.max() if maha_dist.max() > 0 else 1.0
     maha_sim = 1.0 - (maha_dist / max_dist)
 
-    # ── Part 2: Trajectory cosine similarity (DROPPED → skipped when weight 0) ─
-    traj_window = mom_window
-    traj_sim = np.zeros(len(historical))
+    # ── Combined (pure Mahalanobis; trajectory/recency removed at weight 0) ─
+    combined = maha_sim
     price_all = feat["Price"].to_numpy(dtype=np.float64)
-    if ANALOG_W_TRAJ > 0 and n > traj_window:
-        _x = np.arange(traj_window, dtype=np.float64)
-        _xm = _x - _x.mean()
-        _xvar = np.sum(_xm ** 2)
-
-        def _ls_detrend(traj: np.ndarray) -> np.ndarray:
-            if _xvar < 1e-12:
-                return traj - traj.mean()
-            slope = np.sum(_xm * (traj - traj.mean())) / _xvar
-            return traj - (traj.mean() + slope * _xm)
-
-        cur_traj = price_all[-traj_window:]
-        ct = _ls_detrend(cur_traj)
-        for j in range(len(historical)):
-            pos = j  # historical is feat.iloc[:n-purge] → positional index aligns
-            if pos >= traj_window:
-                ht = _ls_detrend(price_all[pos - traj_window:pos])
-                traj_sim[j] = (cosine_similarity(ct, ht) + 1) / 2
-
-    # ── Part 3: Exponential recency decay (DROPPED → skipped when weight 0) ──
-    recency_norm = np.zeros(len(historical))
-    if ANALOG_W_RECV > 0:
-        dates = historical["Date"]
-        if np.issubdtype(np.asarray(dates).dtype, np.datetime64):
-            days_since = (pd.Timestamp(latest["Date"]) - pd.to_datetime(dates)).dt.days.to_numpy(dtype=float)
-        else:
-            days_since = (float(latest["Date"]) - np.asarray(dates, dtype=float))
-        recency = np.exp(-np.log(2) * np.clip(days_since, 0, None) / 365.0) * recency_weight
-        recency_norm = recency / max(recency.max(), 1e-6)
-
-    # ── Combined ────────────────────────────────────────────────────────────
-    combined = ANALOG_W_MAHA * maha_sim + ANALOG_W_TRAJ * traj_sim + ANALOG_W_RECV * recency_norm
     historical = historical.copy()
     historical["similarity"] = combined
 
@@ -377,16 +340,56 @@ def find_similar_periods(
     return results
 
 
-def summarize_forward(periods: list[dict], hold_horizons: tuple[int, ...]) -> dict[int, dict]:
-    """Per-horizon base-rate summary across the analogs: median return, % positive, n."""
+def unconditional_positive_pct(ts: pd.DataFrame, hold_horizons: tuple[int, ...]) -> dict[int, float]:
+    """Unconditional h-day positive-return rate (%) over the SAME candidate pool that
+    ``find_similar_periods`` draws analogs from (Valid rows with a realized path at
+    the longest horizon) — the base rate an analog hit rate must beat."""
+    if ts is None or len(ts) == 0 or "Price" not in ts.columns or not hold_horizons:
+        return {}
+    df = ts.reset_index(drop=True)
+    price = pd.to_numeric(df["Price"], errors="coerce").to_numpy(dtype=np.float64)
+    n = len(price)
+    purge = int(max(hold_horizons))
+    pool = np.arange(max(n - purge, 0))
+    if "Valid" in df.columns:
+        pool = pool[df["Valid"].astype(bool).to_numpy()[pool]]
+    out: dict[int, float] = {}
+    for h in hold_horizons:
+        h = int(h)
+        p0, p1 = price[pool], price[pool + h]
+        ok = np.isfinite(p0) & np.isfinite(p1) & (p0 > 0)
+        if ok.any():
+            out[h] = float(np.mean(p1[ok] > p0[ok]) * 100.0)
+    return out
+
+
+def summarize_forward(periods: list[dict], hold_horizons: tuple[int, ...],
+                      ts: pd.DataFrame | None = None) -> dict[int, dict]:
+    """Per-horizon base-rate summary across the analogs.
+
+    Keys per horizon: ``median`` (% return), ``positive_pct``, ``n``, and (audit
+    A4-14) ``unconditional_positive_pct`` — the h-day positive rate over the whole
+    candidate pool (needs ``ts``, the frame passed to ``find_similar_periods``) — and
+    ``binomial_p``: two-sided exact binomial p of ``k/n`` positives against that
+    unconditional rate (analogs are Theiler-separated by ≥ the longest horizon, so
+    their outcomes do not overlap). Both are None when ``ts`` is not given.
+    "7/10 up vs 58% unconditional, p = 0.35" is the honest read."""
+    base = unconditional_positive_pct(ts, hold_horizons) if ts is not None else {}
     out: dict[int, dict] = {}
     for h in hold_horizons:
         vals = [p["fwd"].get(int(h)) for p in periods]
         vals = [v for v in vals if v is not None and np.isfinite(v)]
         if vals:
+            k = sum(1 for v in vals if v > 0)
+            u = base.get(int(h))
+            bp = None
+            if u is not None:
+                bp = float(_sstats.binomtest(k, len(vals), min(max(u / 100.0, 0.0), 1.0)).pvalue)
             out[int(h)] = {
                 "median": float(np.median(vals)),
-                "positive_pct": sum(1 for v in vals if v > 0) / len(vals) * 100.0,
+                "positive_pct": k / len(vals) * 100.0,
                 "n": len(vals),
+                "unconditional_positive_pct": u,
+                "binomial_p": bp,
             }
     return out
