@@ -1,0 +1,530 @@
+{
+ "schema": "nishkarsh.run_report/1",
+ "run_id": "20261108_143426_109b9463",
+ "generated_at": "2026-11-08T14:34:46+00:00",
+ "provenance": {
+  "version": "2.0.1",
+  "python": "3.13.18",
+  "platform": "Linux-6.18.44-fc-v310-x86_64-with-glibc2.39",
+  "packages": {
+   "numpy": "2.5.3",
+   "pandas": "3.0.5",
+   "scipy": "1.18.1",
+   "scikit-learn": "1.9.1",
+   "statsmodels": "0.15.0",
+   "numba": "0.68.1",
+   "threadpoolctl": "3.7.0",
+   "pyarrow": "26.0.1",
+   "streamlit": "1.66.1",
+   "yfinance": "1.7.0"
+  },
+  "git_sha": "9870f1d3bfafa43e6798e65759b2609a438820f2"
+ },
+ "config": {
+  "target": "NIFTY50_PE",
+  "features": [
+   "AD_RATIO",
+   "COUNT",
+   "IN02Y",
+   "IN10Y",
+   "IN30Y",
+   "NIFTY50_DY",
+   "NIFTY50_PB",
+   "REL_AD_RATIO",
+   "REL_BREADTH",
+   "REPO",
+   "US02Y",
+   "US10Y",
+   "US30Y"
+  ],
+  "date_col": "DATE",
+  "kappa_enabled": true,
+  "forward_mode": true,
+  "horizon": 10,
+  "mom_k": 20,
+  "return_label": "nsei",
+  "min_train": 1500,
+  "max_train": 2000,
+  "min_data_points": 1500,
+  "min_oos_rows": 252,
+  "history_years": 7,
+  "history_start": "2019-01-01",
+  "index_symbol": "^NSEI",
+  "universe": "NIFTY 50",
+  "macro_lag_non_ist": true,
+  "non_ist_sheet_columns": [
+   "US02Y",
+   "US10Y",
+   "US30Y"
+  ],
+  "custom_predictors": true,
+  "pca_passthrough": [
+   "IN10Y",
+   "IN02Y",
+   "IN30Y"
+  ],
+  "macro_factor_components": 8,
+  "macro_factor_min_columns": 12,
+  "aarambh_pca_predictors": false,
+  "aarambh_pca_n_components": 9,
+  "nirnay_msf_length": 20,
+  "nirnay_roc_len": 14,
+  "nirnay_regime_sensitivity": 1.5,
+  "nirnay_base_weight": 0.6,
+  "nirnay_mmr_num_vars": 5,
+  "precedent_horizons": [
+   3,
+   5,
+   10,
+   20
+  ]
+ },
+ "fingerprint": "970a26a99b5344001b644da668ff8329b2fbc9e5e261509454cf925da28bb7fc",
+ "inputs": {
+  "rows_raw": 5039,
+  "rows_used": 4624,
+  "sheet_span": [
+   "2006-06-08",
+   "2026-11-06"
+  ],
+  "aarambh_span": [
+   "2008-01-31",
+   "2026-11-06"
+  ],
+  "effective_start": "2008-01-03",
+  "bounding_predictor": "US02Y",
+  "features": [
+   "AD_RATIO",
+   "COUNT",
+   "IN02Y",
+   "IN10Y",
+   "IN30Y",
+   "NIFTY50_DY",
+   "NIFTY50_PB",
+   "REL_AD_RATIO",
+   "REL_BREADTH",
+   "REPO",
+   "US02Y",
+   "US10Y",
+   "US30Y"
+  ],
+  "dropped_features": [],
+  "lagged_columns": [
+   "US02Y",
+   "US10Y",
+   "US30Y"
+  ],
+  "label_complete_rows": 4614,
+  "content_hash": "7b7a926aa1e5c1b207264c8f02ecdb295fab89fe0966d82262a88e3306dd3a87"
+ },
+ "data": {
+  "constituents": {
+   "provenance": "empty",
+   "as_of": null,
+   "missing": [],
+   "note": "unreachable from this sandbox"
+  },
+  "macro": {
+   "provenance": "empty",
+   "as_of": null,
+   "missing": [],
+   "note": "unreachable from this sandbox"
+  },
+  "ohlcv": {
+   "provenance": "empty",
+   "as_of": null,
+   "missing": [],
+   "note": "no constituents"
+  },
+  "index": {
+   "provenance": "live",
+   "as_of": "2026-11-06",
+   "missing": [],
+   "note": "NIFTY column of the user's sheet (IST dates), standing in for ^NSEI"
+  },
+  "sheet": null,
+  "synthetic": false,
+  "today": "2026-11-08",
+  "macro_panel": {
+   "yf_columns": 0,
+   "sheet_columns": [
+    "IN10Y",
+    "IN02Y",
+    "IN30Y",
+    "US10Y",
+    "US30Y",
+    "US02Y"
+   ],
+   "raw_columns": 28,
+   "custom_features": 22,
+   "custom_leakage_excluded_from_aarambh": [
+    "DY_SPREAD",
+    "EQ_RISK_PREMIUM",
+    "IMPLIED_ROE"
+   ],
+   "dropped_duplicate_rates": [],
+   "lagged_non_ist": 3,
+   "factors": true,
+   "mmr_columns": 11,
+   "passthrough": [
+    "IN10Y",
+    "IN02Y",
+    "IN30Y"
+   ],
+   "rows": 1943,
+   "span": [
+    "2019-01-01",
+    "2026-11-06"
+   ]
+  }
+ },
+ "timings": {
+  "inputs": 0.074,
+  "data": 0.048,
+  "aarambh": 17.805,
+  "nirnay": 0.0,
+  "conclusion": 0.411,
+  "precedent": 1.468,
+  "total": 19.805
+ },
+ "aarambh": {
+  "rows": 4624,
+  "valid": 3114,
+  "first_valid": "2014-03-12",
+  "feature_names": [
+   "AD_RATIO",
+   "COUNT",
+   "IN02Y",
+   "IN10Y",
+   "IN30Y",
+   "NIFTY50_DY",
+   "NIFTY50_PB",
+   "REL_AD_RATIO",
+   "REL_BREADTH",
+   "REPO",
+   "US02Y",
+   "US10Y",
+   "US30Y"
+  ],
+  "wf_meta": {
+   "min_train": 1500,
+   "max_train": 2000,
+   "purge": 10,
+   "refit": 5,
+   "first_forecast_row": 1510,
+   "n_oos": 3114,
+   "chunks_total": 623,
+   "chunks_skipped_starved": 0,
+   "chunks_fallback": 0
+  },
+  "model_stats": {
+   "r2_oos": -0.08210803625634377,
+   "r2_vs_rw": -0.07421599377528754,
+   "rmse_oos": 0.0404306012102563,
+   "mae_oos": 0.028514788971037694,
+   "n_obs": 3104,
+   "n_features": 13,
+   "avg_model_spread": 0.0052783465830372415,
+   "model_coverage": 1.0,
+   "n_fallback_chunks": 0,
+   "n_starved_chunks": 0
+  },
+  "signal": {
+   "signal": "BUY",
+   "strength": "WEAK",
+   "conviction_score": -14.355494762482968,
+   "forecast": 0.0032083366136669116,
+   "forecast_z": 0.28910690242208453,
+   "edge_assessment": "DEFERRED \u2014 directional edge is graded by the conclusion layer (Edge Ledger)",
+   "edge_source": "conclusion",
+   "tradeable": false,
+   "has_forward_edge": false,
+   "inverted": false,
+   "hurst": 0.26318469563065,
+   "ou_half_life": 10.77541125798827,
+   "half_life_meaningful": true,
+   "oversold_breadth": 100.0,
+   "overbought_breadth": 0.0,
+   "regime": "OVERSOLD",
+   "forward_signal": true,
+   "forecast_skill_vs_rw": -0.07421599377528754
+  },
+  "changepoints_heuristic": 3
+ },
+ "nirnay": {
+  "stocks_requested": 0,
+  "stocks_analyzed": 0,
+  "failed": {},
+  "trading_days": 0,
+  "span": null,
+  "overlap_valid_dates": 0,
+  "aarambh_valid_dates": 3114,
+  "latest": {},
+  "os_cut_median_live": null,
+  "ob_cut_median_live": null,
+  "mmr_quality": null,
+  "regime_latest": {},
+  "vol_regime_latest": {}
+ },
+ "label_src": "NIFTY 50 index (^NSEI) fwd return",
+ "label_alignment": {
+  "available": true,
+  "best_lag": 0,
+  "corr_by_lag": {
+   "-2": 0.010005646589388685,
+   "-1": 0.0462306240258511,
+   "0": 0.9090464016397972,
+   "1": 0.018001146476108718,
+   "2": -3.739263919658908e-05
+  },
+  "aligned": true,
+  "n": 4624
+ },
+ "conclusion": {
+  "schema": "nishkarsh.conclusion/1",
+  "as_of": "2026-11-06",
+  "horizon": 10,
+  "label_src": "NIFTY 50 index (^NSEI) fwd return",
+  "forward_mode": true,
+  "kappa_enabled": true,
+  "single_system": true,
+  "latest": {
+   "date": "2026-11-06",
+   "C": 14.355494762482968,
+   "C_aarambh": 14.355494762482968,
+   "zA": 0.28910690242208453,
+   "zN": null,
+   "state": "NO_DATA",
+   "kappa": 1.0,
+   "tier": "WEAK",
+   "direction": "BULLISH"
+  },
+  "edge": {
+   "signal": "aarambh_head",
+   "ic": -0.03381954163864421,
+   "ic_phase0": 0.00917459585808891,
+   "n": 298,
+   "t": -0.5644057780366283,
+   "p": 0.713760996267751,
+   "mde": 0.14795395248401436,
+   "hac_t": -0.7923619021338953,
+   "boot_ci": [
+    -0.1185041684720429,
+    0.05046077422489313
+   ],
+   "significant": false,
+   "phase_min": -0.06714425654768379,
+   "phase_max": 0.00917459585808891,
+   "yearly": {
+    "2014": 0.42846181951041284,
+    "2015": 0.026853135409602363,
+    "2016": -0.2062391303909734,
+    "2017": 0.10306801115640421,
+    "2018": -0.10649929567956343,
+    "2019": -0.08162694106031057,
+    "2020": 0.022047384660691043,
+    "2021": -0.1003892807746593,
+    "2022": -0.0795403138166264,
+    "2023": -0.06404553321024828,
+    "2024": 0.3010739415870063,
+    "2025": -0.23385231247570928,
+    "2026": -0.44775519387984697
+   },
+   "baseline_momentum_ic": 0.012802840968875401,
+   "available": true
+  },
+  "edge_C": {
+   "signal": "C (all rows; \u03ba never refit)",
+   "ic": -0.03381954163864421,
+   "ic_phase0": 0.00917459585808891,
+   "n": 298,
+   "t": -0.5644057780366283,
+   "p": 0.713760996267751,
+   "mde": 0.14795395248401436,
+   "hac_t": -0.7923619021338953,
+   "boot_ci": [
+    -0.1185041684720429,
+    0.05046077422489313
+   ],
+   "significant": false,
+   "phase_min": -0.06714425654768379,
+   "phase_max": 0.00917459585808891,
+   "yearly": {
+    "2014": 0.42846181951041284,
+    "2015": 0.026853135409602363,
+    "2016": -0.2062391303909734,
+    "2017": 0.10306801115640421,
+    "2018": -0.10649929567956343,
+    "2019": -0.08162694106031057,
+    "2020": 0.022047384660691043,
+    "2021": -0.1003892807746593,
+    "2022": -0.0795403138166264,
+    "2023": -0.06404553321024828,
+    "2024": 0.3010739415870063,
+    "2025": -0.23385231247570928,
+    "2026": -0.44775519387984697
+   },
+   "baseline_momentum_ic": 0.012802840968875401,
+   "available": true
+  },
+  "lift": {
+   "available": false,
+   "ic_confirm": null,
+   "ic_contradict": null,
+   "n_confirm": 0,
+   "n_contradict": 0,
+   "lift": null,
+   "z": null,
+   "p_one_sided": null,
+   "lift_phase_min": null,
+   "lift_phase_max": null,
+   "kappa": 1.0,
+   "passed": false,
+   "mde": null
+  },
+  "oos": {
+   "ic_C": null,
+   "ic_A": null,
+   "n": 0,
+   "adds_value": false
+  },
+  "backtest": {
+   "mode": "tranche",
+   "reference_bps": 5.0,
+   "by_cost": {
+    "0.0": {
+     "gross_sharpe": -0.4108687451769266,
+     "net_sharpe": -0.4108687451769266,
+     "t": -1.5708622356483282,
+     "ann_return": -0.028953382386753317,
+     "turnover_per_year": 7.609043737721719,
+     "breakeven_bps": -38.05127606668544,
+     "n": 2987
+    },
+    "2.0": {
+     "gross_sharpe": -0.4108687451769266,
+     "net_sharpe": -0.4324659645479131,
+     "t": -1.6528320832556187,
+     "ann_return": -0.030475191134297665,
+     "turnover_per_year": 7.609043737721719,
+     "breakeven_bps": -38.05127606668544,
+     "n": 2987
+    },
+    "5.0": {
+     "gross_sharpe": -0.4108687451769266,
+     "net_sharpe": -0.4648608291340614,
+     "t": -1.7756464714854014,
+     "ann_return": -0.03275790425561417,
+     "turnover_per_year": 7.609043737721719,
+     "breakeven_bps": -38.05127606668544,
+     "n": 2987
+    },
+    "10.0": {
+     "gross_sharpe": -0.4108687451769266,
+     "net_sharpe": -0.5188489047915946,
+     "t": -1.9799453952357362,
+     "ann_return": -0.036562426124475036,
+     "turnover_per_year": 7.609043737721719,
+     "breakeven_bps": -38.05127606668544,
+     "n": 2987
+    }
+   },
+   "nonoverlap_reference": {
+    "gross_sharpe": -0.14708927529694127,
+    "net_sharpe": -0.21183343917129463,
+    "t": -0.7284544133158486,
+    "ann_return": -0.012711069698518904,
+    "turnover_per_year": 7.775180876375721,
+    "breakeven_bps": -11.34826237565803,
+    "n": 298
+   }
+  },
+  "chain": [
+   {
+    "stage": "forecast",
+    "ic": 0.020231721719903804,
+    "n": 298
+   },
+   {
+    "stage": "engine_conviction",
+    "ic": 0.00917459585808891,
+    "n": 298
+   },
+   {
+    "stage": "C",
+    "ic": 0.00917459585808891,
+    "n": 298
+   }
+  ],
+  "trust": {
+   "tier": "NO_PROVEN_EDGE",
+   "text": "NO PROVEN EDGE \u2014 Aarambh head IC -0.034 (t -0.6, n 298, p 0.714); direction is unvalidated (this sample can only detect IC \u2265 0.15 reliably)."
+  },
+  "nirnay": {
+   "state": "NO_DATA",
+   "text": "Single-system mode (Nirnay unavailable) \u2014 conclusion is Aarambh-only; Convergence Lift N/A."
+  },
+  "agreement": {
+   "today_state": "NO_DATA",
+   "same_sign_rate_60d": null
+  },
+  "divergence_recent": {
+   "AARAMBH_LEADS": 0,
+   "NIRNAY_LEADS": 0,
+   "CONTRADICTION": 0,
+   "window_days": 20
+  }
+ },
+ "anatomy": {
+  "rows": 0,
+  "note": "Agreement anatomy (descriptive, not used in the conclusion): no warm Nirnay dates."
+ },
+ "precedent": {
+  "hero": {
+   "horizon": 10,
+   "median": 0.02510463768172211,
+   "positive_pct": 50.0,
+   "n": 10,
+   "dir": 1,
+   "unconditional_positive_pct": 53.45830639948287,
+   "binomial_p": 1.0
+  },
+  "summary": {
+   "3": {
+    "median": -0.25870220020009493,
+    "positive_pct": 40.0,
+    "n": 10,
+    "unconditional_positive_pct": 52.29476405946995,
+    "binomial_p": 0.5340370188268058
+   },
+   "5": {
+    "median": 0.2928394529636613,
+    "positive_pct": 50.0,
+    "n": 10,
+    "unconditional_positive_pct": 52.68261150614092,
+    "binomial_p": 1.0
+   },
+   "10": {
+    "median": 0.02510463768172211,
+    "positive_pct": 50.0,
+    "n": 10,
+    "unconditional_positive_pct": 53.45830639948287,
+    "binomial_p": 1.0
+   },
+   "20": {
+    "median": -2.4139468444822123,
+    "positive_pct": 40.0,
+    "n": 10,
+    "unconditional_positive_pct": 53.65223012281836,
+    "binomial_p": 0.5292690795414702
+   }
+  },
+  "n_analogs": 10
+ },
+ "warnings": [
+  "1 date cell(s) out of chronological sequence excluded (likely typos \u2014 fix them in the sheet): row 4274 '28/08/2023'\u21922023-08-28",
+  "constituents: provenance EMPTY \u2014 unreachable from this sandbox",
+  "macro: provenance EMPTY \u2014 unreachable from this sandbox",
+  "ohlcv: provenance EMPTY \u2014 no constituents"
+ ]
+}

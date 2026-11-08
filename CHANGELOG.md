@@ -13,6 +13,25 @@ Sections used: **Added · Changed · Deprecated · Removed · Fixed · Security 
 
 ---
 
+## [2.0.2] — 2026-11-08 — *First real-data evidence*
+
+### Added
+- **History-cost disclosure:** when one late-starting predictor truncates the usable
+  history, the run names it and states the rows / years it costs (on the owner's
+  sheet INIRYY starts 2013-06-12 and costs ≈5.3 years — the edge test falls from
+  ~300 to ~160 non-overlapping windows).
+- `docs/evidence/`: run reports of the first real-sheet runs.
+
+### Docs
+- **Edge Ledger L-03 → NOT REPLICATED:** on the owner's sheet with the purged 2.0
+  engine, Aarambh's directional IC is +0.037 (2019–2026, n 164) / −0.034 (2014–2026,
+  n 298, 95% CI [−0.12, +0.05]); the +0.14 of FINDINGS §6 lies outside the CI.
+  **L-04 → FALSIFIED on current evidence:** net Sharpe negative at every cost.
+- The sheet's first data fault found and named by the 2.0.1 parser: sheet row 4274
+  duplicates row 4252 (28/08/2023) where 28/09/2023 belongs.
+
+---
+
 ## [2.0.1] — 2026-11-08 — *Real-sheet date handling*
 
 ### Fixed

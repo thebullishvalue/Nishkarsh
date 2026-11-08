@@ -146,3 +146,17 @@ def test_real_sheet_date_typo_runs_and_is_reported():
     msg = " ".join(prep.warnings)
     assert f"row {bad + 2}" in msg and "out of chronological sequence" in msg
     assert prep.dates.is_monotonic_increasing and prep.dates.is_unique
+
+
+def test_late_predictor_history_cost_is_disclosed():
+    """A predictor that starts late truncates every row before it; the run must say
+    which one and how much history it costs (first real-sheet run: INIRYY, 5.4 years)."""
+    from data.synthetic import synthetic_sheet
+    from pipeline.inputs import prepare_sheet
+    sheet = synthetic_sheet(seed=6, n_rows=4400)
+    sheet.loc[:899, "INIRYY"] = np.nan                       # starts 900 rows late
+    cfg = PipelineConfig.build(today=pd.Timestamp("2027-01-01"), target="NIFTY50_PE", date_col="DATE")
+    prep = prepare_sheet(sheet, cfg)
+    msg = " ".join(prep.warnings)
+    assert prep.bounding_predictor == "INIRYY"
+    assert "Predictor INIRYY" in msg and "truncates the usable history" in msg

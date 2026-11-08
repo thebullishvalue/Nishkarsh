@@ -9,7 +9,10 @@ predictive value, so it is not re-litigated. Engineering history is in
 > these corrections — the narrative is kept for the record, the Ledger is the
 > verdict:
 >
-> 1. **§6's +0.14 directional lead is CONTAMINATED → PROVISIONAL.** It was measured
+> 0. **Real-data re-measurement (2026-11-08): the §6 lead does NOT replicate** on the purged
+>    engine — IC −0.034 (2014–2026, n 298, 95% CI [−0.12, +0.05]) and +0.037 (2019–2026, n 164);
+>    net Sharpe negative at every cost. See EDGE_LEDGER L-03/L-04 and `docs/evidence/`.
+> 1. **§6's +0.14 directional lead was CONTAMINATED.** It was measured
 >    on an engine whose training rows' forward labels overlapped the forecast window
 >    (the purge arrived in 1.5.0), and the shipped 1.6.0 used 15/30 training windows
 >    under which the purge never applied at all (pure noise scored IC +0.50 there).

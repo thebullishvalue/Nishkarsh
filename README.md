@@ -11,7 +11,7 @@ p-values — what is and is not established.
 
 | | |
 |---|---|
-| **Version** | 2.0.1 — *Council audit · measured conclusion · headless pipeline* |
+| **Version** | 2.0.2 — *Council audit · measured conclusion · headless pipeline* |
 | **Stack** | Python 3.13 · Streamlit · scikit-learn · statsmodels · numba · Plotly |
 | **Universe** | Nifty 50 (live list from niftyindices.com; dated fallback list) |
 | **License** | See `LICENSE.md` |
@@ -19,10 +19,11 @@ p-values — what is and is not established.
 > **A note on rigor.** Nishkarsh is built to be honest about its own edge: causal
 > everywhere (prefix-invariant, tested), deterministic, h-spaced significance with
 > HAC and block-bootstrap inference, null error rates verified by simulation, and
-> evidence attached to the exact number shown. It has **not yet demonstrated a
-> tradeable edge on real data** — the most promising lead (Aarambh's directional
-> forecast) is PROVISIONAL and must be re-measured on 2.0 (an earlier measurement was
-> contaminated by look-ahead). Read [`docs/EDGE_LEDGER.md`](docs/EDGE_LEDGER.md) first.
+> evidence attached to the exact number shown. It has **not demonstrated a tradeable
+> edge on real data**: re-measured with the purged 2.0 engine on the owner's sheet, the
+> earlier +0.14 directional lead (which was contaminated by look-ahead) does not
+> replicate (IC −0.03, 2014–2026, 95% CI [−0.12, +0.05]). Read it as an honest
+> research instrument, and read [`docs/EDGE_LEDGER.md`](docs/EDGE_LEDGER.md) first.
 
 ---
 
@@ -244,9 +245,14 @@ non-optimisations: [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
 
 ## Known limitations
 
-- **No demonstrated tradeable edge on real data yet.** The council built and verified
-  2.0 on synthetic data (no data access); the first real run answers the open Ledger
-  rows. Treat the output as a research instrument until a row reads PROVEN.
+- **No demonstrated edge on real data.** On the owner's sheet (2026-11-08) Aarambh's
+  directional IC is indistinguishable from zero and the cost-aware backtest is negative
+  (Edge Ledger L-03 / L-04, evidence in `docs/evidence/`). The two-system lift (L-05)
+  still needs a run with market-data access. Treat the output as a research instrument
+  until a Ledger row reads PROVEN.
+- **History vs predictors.** Every predictor must be present on every row, so a
+  late-starting predictor truncates the whole history; the run names it and its cost
+  (on the owner's sheet INIRYY costs ≈5.3 years).
 - **Low power for the Convergence-Lift test** with ~7 years of constituent history;
   the minimum detectable effect is shown on every run.
 - **Survivorship bias.** Nirnay uses today's index members over the whole window.
@@ -292,4 +298,4 @@ non-optimisations: [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
 
 ---
 
-© 2026 Nishkarsh · [@thebullishvalue](https://twitter.com/thebullishvalue) · v2.0.1
+© 2026 Nishkarsh · [@thebullishvalue](https://twitter.com/thebullishvalue) · v2.0.2

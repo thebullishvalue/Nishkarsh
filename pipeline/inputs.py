@@ -173,6 +173,20 @@ def prepare_sheet(df: pd.DataFrame, cfg: PipelineConfig) -> PreparedInputs:
     bounding = max(late, key=late.get) if late else None
     if bounding is not None and late[bounding] <= dates_all[0]:
         bounding = None
+    # Power disclosure: a single late-starting predictor truncates EVERY row before its
+    # first value (the walk-forward needs all predictors). Say what it costs, so the user
+    # can weigh it against the statistical power it removes (first real-sheet run: INIRYY
+    # cost 5.4 years — the edge test fell from ~300 to ~160 windows).
+    if bounding is not None:
+        others = [v for c, v in late.items() if c != bounding]
+        alt_start = max(others) if others else dates_all[0]
+        gained = int(((dates_all >= alt_start) & (dates_all < late[bounding])).sum())
+        if gained >= 252:
+            warnings.append(
+                f"Predictor {bounding} starts {late[bounding].date()} and truncates the usable history: "
+                f"without it the data would start {pd.Timestamp(alt_start).date()} (+{gained} rows, "
+                f"≈{gained / 252:.1f} years), giving the edge tests more non-overlapping windows. "
+                "Deselect it under Predictor Columns to trade it for history.")
     if len(data) < int(cfg.min_data_points):
         raise InputError(f"Need {cfg.min_data_points}+ complete rows for the walk-forward; have {len(data)} "
                          f"(effective start {eff_start.date()}"
