@@ -42,7 +42,6 @@ import requests
 from core.config import GLOBAL_MACRO_MAP, MACRO_SYMBOLS_YF
 from data import cache as _cache
 from data.circuit_breaker import (
-    CircuitBreakerError,
     FetchRejected,
     RetryWithBackoff,
     sheets_circuit,

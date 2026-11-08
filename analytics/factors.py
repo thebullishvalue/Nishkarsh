@@ -12,13 +12,12 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-try:
-    from sklearn.decomposition import PCA
-    from sklearn.preprocessing import StandardScaler
+from importlib.util import find_spec
 
-    _HAS_SKLEARN = True
-except ImportError:  # graceful degradation — callers fall back to raw macros
-    _HAS_SKLEARN = False
+# The PCA is computed directly from the running covariance (numpy eigh); sklearn
+# is only probed so callers keep the historical "PCA unavailable → raw macros"
+# degradation path when the scientific stack is incomplete.
+_HAS_SKLEARN = find_spec("sklearn") is not None
 
 
 def build_causal_macro_factors(
@@ -147,7 +146,6 @@ def build_causal_macro_factors(
     s1 = np.zeros(0)
     s2 = np.zeros((0, 0))
     last_comp: np.ndarray | None = None
-    last_cols = np.zeros(0, dtype=np.int64)
 
     t = min_train
     while t < n:
@@ -196,7 +194,7 @@ def build_causal_macro_factors(
                 # factors = ((X[block] − window_mean) / scale) · compᵀ
                 z_block = (X[t:block_end][:, cols_t] - mean_true[kc]) / scale
                 factors[t:block_end, :k_t] = z_block @ comp[:, cols_t].T
-                last_comp, last_cols = comp, cols_t
+                last_comp = comp
 
         if elig.size:
             _blk = X[t:block_end][:, elig] - shift
