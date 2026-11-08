@@ -13,6 +13,31 @@ Sections used: **Added · Changed · Deprecated · Removed · Fixed · Security 
 
 ---
 
+## [2.0.1] — 2026-11-08 — *Real-sheet date handling*
+
+### Fixed
+- **The first real-data run aborted** with "Date column 'DATE' parsed as day-first is
+  not monotonic in file order (first break after row 4271)". 2.0.0's strict date
+  guard rejected the whole sheet for any backwards date — correct for a systematic
+  day/month swap, but a hand-maintained 17-year sheet more often has a few typo rows.
+  `data.dates.parse_dates` now separates the real-world causes and handles each
+  honestly:
+  - **Day/month convention proven by the data**: values whose first number exceeds 12
+    can only be day-first, whose second exceeds 12 only month-first; a sheet whose
+    entry locale changed part-way is read stretch by stretch (reported as regimes).
+  - **Isolated out-of-sequence cells** (≤ 0.5% of rows — typos such as a wrong year),
+    found as the rows outside the longest chronological run, are excluded — never
+    sorted into the wrong place — and listed in the run warnings by **sheet row and
+    raw text** so they can be fixed at source.
+  - **A clean re-ordering** (many rows out of sequence, every date distinct) is
+    accepted and sorted.
+  - **Collisions** (out-of-sequence dates duplicating genuine rows — the signature of
+    an undetectable ambiguous swap) still fail loudly, now naming the offending rows.
+  - The error's row number was a position in the parsed array, not the sheet row; all
+    messages now use spreadsheet row numbers (header = row 1).
+
+---
+
 ## [2.0.0] — 2026-11-08 — *Council audit · measured conclusion · headless pipeline*
 
 A full-system audit by a multi-tier council (six specialist auditors → one decision

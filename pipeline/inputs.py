@@ -76,6 +76,29 @@ def required_rows(cfg: PipelineConfig) -> int:
     return int(cfg.min_train) + (int(cfg.horizon) if cfg.forward_mode else 0) + int(cfg.min_oos_rows)
 
 
+def _date_warnings(col: str, rep: dict) -> list[str]:
+    """Human-readable run warnings for what ``parse_dates`` inferred or repaired."""
+    out: list[str] = []
+    regimes = rep.get("convention_regimes") or []
+    if len(regimes) > 1:
+        spans = "; ".join(f"sheet rows {r['from_sheet_row']}–{r['to_sheet_row']} {r['convention']}"
+                          for r in regimes[:6])
+        out.append(f"Date column {col!r} switches day/month convention ({spans}) — proven by "
+                   "unambiguous dates; ambiguous dates were read with their stretch's convention.")
+    elif rep.get("how", "").startswith("month-first"):
+        out.append(f"Date column {col!r} is month-first (US) format — proven: no value fits day-first.")
+    drop = rep.get("dropped_out_of_sequence") or []
+    if drop:
+        ex = "; ".join(f"row {d['sheet_row']} {d['raw']!r}→{d['parsed']}" for d in drop[:10])
+        out.append(f"{len(drop)} date cell(s) out of chronological sequence excluded (likely typos — "
+                   f"fix them in the sheet): {ex}" + (" …" if len(drop) > 10 else ""))
+    reo = rep.get("reordered")
+    if reo:
+        out.append(f"Date column {col!r} is not in chronological order ({reo['rows_out_of_sequence']} "
+                   "rows out of sequence, every date distinct) — rows sorted by date.")
+    return out
+
+
 def prepare_sheet(df: pd.DataFrame, cfg: PipelineConfig) -> PreparedInputs:
     if df is None or len(df) == 0:
         raise InputError("The sheet is empty.")
@@ -92,15 +115,18 @@ def prepare_sheet(df: pd.DataFrame, cfg: PipelineConfig) -> PreparedInputs:
         raise InputError("None of the selected predictors is in the sheet.")
 
     # 1–2. dates
+    date_report: dict = {}
     try:
-        parsed = parse_dates(df[cfg.date_col])
+        parsed = parse_dates(df[cfg.date_col], report=date_report)
     except ValueError as e:
-        raise InputError(f"Date column {cfg.date_col!r}: {e}") from e
+        raise InputError(str(e)) from e
+    warnings += _date_warnings(cfg.date_col, date_report)
     raw = df.copy()
     raw["__date__"] = parsed.to_numpy()
-    n_nat = int(raw["__date__"].isna().sum())
-    if n_nat:
-        warnings.append(f"{n_nat} row(s) with an unparseable date dropped.")
+    n_seq = len(date_report.get("dropped_out_of_sequence") or [])
+    n_nat = int(raw["__date__"].isna().sum()) - n_seq
+    if n_nat > 0:
+        warnings.append(f"{n_nat} row(s) with a blank or unparseable date dropped.")
     raw = raw.dropna(subset=["__date__"]).sort_values("__date__", kind="mergesort")
     n_dup = int(raw["__date__"].duplicated(keep="last").sum())
     if n_dup:

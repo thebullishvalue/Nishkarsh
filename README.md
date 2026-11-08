@@ -11,7 +11,7 @@ p-values — what is and is not established.
 
 | | |
 |---|---|
-| **Version** | 2.0.0 — *Council audit · measured conclusion · headless pipeline* |
+| **Version** | 2.0.1 — *Council audit · measured conclusion · headless pipeline* |
 | **Stack** | Python 3.13 · Streamlit · scikit-learn · statsmodels · numba · Plotly |
 | **Universe** | Nifty 50 (live list from niftyindices.com; dated fallback list) |
 | **License** | See `LICENSE.md` |
@@ -261,8 +261,12 @@ non-optimisations: [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
 ## Troubleshooting
 
 - **"Need N rows"** — the sheet is shorter than `MIN_TRAIN_SIZE + horizon + MIN_OOS_ROWS`.
-- **Date errors** — dates are parsed strictly; a column with >1% unparseable or
-  out-of-order dates is rejected with the reason.
+- **Date warnings / errors** — the day/month convention is read from the dates
+  themselves (it may change part-way through a sheet). A few out-of-sequence cells
+  (typos) are excluded and listed by sheet row in the run warnings — fix them in the
+  sheet. An unsorted export is sorted. The run stops only when >1% of dates don't
+  parse, or when out-of-order dates collide with genuine rows (an ambiguous day/month
+  swap) — the message names the rows to fix.
 - **Serving last-good snapshot / fallback constituents** — informational: a fetch
   failed and the last good data (or the dated fallback list, `NIFTY50_FALLBACK_AS_OF`)
   is being used; the provenance is shown in the UI and the run report.
@@ -288,4 +292,4 @@ non-optimisations: [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
 
 ---
 
-© 2026 Nishkarsh · [@thebullishvalue](https://twitter.com/thebullishvalue) · v2.0.0
+© 2026 Nishkarsh · [@thebullishvalue](https://twitter.com/thebullishvalue) · v2.0.1

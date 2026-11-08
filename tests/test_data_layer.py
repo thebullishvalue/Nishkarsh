@@ -262,21 +262,74 @@ def test_sheet_url_forms_and_host_check():
 DATES = pd.bdate_range("2016-01-01", periods=2500)
 
 
-@pytest.mark.parametrize("fmt", ["%Y-%m-%d", "%d/%m/%Y", "%d-%b-%Y", "%d-%m-%Y", "%Y-%m-%d %H:%M:%S"])
+@pytest.mark.parametrize("fmt", ["%Y-%m-%d", "%d/%m/%Y", "%d-%b-%Y", "%d-%m-%Y", "%Y-%m-%d %H:%M:%S",
+                                 "%m/%d/%Y", "%d/%m/%y"])
 def test_parse_dates_accepts(fmt):
+    # %m/%d/%Y is accepted because the data PROVE it (values with a 2nd number > 12).
     p = parse_dates(pd.Series(DATES.strftime(fmt), name="DATE"))
     assert (pd.DatetimeIndex(p) == DATES).all()
 
 
+def _dm(d):
+    return f"{d.day:02d}/{d.month:02d}/{d.year}"
+
+
+def _md(d):
+    return f"{d.month:02d}/{d.day:02d}/{d.year}"
+
+
+def test_parse_dates_convention_switch_is_resolved_from_evidence():
+    """A sheet whose entry locale switched to US month-first part-way is read exactly."""
+    k = 1700
+    vals = [_dm(d) for d in DATES[:k]] + [_md(d) for d in DATES[k:]]
+    rep = {}
+    p = parse_dates(pd.Series(vals, name="DATE"), report=rep)
+    assert (pd.DatetimeIndex(p) == DATES).all()
+    conv = [r["convention"] for r in rep["convention_regimes"]]
+    assert conv == ["day-first", "month-first"]
+
+
+def test_parse_dates_isolated_typo_is_excluded_and_located():
+    vals = [_dm(d) for d in DATES]
+    bad = 1500
+    vals[bad] = _dm(DATES[bad].replace(year=DATES[bad].year - 1))      # a mistyped year
+    rep = {}
+    p = parse_dates(pd.Series(vals, name="DATE"), report=rep)
+    assert pd.isna(p.iloc[bad]) and int(p.isna().sum()) == 1
+    (d,) = rep["dropped_out_of_sequence"]
+    assert d["sheet_row"] == bad + 2 and d["raw"] == vals[bad]          # header = sheet row 1
+    others = np.r_[0:bad, bad + 1:len(DATES)]
+    assert (pd.DatetimeIndex(p.iloc[others]) == DATES[others]).all()
+
+
+def test_parse_dates_clean_reordering_is_accepted_for_the_caller_to_sort():
+    vals = list(pd.Series(DATES.strftime("%Y-%m-%d")).sample(frac=1, random_state=0))
+    rep = {}
+    p = parse_dates(pd.Series(vals, name="DATE"), report=rep)
+    assert rep["reordered"]["rows_out_of_sequence"] > 0
+    assert (pd.DatetimeIndex(p.sort_values()) == DATES).all()
+
+
+def _ambiguous_swap_block():
+    """m/d entries on days ≤ 12 only: no value proves month-first, so they read as
+    day-first dates that COLLIDE with genuine rows — must fail, naming the rows."""
+    vals = [_dm(d) for d in DATES]
+    blk = [i for i in range(1200, len(DATES)) if DATES[i].day <= 12][:60]
+    for i in blk:
+        vals[i] = _md(DATES[i])
+    return vals
+
+
 @pytest.mark.parametrize("label, vals", [
-    ("US mm/dd", list(DATES.strftime("%m/%d/%Y"))),
     ("2% garbage", list(DATES.strftime("%Y-%m-%d")[:-50]) + ["garbage"] * 50),
-    ("shuffled", list(pd.Series(DATES.strftime("%Y-%m-%d")).sample(frac=1, random_state=0))),
+    ("ambiguous swap block", _ambiguous_swap_block()),
     ("numeric", list(range(2500))),
 ])
 def test_parse_dates_rejects(label, vals):
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError) as ei:
         parse_dates(pd.Series(vals, name="DATE"))
+    if label == "ambiguous swap block":
+        assert "sheet row" in str(ei.value)
 
 
 def test_parse_dates_descending_blanks_datetime():

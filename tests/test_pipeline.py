@@ -129,3 +129,20 @@ def test_streamlit_app_synthetic_demo_renders():
     run_btn[0].click().run()
     assert not at.exception, [e.message for e in at.exception]
     assert len(at.tabs) >= 6
+
+
+def test_real_sheet_date_typo_runs_and_is_reported():
+    """Regression for the first real-data run: a day-first sheet with an out-of-order
+    date cell used to abort the whole run ('not monotonic … after row 4271'). It must
+    now run, exclude that one row, and name it by sheet row and raw text."""
+    from data.synthetic import synthetic_sheet
+    from pipeline.inputs import prepare_sheet
+    sheet = synthetic_sheet(seed=5, n_rows=4400, date_fmt="%d/%m/%Y")
+    bad = 4271
+    d = pd.to_datetime(sheet.loc[bad, "DATE"], format="%d/%m/%Y")
+    sheet.loc[bad, "DATE"] = d.replace(year=d.year - 1).strftime("%d/%m/%Y")
+    cfg = PipelineConfig.build(today=pd.Timestamp("2027-01-01"), target="NIFTY50_PE", date_col="DATE")
+    prep = prepare_sheet(sheet, cfg)
+    msg = " ".join(prep.warnings)
+    assert f"row {bad + 2}" in msg and "out of chronological sequence" in msg
+    assert prep.dates.is_monotonic_increasing and prep.dates.is_unique
