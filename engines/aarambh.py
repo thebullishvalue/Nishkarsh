@@ -895,7 +895,11 @@ class FairValueEngine:
             adf_pvalue = kpss_pvalue = nan
             if _HAS_STATSMODELS:
                 try:
-                    adf_pvalue = float(adfuller(oos_r, autolag="AIC")[1])
+                    try:   # statsmodels ≥ 0.15: keep the tuple return explicitly
+                        _adf = adfuller(oos_r, autolag="AIC", result_object=False)
+                    except TypeError:   # older statsmodels has no result_object kwarg
+                        _adf = adfuller(oos_r, autolag="AIC")
+                    adf_pvalue = float(_adf[1])
                 except Exception:
                     pass
                 try:

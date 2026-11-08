@@ -198,36 +198,15 @@ NIRNAY_WARMUP_BARS = 50
 # of stock-days are flagged oversold / overbought by construction.
 NIRNAY_OVERSOLD = -5
 NIRNAY_OVERBOUGHT = 5
-NIRNAY_STRONG_BUY = -7
-NIRNAY_STRONG_SELL = 7
 
 # ─── Convergence Layer Defaults ──────────────────────────────────────────────
 
-# Adaptive weighting base allocation
+# Agreement-anatomy base weights (descriptive only — convergence/cross_validator.py;
+# NOT used in the conclusion, no adaptive shift, no calibration).
 CONV_WEIGHT_DIRECTION = 0.30
 CONV_WEIGHT_BREADTH = 0.25
 CONV_WEIGHT_MAGNITUDE = 0.25
 CONV_WEIGHT_REGIME = 0.20
-
-# Adaptive shift limits (±10% based on clarity ratios)
-CONV_ADAPTIVE_SHIFT_MAX = 0.10
-
-# Convergence zone thresholds
-CONV_STRONG_BULLISH = -60
-CONV_MODERATE_BULLISH = -30
-CONV_WEAK_BULLISH = -10
-CONV_WEAK_BEARISH = 10
-CONV_MODERATE_BEARISH = 30
-CONV_STRONG_BEARISH = 60
-
-# DDM for convergence score
-CONV_DDM_LEAK_RATE = 0.10
-CONV_DDM_DRIFT_SCALE = 0.12
-CONV_DDM_LONG_RUN_VAR = 50.0
-
-# Divergence detection
-DIV_LOOKBACK = 20
-DIV_PERSISTENCE_THRESHOLD = 5
 
 # ─── Conclusion Layer v2 — "Two systems. One conclusion." as a MEASURED claim ─
 # Aarambh's forecast is the directional head (causally z-scored). Nirnay is a
@@ -281,6 +260,19 @@ IST_SYNCHRONOUS_COLUMNS = ("IN10Y", "IN02Y", "IN30Y", "INIRYY", "REPO",
 # engine. Judgement call: if the sheet already records these with a one-day
 # lag, set this to () — the sheet's provenance is not visible to the code.
 NON_IST_SHEET_COLUMNS = ("US02Y", "US10Y", "US30Y")
+# Duplicated rate series: when the sheet carries the left column, the yfinance ticker on
+# the right measures the same yield and is dropped from the macro panel (no double count).
+MACRO_DUPLICATE_RATES = {"US10Y": "^TNX", "US30Y": "^TYX"}
+# Causal macro-factor PCA for Nirnay's MMR: applied when the macro panel has more than
+# MACRO_FACTOR_MIN_COLUMNS columns; MACRO_FACTOR_COMPONENTS orthogonal factors (+ passthrough).
+MACRO_FACTOR_COMPONENTS = 8
+MACRO_FACTOR_MIN_COLUMNS = 12
+# Sheet columns fed (with the macro panel) to the custom-feature builder only.
+CUSTOM_FEATURE_SHEET_COLUMNS = ("REPO", "INIRYY", "AD_RATIO", "REL_AD_RATIO", "REL_BREADTH",
+                                "NIFTY50_PE", "NIFTY50_DY", "NIFTY50_PB",
+                                "IN10Y", "IN02Y", "IN30Y", "US10Y", "US02Y", "US30Y")
+# Sheet bond-yield columns joined into Nirnay's macro panel.
+MACRO_SHEET_BOND_COLUMNS = ("IN10Y", "IN02Y", "IN30Y", "US10Y", "US30Y", "US02Y")
 
 # ─── Column Normalization ────────────────────────────────────────────────────
 
@@ -421,7 +413,6 @@ COLOR_MUTED = "rgba(148,163,184,0.4)"  # SLATE
 # Conviction score thresholds for signal classification
 UI_CONVICTION_STRONG = 60
 UI_CONVICTION_MODERATE = 40
-UI_CONVICTION_WEAK = 20
 
 # Breadth percentage thresholds
 UI_BREADTH_HIGH = 60  # % threshold for high breadth alert
@@ -505,6 +496,10 @@ def validate_config() -> None:
         errors.append("EDGE_ALPHA / CONV2_LIFT_ALPHA must be in (0, 0.5)")
     if BACKTEST_REFERENCE_BPS not in BACKTEST_COST_BPS:
         errors.append("BACKTEST_REFERENCE_BPS must be one of BACKTEST_COST_BPS")
+    if MIN_OOS_ROWS < 1 or HISTORY_YEARS < 1:
+        errors.append("MIN_OOS_ROWS and HISTORY_YEARS must be ≥ 1")
+    if MACRO_FACTOR_COMPONENTS < 2 or MACRO_FACTOR_MIN_COLUMNS < MACRO_FACTOR_COMPONENTS:
+        errors.append("MACRO_FACTOR_COMPONENTS must be ≥ 2 and ≤ MACRO_FACTOR_MIN_COLUMNS")
     if CALIBRATION_RETURN_LABEL not in ("nsei", "target", "basket"):
         errors.append(f"CALIBRATION_RETURN_LABEL={CALIBRATION_RETURN_LABEL!r} invalid")
     if errors:
