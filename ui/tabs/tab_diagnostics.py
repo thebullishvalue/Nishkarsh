@@ -390,7 +390,11 @@ def _render_intelligence_center(forward_mode: bool = False, diag: dict | None = 
     Analysis flow. Reset / Import / Export controls live in the sidebar
     Passport.
     """
-    from convergence import intelligence as intel
+    # v2: the Optuna calibration / profile store is retired (ruling R2); the conclusion's Edge
+    # Ledger replaces this panel (UI builder). Minimal state until then.
+    st.info("Calibration profiles are retired in v2 — see the conclusion's evidence (run report).")
+    return
+    from convergence import intelligence as intel  # noqa: F401 — unreachable v1 code, removed by the UI builder
 
     render_section_header(
         "Intelligence Center",

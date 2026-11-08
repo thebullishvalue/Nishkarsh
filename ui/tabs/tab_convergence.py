@@ -15,7 +15,6 @@ from plotly.subplots import make_subplots
 
 from ui.theme import chart_layout, style_axes
 from ui.components import render_metric_card, render_section_header, section_gap
-from convergence.normalization import align_aarambh_nirnay
 from core.config import (
     COLOR_GREEN,
     COLOR_RED,
@@ -74,14 +73,20 @@ def _dynamic_range(vals, padding=0.15):
 
 def render_convergence_tab(ts_filtered=None):
     """Render the convergence dashboard tab with amber-gold system identity."""
-    convergence_df = st.session_state.get("convergence_df")
-    nishkarsh_norm = st.session_state.get("nishkarsh_conv_normalized")
-    aarambh_ts = st.session_state.get("aarambh_ts")
-    nirnay_daily = st.session_state.get("nirnay_daily")
-
-    if convergence_df is None or convergence_df.empty:
-        st.info("No convergence data available. Run the analysis first.")
+    # v2 (B4b minimal state — the UI builder rewrites this tab on the C-PIPE keys): the v1
+    # convergence_df / DDM / normalized-consensus keys no longer exist.
+    frame = st.session_state.get("conclusion_frame")
+    if frame is None or len(frame) == 0:
+        st.info("No conclusion available. Run the analysis first.")
         return
+    cols = [c for c in ("C", "C_aarambh") if c in frame.columns]
+    st.caption("Conclusion C (+ = bullish) and its pure-Aarambh counterpart C_aarambh, per date.")
+    st.line_chart(frame[cols].astype(float))
+    anatomy = st.session_state.get("anatomy_df")
+    if anatomy is not None and len(anatomy):
+        st.caption("Agreement anatomy (descriptive, not used in the conclusion).")
+        st.line_chart(anatomy[["agreement_ratio"]].astype(float))
+    return
 
     # System identity background
     st.markdown(
