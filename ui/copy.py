@@ -1,0 +1,250 @@
+"""
+Nishkarsh v2 — user-facing copy, single-sourced (A4-08, A6-08, ruling R3/R8).
+
+One table per Aarambh mode: FORWARD (the product path — Aarambh forecasts the h-day forward
+change) and LEVELS (AARAMBH_FORWARD_SIGNAL=False — a valuation regression, labelled
+"valuation context — falsified as a forecaster" wherever shown). Tabs read their wording
+from ``mode_copy(forward_mode)``; nothing here computes anything.
+
+Sign conventions (R3), stated on every axis/card that shows them:
+  * conclusion C, zA, zN, ForecastZ:  + = bullish
+  * Aarambh engine ConvictionScore / ConvictionBounded / AvgZ / Z_*:  − = bullish
+"""
+
+from __future__ import annotations
+
+import re
+
+from core.config import (
+    AARAMBH_FWD_HORIZON,
+    AARAMBH_FWD_MOM_K,
+    BACKTEST_REFERENCE_BPS,
+    CONV2_TAU,
+    CONV2_TIER_MODERATE,
+    CONV2_TIER_STRONG,
+    CONV2_TIER_WEAK,
+    EDGE_ALPHA,
+    EDGE_TRADEABLE_T,
+)
+
+# ── sign conventions ─────────────────────────────────────────────────────────
+SIGN_C = "C in ±100 · + = bullish"
+SIGN_Z = "+ = bullish"
+SIGN_ENGINE = "− = bullish"
+LEVELS_TAG = "valuation context — falsified as a forecaster"
+TIERS_TEXT = (f"tiers |C| ≥ {CONV2_TIER_STRONG:g} STRONG · ≥ {CONV2_TIER_MODERATE:g} MODERATE · "
+              f"≥ {CONV2_TIER_WEAK:g} WEAK · else NO LEAN (fixed)")
+EDGE_SCALE_TEXT = (f"One threshold scale (core/config): significant = one-sided p < {EDGE_ALPHA:g}; "
+                   f"tradeable = HAC t and non-overlap t ≥ {EDGE_TRADEABLE_T:g} net of "
+                   f"{BACKTEST_REFERENCE_BPS:g} bps.")
+SYNTH_BANNER = "SYNTHETIC DEMO DATA — not market data; no conclusion here is about the real market."
+
+# Words that describe a valuation LEVEL model; they are false about the forward forecast.
+FORBIDDEN_FORWARD = ("fair value", "fair-value", "residual", "cheap", "expensive",
+                     "primary trade signal", "trust the signal", "undervalued", "overvalued")
+# Edge words (R4) the UI must never emit on its own authority.
+EDGE_WORDS = ("calibrated", "confirms", "adds value", "durable", "validated")
+
+# ── masthead / landing ───────────────────────────────────────────────────────
+TAGLINE = "Two systems. One conclusion — a measured claim, with the evidence shown."
+TAGLINE_EXPLAINER = (
+    "Aarambh (top-down forecast) is the directional head. Nirnay (bottom-up constituent breadth) "
+    "can only shrink conviction on days it contradicts — and only once a walk-forward Convergence-"
+    "Lift test shows agreement improves accuracy. Until the data prove that, Nirnay is shown as "
+    "context only and the conclusion is Aarambh's.")
+
+LANDING_CARDS = (
+    ("aarambh", "AARAMBH",
+     f"Purged walk-forward ensemble forecasting the {AARAMBH_FWD_HORIZON}-day forward change of the "
+     f"target from {AARAMBH_FWD_MOM_K}-day predictor momentum. Its causally z-scored forecast is the "
+     "directional head.",
+     (("Ensemble", "Ridge + Huber + ElasticNet + PCA-OLS (equal weight)"),
+      ("Validation", "purged walk-forward, out-of-sample only"),
+      ("Sign", f"engine conviction {SIGN_ENGINE}"))),
+    ("nirnay", "NIRNAY",
+     "Per-constituent MSF + MMR oscillator with online HMM, GARCH and CUSUM regime read-outs, "
+     "aggregated each day over the names with live, warmed-up data.",
+     (("Head", "−mean oscillator (contrarian: oversold reads bullish)"),
+      ("Role", "context only until the lift test passes"),
+      ("Coverage", "every % is of live names that day"))),
+    ("convergence", "CONCLUSION",
+     "Aarambh leads. Nirnay can only shrink conviction (×κ ≤ 1) on days it contradicts, and only "
+     "when a walk-forward lift test passes — otherwise it is context only.",
+     (("Scale", SIGN_C),
+      ("Tiers", f"{CONV2_TIER_STRONG:g} / {CONV2_TIER_MODERATE:g} / {CONV2_TIER_WEAK:g} (fixed)"),
+      ("Evidence", "Edge Ledger: IC, HAC t, bootstrap CI, cost-aware backtest"))),
+)
+
+
+# ── per-mode tables ──────────────────────────────────────────────────────────
+_FORWARD = {
+    "key": "forward",
+    "badge": f"FORWARD MODE · {AARAMBH_FWD_HORIZON}d forecast is the directional head",
+    "head_name": "forecast",
+    "quality_desc": ("Magnitude fit of the out-of-sample forecast. A return forecast's R² sits near "
+                     "zero by nature; direction is graded in Diagnostics → Edge Ledger."),
+    "r2_label": "OOS R² (MAGNITUDE)",
+    "r2_sub": "near 0 is expected for a return forecast — not the verdict",
+    "r2_tip": ("Share of the realized forward change's variance explained by the forecast on "
+               "out-of-sample rows. Structurally near zero even for a useful directional signal."),
+    "r2rw_label": "SKILL vs ZERO FORECAST",
+    "r2rw_sub": "1 − SSE / SSE(zero-change forecast); < 0 = predicting no change did better",
+    "r2rw_tip": ("1 − SSE(forecast) / SSE(naive), naive = 0 (a martingale: no change expected), "
+                 "on every purge-th labelled out-of-sample row. Magnitude only — not the edge verdict."),
+    "hurst_sub": "DFA Hurst of the forecast-extension increments · descriptive only",
+    "spread_label": "ENSEMBLE SPREAD",
+    "spread_sub": "std of member forecasts, in σ of the forecast itself",
+    "edge_title": "DIRECTIONAL EDGE — GRADED BY THE CONCLUSION LAYER",
+    "anchor_title": "Forecast vs Realized Forward Change",
+    "anchor_desc": (f"Out-of-sample {AARAMBH_FWD_HORIZON}d forecast vs the realized {AARAMBH_FWD_HORIZON}d "
+                    "change (the label). The unrealized tail has no label yet."),
+    "anchor_a": "Realized change (label)",
+    "anchor_b": "Forecast (out-of-sample)",
+    "anchor_lower": f"Forecast z (causal) · {SIGN_Z}",
+    "anchor_y": f"{AARAMBH_FWD_HORIZON}d forward Δlog",
+    "conv_title": f"Engine Conviction ({SIGN_ENGINE})",
+    "conv_desc": ("−100·tanh(ForecastZ/2): the forecast z-score mapped to ±100. No band is drawn — "
+                  "the engine does not produce a calibrated band in forward mode."),
+    "ext_title": "Forecast Extension Diagnostics",
+    "ext_desc": ("Conformal z-scores of the (sign-flipped) forecast across lookbacks — how extended the "
+                 f"forecast is vs its own recent range. Extension diagnostics, not the verdict · {SIGN_ENGINE}."),
+    "breadth_bull": "Bullish-extended windows %",
+    "breadth_bear": "Bearish-extended windows %",
+    "avgz_desc": f"Mean conformal z across lookbacks ({SIGN_ENGINE}); beyond ±2 is extended.",
+    "lookback_desc": f"Per-lookback conformal z and zone of the forecast extension ({SIGN_ENGINE}).",
+    "freq_desc": "Threshold crossings of the extension z per lookback (descriptive).",
+    "regime_title": "Extension State",
+    "regime_desc": "Where today's forecast extension sits across lookbacks; history share is descriptive.",
+    "zone_bull": "Bullish ext.",
+    "zone_bear": "Bearish ext.",
+    "zone_mid": "Neutral",
+    "regime_bull": "BULLISH-EXTENDED",
+    "regime_bear": "BEARISH-EXTENDED",
+    "feature_title": "Feature Impact on the Forecast",
+    "feature_desc": (f"How much each predictor's {AARAMBH_FWD_MOM_K}-day momentum moves the forecast now "
+                     "(engine attribution)."),
+    "levels_only_note": ("Stationarity / mean-reversion tests and the engine's hit-rate table describe a "
+                         "LEVELS regression and are shown in levels mode only."),
+    "data_cols": ("Date", "Valid", "Forecast", "Label", "ForecastZ", "ConvictionScore", "AvgZ",
+                  "OversoldBreadth", "OverboughtBreadth", "ModelSpread", "Regime"),
+}
+
+_LEVELS = {
+    "key": "levels",
+    "badge": f"LEVELS MODE · {LEVELS_TAG}",
+    "head_name": "valuation head",
+    "quality_desc": (f"Fit of the walk-forward fair-value regression — {LEVELS_TAG}. Level fit says "
+                     "nothing about forward direction; see Diagnostics → Edge Ledger."),
+    "r2_label": "OOS R² (LEVEL FIT)",
+    "r2_sub": "variance of the level explained out-of-sample — not a forecast grade",
+    "r2_tip": ("Share of the target LEVEL's variance explained on out-of-sample rows. A high level R² "
+               "is easy for persistent series and is not evidence of directional skill."),
+    "r2rw_label": "SKILL vs RANDOM WALK",
+    "r2rw_sub": "1 − SSE / SSE(yesterday's level); < 0 = a random walk did better",
+    "r2rw_tip": ("1 − SSE(model) / SSE(naive), naive = the previous day's level (random walk), on "
+                 "out-of-sample rows."),
+    "hurst_sub": "DFA Hurst of the residual's increments · descriptive only",
+    "spread_label": "MODEL SPREAD",
+    "spread_sub": "std of member fair values, in σ of the residual",
+    "edge_title": f"EDGE — {LEVELS_TAG.upper()}",
+    "anchor_title": "Actual vs Walk-Forward Fair Value",
+    "anchor_desc": f"Actual level vs the out-of-sample fair-value estimate — {LEVELS_TAG}.",
+    "anchor_a": "Actual",
+    "anchor_b": "Fair value (out-of-sample)",
+    "anchor_lower": f"Residual (actual − fair value) · {SIGN_ENGINE}",
+    "anchor_y": "",
+    "conv_title": f"DDM-Filtered Conviction ({SIGN_ENGINE})",
+    "conv_desc": (f"Evidence-accumulated conviction with its uncertainty band (not a calibrated "
+                  f"confidence interval) — {LEVELS_TAG}."),
+    "ext_title": "Valuation Extension Diagnostics",
+    "ext_desc": f"Conformal z-scores of the residual across lookbacks ({SIGN_ENGINE}) — {LEVELS_TAG}.",
+    "breadth_bull": "Undervalued windows %",
+    "breadth_bear": "Overvalued windows %",
+    "avgz_desc": f"Mean conformal z across lookbacks ({SIGN_ENGINE}); beyond ±2 is extended.",
+    "lookback_desc": f"Per-lookback conformal z and zone of the residual ({SIGN_ENGINE}).",
+    "freq_desc": "Threshold crossings of the residual z per lookback (descriptive).",
+    "regime_title": "Valuation State",
+    "regime_desc": f"Where today's residual sits across lookbacks — {LEVELS_TAG}.",
+    "zone_bull": "Undervalued",
+    "zone_bear": "Overvalued",
+    "zone_mid": "Fair",
+    "regime_bull": "OVERSOLD",
+    "regime_bear": "OVERBOUGHT",
+    "feature_title": "Feature Impact on Fair Value",
+    "feature_desc": "How much each model input shifts the fair-value estimate now (engine attribution).",
+    "levels_only_note": "",
+    "data_cols": ("Date", "Valid", "Actual", "FairValue", "Residual", "ModelSpread", "AvgZ",
+                  "OversoldBreadth", "OverboughtBreadth", "ConvictionScore", "ConvictionUpper",
+                  "ConvictionLower", "Regime", "BullishDiv", "BearishDiv"),
+}
+
+CONVERGENCE = {
+    "title": "Conclusion",
+    "desc": (f"C = 100·tanh(zA/2)·κ · {SIGN_C}. Aarambh's causal z (zA) is the head; Nirnay's zN can only "
+             f"shrink it (κ ≤ 1) on CONTRADICT days, and only after the lift test passes."),
+    "c_axis": f"C ({SIGN_Z})",
+    "z_axis": f"z ({SIGN_Z})",
+    "kappa_axis": "κ (1 = no shrink)",
+    "state_desc": (f"State: CONFIRM / CONTRADICT when |zN| ≥ {CONV2_TAU:g} with the same / opposite sign "
+                   "as zA; NEUTRAL when |zN| < τ; NO_DATA when Nirnay has no live data that day."),
+    "anatomy_title": "Agreement Anatomy",
+    "anatomy_desc": ("Descriptive — not used in the conclusion. Four fixed-weight agreement dimensions, "
+                     "computed only on dates where Nirnay has warm data."),
+}
+
+NIRNAY = {
+    "avg_tip": ("Mean Unified oscillator over the names with live data that day (±10 scale). The "
+                "Nirnay head reads it contrarian: zN = causal z of −Avg_Signal (+ = bullish)."),
+    "hmm_desc": ("Mean of the per-stock online-HMM probabilities across live names — a cross-sectional "
+                 "average, not an index-level regime model. Gaps = no live data."),
+    "zone_desc": ("Share of LIVE names whose oscillator is beyond its own adaptive cut (OS_Cut / OB_Cut). "
+                  "Descriptive breadth."),
+    "signals_desc": "Per-stock oscillator cut crossings counted across live names (descriptive).",
+    "regime_desc": "Per-stock regime labels as a share of live names (WEAK_* folded into Bull / Bear).",
+    "coverage_desc": "Live (warm, real-bar) names vs the constituent universe — every % uses the live count.",
+}
+
+PRECEDENT = {
+    "desc": ("Covariance-aware (OAS) Mahalanobis state matching on Nishkarsh's own state features. "
+             "Outcomes are the target's realized change after each analog."),
+    "base_rate": ("A descriptive base rate: the share of analogs followed by a rise, against the "
+                  "unconditional rise rate over the same history, with an exact two-sided binomial p. "
+                  f"It counts as evidence only when p < {EDGE_ALPHA:g}."),
+    "similarity_note": "relative (1 − d/d_max within this candidate pool)",
+}
+
+
+def mode_copy(forward_mode: bool) -> dict:
+    """The copy table for the displayed run's Aarambh mode."""
+    return _FORWARD if bool(forward_mode) else _LEVELS
+
+
+def zone_label(zone, forward_mode: bool) -> str:
+    """Engine zone strings ('Undervalued' / 'Overvalued' / 'Fair') in the mode's words."""
+    c = mode_copy(forward_mode)
+    z = str(zone or "")
+    if "Under" in z:
+        return c["zone_bull"]
+    if "Over" in z:
+        return c["zone_bear"]
+    return c["zone_mid"] if z and z.lower() not in ("nan", "none") else "—"
+
+
+def regime_label(regime, forward_mode: bool) -> str:
+    """Engine regime strings (STRONGLY OVERSOLD … OVERBOUGHT) in the mode's words."""
+    c = mode_copy(forward_mode)
+    r = str(regime or "").upper()
+    strong = "STRONGLY " if "STRONG" in r else ""
+    if "OVERSOLD" in r:
+        return strong + c["regime_bull"]
+    if "OVERBOUGHT" in r:
+        return strong + c["regime_bear"]
+    return "NEUTRAL" if r and r not in ("N/A", "NAN", "NONE") else "N/A"
+
+
+def forbidden_hits(text: str, forward_mode: bool) -> list[str]:
+    """Forward-mode forbidden phrases present in ``text`` (empty in levels mode)."""
+    if not forward_mode:
+        return []
+    t = str(text).lower()
+    return [w for w in FORBIDDEN_FORWARD if re.search(r"\b" + re.escape(w) + r"\b", t)]

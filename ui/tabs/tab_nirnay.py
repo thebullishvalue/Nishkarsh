@@ -1,390 +1,134 @@
 """
-Nishkarsh v1.4.0 — Nirnay tab: Constituent regime intelligence, zone distribution, signals, HMM.
+Nishkarsh v2 — Nirnay tab: constituent breadth and regime read-outs (C-NIR daily frame).
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
-UI — NIRNAY engine visualization: per-constituent MSF + MMR with regime classification.
-
-Section order (logical analytical flow):
-  Phase 1 — State:      Metric Cards (current snapshot)
-  Phase 2 — Regime:     HMM State Probabilities
-  Phase 3 — Composition: Zone Distribution → Raw Zone Counts
-  Phase 4 — Signals:    Signal Counts → Average Unified Signal
-  Phase 5 — Drill-down: Individual Constituents
+Every percentage is of the names with LIVE (warm, real-bar) data that day (``n_live``); zone
+membership uses each stock's own adaptive cuts (OS_Cut / OB_Cut). Descriptive only: Nirnay's
+role in the conclusion is the measured, lift-gated one shown in the Convergence tab.
 """
 
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from ui.theme import chart_layout, style_axes
-from ui.components import render_metric_card, render_section_header, section_gap
 from core.config import (
-    COLOR_GREEN,
-    COLOR_RED,
-    COLOR_AMBER,
-    COLOR_MUTED,
-    UI_BREADTH_HIGH,
-    UI_CHART_HEIGHT_MEDIUM,
-    UI_CHART_HEIGHT_LARGE,
+    COLOR_AMBER, COLOR_CYAN, COLOR_GREEN, COLOR_MUTED, COLOR_PURPLE, COLOR_RED,
+    UI_CHART_HEIGHT_LARGE, UI_CHART_HEIGHT_MEDIUM,
 )
-
-# ── Alias colors for tab-local use ────────────────────────────────────────
-EMERALD = COLOR_GREEN
-ROSE = COLOR_RED
-AMBER = COLOR_AMBER
-SLATE = COLOR_MUTED
-
-# ── Tooltip definitions ────────────────────────────────────────────────────
-TOOLTIPS = {
-    "oversold_pct": (
-        "Share of Nifty 50 stocks whose MSF and MMR oscillators are in the oversold zone. "
-        "Above 60% often precedes short-term bounce opportunities."
-    ),
-    "overbought_pct": (
-        "Share of Nifty 50 stocks whose MSF and MMR oscillators are in the overbought zone. "
-        "Above 60% signals elevated pullback risk across the index."
-    ),
-    "avg_signal": (
-        "Mean of the unified oscillator (MSF + MMR) across all constituents. "
-        "Below -2 = broad bullish pressure; above +2 = broad bearish pressure; near zero = mixed."
-    ),
-    "buy_signals": (
-        "Count of constituents where the unified oscillator crossed from oversold into neutral, "
-        "triggering a regime-change buy signal. More buy signals = broader reversal participation."
-    ),
-    "sell_signals": (
-        "Count of constituents where the unified oscillator crossed from overbought into neutral, "
-        "triggering a regime-change sell signal. More sell signals = broader distribution pressure."
-    ),
-    "trading_days": (
-        "Number of trading days in the Nirnay lookback window. "
-        "Longer histories produce more stable regime estimates and HMM calibration."
-    ),
-}
+from ui.components import esc, fmt, num, render_interpretation_card, render_metric_card, render_section_header, section_gap
+from ui.copy import NIRNAY
+from ui.theme import chart_layout, style_axes
 
 
-# ═══════════════════════════════════════════════════════════════════════
-#  CHART BUILDERS
-# ═══════════════════════════════════════════════════════════════════════
-
-def _render_hmm_regime_chart(df_n, dates):
-    """Section: HMM State Probabilities — bull/bear regime classification."""
-    fig_hmm = go.Figure()
-    if "avg_hmm_bull" in df_n.columns:
-        fig_hmm.add_trace(go.Scatter(
-            x=dates, y=df_n["avg_hmm_bull"].values,
-            mode="lines", name="P(Bull)",
-            line=dict(color=EMERALD, width=1.5),
-            fill="tozeroy", fillcolor="rgba(52,211,153,0.08)",
-        ))
-    if "avg_hmm_bear" in df_n.columns:
-        fig_hmm.add_trace(go.Scatter(
-            x=dates, y=df_n["avg_hmm_bear"].values,
-            mode="lines", name="P(Bear)",
-            line=dict(color=ROSE, width=1.5),
-            fill="tozeroy", fillcolor="rgba(251,113,133,0.08)",
-        ))
-    if "avg_hmm_bull" in df_n.columns and "avg_hmm_bear" in df_n.columns:
-        neutral_vals = 1.0 - df_n["avg_hmm_bull"].values - df_n["avg_hmm_bear"].values
-        fig_hmm.add_trace(go.Scatter(
-            x=dates, y=neutral_vals,
-            mode="lines", name="P(Neutral)",
-            line=dict(color=SLATE, width=1, dash="dot"),
-        ))
-    fig_hmm.add_hline(y=0.5, line_dash="dot", line_color="rgba(255,255,255,0.08)", line_width=0.5)
-
-    fig_hmm.update_layout(**chart_layout(height=300))
-    style_axes(fig_hmm, y_title="Probability", y_range=[0, 1])
-    st.plotly_chart(fig_hmm, width='stretch', key="nirnay_hmm_regime")
+def _s(df: pd.DataFrame, col: str) -> pd.Series:
+    """Numeric column or an all-NaN series — never a fabricated default (A4-21)."""
+    if col in df.columns:
+        return pd.to_numeric(df[col], errors="coerce")
+    return pd.Series(float("nan"), index=df.index)
 
 
-def _render_zone_distribution_chart(df_n, dates):
-    """Section: Zone Distribution Over Time — oversold/overbought share."""
-    fig_zones = go.Figure()
-    fig_zones.add_trace(go.Scatter(
-        x=dates, y=df_n["Oversold_Pct"].values,
-        mode="lines", name="Oversold %",
-        fill="tozeroy", fillcolor="rgba(52, 211, 153, 0.12)",
-        line=dict(color=EMERALD, width=1.5),
-    ))
-    fig_zones.add_trace(go.Scatter(
-        x=dates, y=df_n["Overbought_Pct"].values,
-        mode="lines", name="Overbought %",
-        fill="tozeroy", fillcolor="rgba(251, 113, 133, 0.12)",
-        line=dict(color=ROSE, width=1.5),
-    ))
-    ymax = max(df_n["Oversold_Pct"].max(), df_n["Overbought_Pct"].max()) * 1.15
-
-    fig_zones.update_layout(**chart_layout(height=UI_CHART_HEIGHT_LARGE))
-    style_axes(fig_zones, y_title="% of Constituents", y_range=[0, ymax])
-    st.plotly_chart(fig_zones, width='stretch', key="nirnay_os_ob")
+def _last(df: pd.DataFrame, col: str):
+    return num(_s(df, col).iloc[-1]) if len(df) else None
 
 
-def _render_raw_zone_counts_chart(df_n, dates):
-    """Section: Raw Zone Counts — absolute count of constituents per zone."""
-    fig_counts = go.Figure()
-    fig_counts.add_trace(go.Bar(
-        x=dates, y=df_n["Oversold"].values, name="Oversold",
-        marker=dict(color="rgba(52,211,153,0.85)"),
-    ))
-    fig_counts.add_trace(go.Bar(
-        x=dates, y=df_n["Overbought"].values, name="Overbought",
-        marker=dict(color="rgba(251,113,133,0.85)"),
-    ))
-
-    fig_counts.update_layout(**chart_layout(height=UI_CHART_HEIGHT_MEDIUM), barmode="group")
-    style_axes(fig_counts, y_title="Count")
-    st.plotly_chart(fig_counts, width='stretch', key="nirnay_counts")
+def _lines(df, specs, key, y_title, y_range=None, height=UI_CHART_HEIGHT_MEDIUM, fill=False):
+    fig = go.Figure()
+    for col, name, color in specs:
+        if col in df.columns:
+            kw = dict(fill="tozeroy") if fill else {}
+            fig.add_trace(go.Scatter(x=df.index, y=_s(df, col), mode="lines", name=name,
+                                     line=dict(color=color, width=1.5), connectgaps=False, **kw))
+    fig.update_layout(**chart_layout(height=height))
+    style_axes(fig, y_title=y_title, y_range=y_range)
+    st.plotly_chart(fig, width="stretch", key=key)
 
 
-def _render_signal_counts_chart(df_n, dates):
-    """Section: Signal Counts Over Time — regime-change buy/sell triggers."""
-    fig_signals = go.Figure()
-    fig_signals.add_trace(go.Scatter(
-        x=dates, y=df_n["Buy_Signals"].values,
-        mode="lines+markers", name="Buy Signals",
-        line=dict(color=EMERALD, width=1.5),
-        marker=dict(size=3, color=EMERALD),
-    ))
-    fig_signals.add_trace(go.Scatter(
-        x=dates, y=df_n["Sell_Signals"].values,
-        mode="lines+markers", name="Sell Signals",
-        line=dict(color=ROSE, width=1.5),
-        marker=dict(size=3, color=ROSE),
-    ))
-
-    fig_signals.update_layout(**chart_layout(height=UI_CHART_HEIGHT_MEDIUM))
-    style_axes(fig_signals, y_title="Signal Count")
-    st.plotly_chart(fig_signals, width='stretch', key="nirnay_signal_counts")
-
-
-def _render_avg_unified_signal_chart(df_n, dates):
-    """Section: Average Unified Signal — cross-sectional oscillator mean."""
-    avg_vals = df_n["Avg_Signal"].values
-    colors = [EMERALD if v < -2 else ROSE if v > 2 else "rgba(148,163,184,0.75)" for v in avg_vals]
-
-    fig_n = go.Figure()
-    fig_n.add_trace(go.Scatter(
-        x=dates, y=np.clip(avg_vals, 0, None),
-        fill="tozeroy", fillcolor="rgba(251,113,133,0.05)",
-        line=dict(width=0), showlegend=False, hoverinfo="skip",
-    ))
-    fig_n.add_trace(go.Scatter(
-        x=dates, y=np.clip(avg_vals, None, 0),
-        fill="tozeroy", fillcolor="rgba(52,211,153,0.05)",
-        line=dict(width=0), showlegend=False, hoverinfo="skip",
-    ))
-    fig_n.add_trace(go.Scatter(
-        x=dates, y=avg_vals,
-        mode="lines+markers", name="Avg Signal",
-        line=dict(color=SLATE, width=1.5),
-        marker=dict(size=3, color=colors),
-    ))
-    fig_n.add_hline(y=2, line_color="rgba(251,113,133,0.2)", line_width=0.5, line_dash="dot")
-    fig_n.add_hline(y=-2, line_color="rgba(52,211,153,0.2)", line_width=0.5, line_dash="dot")
-    fig_n.add_hline(y=0, line_color="rgba(255,255,255,0.06)", line_width=0.5)
-
-    fig_n.update_layout(**chart_layout(height=UI_CHART_HEIGHT_MEDIUM))
-    style_axes(fig_n, y_title="Avg Signal", y_range=[-6, 6])
-    st.plotly_chart(fig_n, width='stretch', key="nirnay_avg_signal")
-
-
-def _render_individual_constituents(nirnay_constituent_dfs):
-    """Section: Individual Constituents — per-stock oscillator and regime."""
-    if nirnay_constituent_dfs:
-        sym = st.selectbox("Select Symbol", sorted(nirnay_constituent_dfs.keys()), key="nirnay_sym_select")
-        if sym and sym in nirnay_constituent_dfs:
-            cdf = nirnay_constituent_dfs[sym].iloc[-100:].copy()
-            if isinstance(cdf.columns, pd.MultiIndex):
-                cdf.columns = [c[0] for c in cdf.columns]
-            # Full regime stack: the engine runs Kalman→GARCH→HMM→CUSUM, so the
-            # drill-down surfaces Vol_Regime (GARCH), Change_Point (CUSUM) and
-            # Confidence too — previously computed but never shown.
-            cols_show = [c for c in ["Close", "MSF_Osc", "MMR_Osc", "Unified_Osc", "Condition",
-                                     "Regime", "Vol_Regime", "Change_Point", "Confidence"] if c in cdf.columns]
-            st.dataframe(cdf[cols_show] if cols_show else cdf, width='stretch')
-
-
-# ═══════════════════════════════════════════════════════════════════════
-#  MAIN RENDER FUNCTION
-# ═══════════════════════════════════════════════════════════════════════
-
-def _filter_timeframe(df_n: pd.DataFrame, selected_tf: str) -> pd.DataFrame:
-    """Restrict the daily Nirnay frame to the globally-selected time range.
-
-    Mirrors the window math the other tabs apply (3M/6M/1Y/2Y/ALL) so the
-    Nirnay charts respond to the same top-of-page selector buttons. The frame
-    is date-indexed; we slice on the start so the latest snapshot (the metric
-    cards' ``.iloc[-1]``) is unaffected.
-    """
-    if selected_tf == "ALL" or df_n.empty:
-        return df_n
-    idx = pd.to_datetime(pd.Index(df_n.index), errors="coerce")
-    if idx.isna().all():
-        # Non-datetime index — fall back to a trading-day tail count.
-        from core.config import TIMEFRAME_TRADING_DAYS
-        n_days = TIMEFRAME_TRADING_DAYS.get(selected_tf, 252)
-        return df_n.iloc[max(0, len(df_n) - n_days):]
-    offsets = {
-        "3M": pd.DateOffset(months=3), "6M": pd.DateOffset(months=6),
-        "1Y": pd.DateOffset(years=1), "2Y": pd.DateOffset(years=2),
-    }
-    off = offsets.get(selected_tf)
-    if off is None:
-        return df_n
-    cutoff = idx.max() - off
-    return df_n[np.asarray(idx >= cutoff)]
-
-
-def render_nirnay_tab(selected_tf: str = "ALL") -> None:
-    """Nirnay tab — constituent regime intelligence with cyan system identity.
-
-    Analytical flow:
-      1. Metric Cards        — "What's the current snapshot?"
-      2. HMM Regime          — "What's the hidden regime probability?"
-      3. Zone Distribution   — "How many stocks are oversold vs overbought?"
-      4. Raw Zone Counts     — "Absolute counts per zone."
-      5. Signal Counts       — "Where are the regime-change triggers?"
-      6. Avg Unified Signal  — "What's the broad oscillator consensus?"
-      7. Individual Stocks   — "What does each stock look like?"
-    """
-
-    st.markdown(
-        '<div class="tab-bg nirnay"></div>',
-        unsafe_allow_html=True,
-    )
-    nirnay_daily = st.session_state.get("nirnay_daily")
-    nirnay_constituent_dfs = st.session_state.get("nirnay_constituent_dfs", {})
-
-    if nirnay_daily is None or nirnay_daily.empty:
-        st.info("No Nirnay constituent data available.")
+def render_nirnay_tab(start_date=None) -> None:
+    """Nirnay tab — reads ``nirnay_daily``, ``nirnay_constituent_dfs`` and the run report's cuts."""
+    ss = st.session_state
+    daily = ss.get("nirnay_daily")
+    dfs = ss.get("nirnay_constituent_dfs") or {}
+    rep_n = (ss.get("run_report") or {}).get("nirnay") or {}
+    st.markdown('<div class="tab-bg nirnay"></div>', unsafe_allow_html=True)
+    if daily is None or len(daily) == 0:
+        st.info("No Nirnay constituent data for this run — the conclusion runs in single-system mode.")
         return
-
-    # ── Normalize columns ───────────────────────────────────────────────
-    df_n = nirnay_daily[~nirnay_daily.index.duplicated(keep="last")].copy()
-    col_map = {}
-    for c in df_n.columns:
-        cl = c.lower().replace("-", "_")
-        if cl in ("oversold_pct",):          col_map[c] = "Oversold_Pct"
-        elif cl in ("overbought_pct",):      col_map[c] = "Overbought_Pct"
-        elif cl in ("neutral_pct",):         col_map[c] = "Neutral_Pct"
-        elif cl in ("buy_signals", "buy_signal_count"): col_map[c] = "Buy_Signals"
-        elif cl in ("sell_signals", "sell_signal_count"): col_map[c] = "Sell_Signals"
-        elif cl in ("avg_signal", "avg_unified_osc"):   col_map[c] = "Avg_Signal"
-        elif cl in ("oversold",):            col_map[c] = "Oversold"
-        elif cl in ("overbought",):          col_map[c] = "Overbought"
-        elif cl in ("neutral",):             col_map[c] = "Neutral"
-        elif cl in ("total_analyzed", "num_constituents"): col_map[c] = "Total_Analyzed"
-        elif cl in ("avg_hmm_bull",):        col_map[c] = "avg_hmm_bull"
-        elif cl in ("avg_hmm_bear",):        col_map[c] = "avg_hmm_bear"
-    df_n = df_n.rename(columns=col_map)
-
-    for col, default in [
-        ("Oversold_Pct", 0), ("Overbought_Pct", 0), ("Neutral_Pct", 0),
-        ("Buy_Signals", 0), ("Sell_Signals", 0), ("Avg_Signal", 0),
-        ("Oversold", 0), ("Overbought", 0), ("Neutral", 0),
-        ("Total_Analyzed", 0), ("avg_hmm_bull", 0.33), ("avg_hmm_bear", 0.33),
-    ]:
-        if col not in df_n.columns:
-            df_n[col] = default
-
-    # Apply the global time-range selector so every chart below honors the
-    # 3M/6M/1Y/2Y/ALL buttons (was previously always full-history).
-    df_n = _filter_timeframe(df_n, selected_tf)
-    if df_n.empty:
+    full = daily[~daily.index.duplicated(keep="last")].sort_index()
+    df = full if start_date is None else full[pd.DatetimeIndex(full.index) >= pd.Timestamp(start_date)]
+    if df.empty:
         st.info("No Nirnay data in the selected time range.")
         return
 
-    dates = list(df_n.index)
-
-    # ── Phase 1: STATE — metric cards ──────────────────────────────────
-    c1, c2, c3, c4, c5, c6 = st.columns(6, gap="small")
-    with c1:
-        v = df_n["Oversold_Pct"].iloc[-1]
-        render_metric_card("OVERSOLD STOCKS", f"{v:.0f}%", "of Nifty 50", "success" if v > UI_BREADTH_HIGH else "neutral",
-                           tooltip=TOOLTIPS["oversold_pct"])
-    with c2:
-        v = df_n["Overbought_Pct"].iloc[-1]
-        render_metric_card("OVERBOUGHT STOCKS", f"{v:.0f}%", "of Nifty 50", "danger" if v > UI_BREADTH_HIGH else "neutral",
-                           tooltip=TOOLTIPS["overbought_pct"])
-    with c3:
-        v = df_n["Avg_Signal"].iloc[-1]
-        # Color thresholds align to the ±2 the label and chart bands use.
-        render_metric_card("AVG UNIFIED SIGNAL", f"{v:.2f}", "<-2 bullish · >+2 bearish", "success" if v < -2 else "danger" if v > 2 else "neutral",
-                           tooltip=TOOLTIPS["avg_signal"])
-    with c4:
-        v = int(df_n["Buy_Signals"].iloc[-1])
-        render_metric_card("BUY SIGNALS", str(v), "Oversold-to-neutral crosses", "success" if v > 0 else "neutral",
-                           tooltip=TOOLTIPS["buy_signals"])
-    with c5:
-        v = int(df_n["Sell_Signals"].iloc[-1])
-        render_metric_card("SELL SIGNALS", str(v), "Overbought-to-neutral crosses", "danger" if v > 0 else "neutral",
-                           tooltip=TOOLTIPS["sell_signals"])
-    with c6:
-        render_metric_card("LOOKBACK WINDOW", str(len(df_n)), "Trading days", "info",
-                           tooltip=TOOLTIPS["trading_days"])
-
-    section_gap()
-
-    # ── Phase 2: REGIME ────────────────────────────────────────────────
-    render_section_header(
-        "HMM State Probabilities",
-        "Probability the index is in a bull or bear regime. P > 0.5 = regime confidence. Frequent crossings = uncertainty.",
-        icon="eye",
-        accent="violet",
-    )
-    _render_hmm_regime_chart(df_n, dates)
+    n_live, n_uni = _last(df, "n_live"), _last(df, "n_universe")
+    live_txt = f"of {fmt(n_live, '.0f')} live names"
+    c = st.columns(6, gap="small")
+    with c[0]:
+        render_metric_card("OVERSOLD", fmt(_last(df, "Oversold_Pct"), ".0f", suffix="%"),
+                           f"{live_txt} · beyond own OS_Cut", tooltip=NIRNAY["zone_desc"])
+    with c[1]:
+        render_metric_card("OVERBOUGHT", fmt(_last(df, "Overbought_Pct"), ".0f", suffix="%"),
+                           f"{live_txt} · beyond own OB_Cut", tooltip=NIRNAY["zone_desc"])
+    with c[2]:
+        render_metric_card("AVG UNIFIED OSC", fmt(_last(df, "Avg_Signal"), "+.2f"),
+                           "±10 scale · − = oversold (read bullish by the contrarian head)", tooltip=NIRNAY["avg_tip"])
+    with c[3]:
+        render_metric_card("COVERAGE", f"{fmt(n_live, '.0f')} / {fmt(n_uni, '.0f')}",
+                           f"live / universe ({fmt(_last(df, 'coverage'), '.0%')})", tooltip=NIRNAY["coverage_desc"])
+    with c[4]:
+        render_metric_card("CUT CROSSINGS", f"{fmt(_last(df, 'Buy_Signals'), '.0f')} ↑ · {fmt(_last(df, 'Sell_Signals'), '.0f')} ↓",
+                           "per-stock crossings today (descriptive)", tooltip=NIRNAY["signals_desc"])
+    with c[5]:
+        render_metric_card("HISTORY", f"{len(full)}", "trading days with live Nirnay data",
+                           tooltip="Days with at least one live name; days with none are absent (NO_DATA).")
+    render_interpretation_card(
+        "ADAPTIVE CUTS",
+        esc(f"Zone membership uses each stock's own adaptive cut: median live OS_Cut "
+            f"{fmt(rep_n.get('os_cut_median_live'), '+.2f')} / OB_Cut {fmt(rep_n.get('ob_cut_median_live'), '+.2f')} "
+            f"on the latest bar. Dispersion (cross-sectional std of the oscillator) today: "
+            f"{fmt(_last(df, 'Dispersion'), '.2f')}."), "neutral")
 
     section_gap()
-
-    # ── Phase 3: COMPOSITION ───────────────────────────────────────────
-    render_section_header(
-        "Zone Distribution Over Time",
-        "Daily share of Nifty 50 stocks oversold vs overbought. Rising oversold = accumulation setup. Rising overbought = distribution risk.",
-        icon="layers",
-        accent="emerald",
-    )
-    _render_zone_distribution_chart(df_n, dates)
+    render_section_header("HMM State Probabilities (cross-sectional mean)", NIRNAY["hmm_desc"], icon="eye", accent="violet")
+    _lines(df, (("avg_hmm_bull", "mean P(bull)", COLOR_GREEN), ("avg_hmm_bear", "mean P(bear)", COLOR_RED)),
+           "nirnay_hmm_regime", "probability", y_range=[0, 1], height=300)
 
     section_gap()
+    render_section_header("Zone Breadth Over Time", NIRNAY["zone_desc"], icon="layers", accent="emerald")
+    _lines(df, (("Oversold_Pct", "oversold % of live", COLOR_GREEN), ("Overbought_Pct", "overbought % of live", COLOR_RED)),
+           "nirnay_os_ob", "% of live names", y_range=[0, 100], height=UI_CHART_HEIGHT_LARGE, fill=True)
 
-    render_section_header(
-        "Raw Zone Counts",
-        "Raw count of constituents per regime zone.",
-        icon="bar-chart",
-        accent="cyan",
-    )
-    _render_raw_zone_counts_chart(df_n, dates)
+    render_section_header("Regime Composition", NIRNAY["regime_desc"], icon="bar-chart", accent="cyan")
+    _lines(df, (("Regime_Bull_Pct", "bull %", COLOR_GREEN), ("Regime_Bear_Pct", "bear %", COLOR_RED),
+                ("Regime_Neutral_Pct", "neutral %", COLOR_MUTED), ("Regime_Transition_Pct", "transition %", COLOR_AMBER)),
+           "nirnay_regime_mix", "% of live names", y_range=[0, 100])
 
-    section_gap()
-
-    # ── Phase 4: SIGNALS ───────────────────────────────────────────────
-    render_section_header(
-        "Signal Counts Over Time",
-        "Daily regime-change signal count. Clusters across constituents often precede index reversals.",
-        icon="zap",
-        accent="rose",
-    )
-    _render_signal_counts_chart(df_n, dates)
+    render_section_header("Coverage", NIRNAY["coverage_desc"], icon="database")
+    _lines(df, (("n_live", "live names", COLOR_CYAN), ("n_universe", "universe", COLOR_MUTED)),
+           "nirnay_coverage", "names", height=240)
 
     section_gap()
+    render_section_header("Cut Crossings Over Time", NIRNAY["signals_desc"], icon="zap", accent="rose")
+    _lines(df, (("Buy_Signals", "oversold-side crossings", COLOR_GREEN), ("Sell_Signals", "overbought-side crossings", COLOR_RED),
+                ("Change_Points", "CUSUM change points", COLOR_PURPLE)), "nirnay_signal_counts", "count")
 
-    render_section_header(
-        "Average Unified Signal",
-        "Cross-sectional mean of all oscillators. Sustained moves beyond ±2 = broad participation. Whipsaws near zero = no consensus.",
-        icon="activity",
-    )
-    _render_avg_unified_signal_chart(df_n, dates)
+    render_section_header("Average Unified Oscillator", NIRNAY["avg_tip"], icon="activity")
+    _lines(df, (("Avg_Signal", "Avg_Signal (− = oversold)", COLOR_MUTED),), "nirnay_avg_signal",
+           "mean oscillator (±10; − = oversold)")
 
     section_gap()
-
-    # ── Phase 5: DRILL-DOWN ────────────────────────────────────────────
-    render_section_header(
-        "Individual Constituents",
-        "Per-stock MSF, MMR, unified signal, and regime. Verify index-level signals are backed by individual names.",
-        icon="database",
-    )
-    _render_individual_constituents(nirnay_constituent_dfs)
+    render_section_header("Individual Constituents",
+                          "Per-stock oscillators, adaptive cuts, warm-up flag and regime read-outs (last 100 bars).",
+                          icon="database")
+    if dfs:
+        sym = st.selectbox("Select Symbol", sorted(dfs.keys()), key="nirnay_sym_select")
+        cdf = dfs.get(sym)
+        if cdf is not None and len(cdf):
+            cdf = cdf.iloc[-100:].copy()
+            if isinstance(cdf.columns, pd.MultiIndex):
+                cdf.columns = [c[0] for c in cdf.columns]
+            cols = [c for c in ("Close", "MSF_Osc", "MMR_Osc", "Unified_Osc", "OS_Cut", "OB_Cut", "Condition", "Warmup",
+                                "Regime", "HMM_Bull", "HMM_Bear", "Vol_Regime", "Change_Point", "Confidence")
+                    if c in cdf.columns]
+            st.dataframe(cdf[cols] if cols else cdf, width="stretch")

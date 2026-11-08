@@ -1,12 +1,13 @@
 """
-Nishkarsh — Diagnostics tab: model quality + predictive-edge diagnostics.
+Nishkarsh v2 — Diagnostics tab: the Edge Ledger, model inputs, and data-layer provenance.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
-UI — Model quality + the predictive-edge verdict: OU residual stationarity,
-feature impact, regime (HMM) telemetry, data-layer health, and the Intelligence
-Center (calibration + out-of-sample directional IC / walk-forward durability /
-fold stability). Predictive-mode aware: relabels the level/mean-reversion
-diagnostics that aren't the verdict when Aarambh is forecasting returns.
+The EDGE LEDGER renders the conclusion layer's evidence fields verbatim (``conclusion`` dict,
+C-V2): full-history Aarambh-head IC, out-of-sample C IC, Convergence Lift (with MDE / power),
+the cost-aware backtest (incl. break-even), the signal chain and the trust tier. A row reads
+PROVEN / PASSED / TRADEABLE only when the conclusion's own boolean says so; the threshold scale
+is core/config ``EDGE_*`` — the UI grades nothing itself. Data Layer Health is the run's
+provenance (``run_config["provenance"]``).
 """
 
 from __future__ import annotations
@@ -15,642 +16,229 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from ui.theme import chart_layout, style_axes
-from ui.components import render_metric_card, render_section_header, section_gap
 from core.config import (
-    COLOR_GREEN,
-    COLOR_RED,
-    COLOR_AMBER,
-    COLOR_CYAN,
-    COLOR_MUTED,
-    AARAMBH_FWD_MOM_K,
+    BACKTEST_REFERENCE_BPS, COLOR_GREEN, COLOR_RED, EDGE_ALPHA, EDGE_TRADEABLE_T,
 )
-from data.cache import all_caches
-from data.circuit_breaker import all_circuits, CircuitState
+from ui.components import (
+    esc, fmt, num, render_interpretation_card, render_metric_card, render_section_header, section_gap,
+)
+from ui.copy import EDGE_SCALE_TEXT, LEVELS_TAG, SIGN_Z, mode_copy
+from ui.theme import chart_layout, style_axes
 
-# ── Alias colors for tab-local use ────────────────────────────────────────
-EMERALD = COLOR_GREEN
-ROSE = COLOR_RED
-AMBER = COLOR_AMBER
-CYAN = COLOR_CYAN
-SLATE = COLOR_MUTED
-
-# ── Tooltip definitions ────────────────────────────────────────────────────
-TOOLTIPS = {
-    "ou_half_life": (
-        "Expected time (in days) for the pricing residual to close halfway back to fair value "
-        "after a shock. Shorter half-lives = faster mean reversion = more frequent opportunities."
-    ),
-    "adf_pvalue": (
-        "Tests whether the pricing residual has a unit root (drifts away from fair value). "
-        "p < 0.05 rejects the unit root, confirming mean-reversion."
-    ),
-    "kpss_pvalue": (
-        "Corroborating test: checks whether the residual is stationary around a trend. "
-        "p > 0.05 fails to reject stationarity — second confirmation of mean-reversion."
-    ),
-    "viterbi_persist": (
-        "Probability the current regime (bull/bear) persists into the next period. "
-        "Near 1.0 = stable regimes; below 0.9 = frequent switching, lower signal confidence."
-    ),
-}
+_PROV_CLASS = {"live": "success", "cache": "info", "stale": "warning", "fallback": "warning", "empty": "danger"}
 
 
-def render_diagnostics_tab(engine, ts_filtered, x_axis, x_title, signal, model_stats):
-    """ML Diagnostics with rose system identity."""
+def _edge_status(e: dict) -> tuple[str, str]:
+    """Status word for an IC evidence block — PROVEN only when the conclusion says ``significant``."""
+    if not e or not e.get("available"):
+        return "INSUFFICIENT DATA", "neutral"
+    if e.get("significant") is True:
+        return "PROVEN (p < α)", "success"
+    ic, p = num(e.get("ic")), num(e.get("p"))
+    if ic is not None and ic < 0 and p is not None and (1.0 - p) < EDGE_ALPHA:
+        return "INVERTED", "danger"
+    return "NOT PROVEN", "neutral"
 
-    # System identity background
-    st.markdown(
-        '<div class="tab-bg diagnostics"></div>',
-        unsafe_allow_html=True,
-    )
 
-    # Predictive mode changes what most of these diagnostics MEAN: Aarambh is
-    # forecasting forward returns, not regressing a fair-value level, so the
-    # OU/stationarity "mean-reversion foundation", the "fair-value" feature
-    # impacts, and the level-based Signal Performance are NOT the verdict — the
-    # tradeable edge is DIRECTIONAL (rank IC), surfaced in the Intelligence
-    # Center below. The tab relabels accordingly rather than implying otherwise.
-    forward_mode = bool(signal.get("forward_signal", False))
-    diag = st.session_state.get("intelligence_diag", {}) or {}
+def _edge_row(title: str, e: dict) -> None:
+    status, cls = _edge_status(e)
+    ci = e.get("boot_ci") if isinstance(e.get("boot_ci"), (list, tuple)) and len(e.get("boot_ci")) == 2 else (None, None)
+    render_metric_card(
+        title, fmt(e.get("ic"), "+.3f"),
+        f"{status} · n {fmt(e.get('n'), '.0f')} non-overlapping · t {fmt(e.get('t'), '+.2f')} · p {fmt(e.get('p'), '.3f')}"
+        f" · HAC t {fmt(e.get('hac_t'), '+.2f')} · 95% CI [{fmt(ci[0], '+.3f')}, {fmt(ci[1], '+.3f')}]"
+        f" · phase {fmt(e.get('phase_min'), '+.3f')}…{fmt(e.get('phase_max'), '+.3f')}"
+        f" · momentum baseline {fmt(e.get('baseline_momentum_ic'), '+.3f')}", cls,
+        tooltip=("Spearman IC of the signal (+ = bullish) vs the forward return on h-spaced rows; one-sided "
+                 "p for IC > 0; HAC = Newey–West t of the daily rank IC; CI = stationary block bootstrap."))
 
-    # ═══════════════════════════════════════════════════════════════════════
-    # 1. OU MEAN-REVERSION DIAGNOSTICS
-    # ═══════════════════════════════════════════════════════════════════════
-    render_section_header(
-        "OU Residual Diagnostics" if forward_mode else "OU Mean-Reversion Diagnostics",
-        ("Stationarity of the model residual. ⚠ In predictive mode these describe the "
-         "FORECAST series, not a tradeable mean-reversion residual — not the edge verdict.")
-        if forward_mode else
-        "Tests whether the pricing residual is stationary — the foundation all mean-reversion signals depend on.",
-        icon="crosshair",
-        accent="cyan",
-    )
 
-    theta_status = "Stable" if signal.get("theta_stable", True) else "Unstable"
-    stationarity = "Stationary" if signal["adf_pvalue"] < 0.05 and signal["kpss_pvalue"] > 0.05 else "Non-Stationary"
+def _render_edge_ledger(con: dict) -> None:
+    render_section_header("Edge Ledger",
+                          "Every edge word in this app is backed by a row here, computed on the displayed series "
+                          f"at the displayed horizon. {EDGE_SCALE_TEXT}", icon="shield", accent="emerald")
+    if not con:
+        st.info("No conclusion in this run — nothing to grade.")
+        return
+    trust = con.get("trust") or {}
+    tier = str(trust.get("tier") or "INSUFFICIENT_DATA")
+    render_interpretation_card(
+        f"TRUST · {tier.replace('_', ' ')}", esc(trust.get("text") or "—"),
+        "success" if tier in ("DIRECTIONAL_EDGE", "TRADEABLE_EDGE") else "danger" if tier == "INVERTED" else "neutral")
+    st.caption(f"Horizon {fmt(con.get('horizon'), '.0f')}d · label: {con.get('label_src') or '—'} · "
+               f"as of {con.get('as_of') or '—'} · signs {SIGN_Z}"
+               + ("" if con.get("forward_mode") is not False else f" · levels mode: {LEVELS_TAG}"))
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2 = st.columns(2, gap="small")
     with c1:
-        render_metric_card("OU HALF-LIFE", f"{signal['ou_half_life']:.0f}d", "Days to close half the pricing gap", "info",
-                           tooltip=TOOLTIPS["ou_half_life"])
+        _edge_row("AARAMBH HEAD IC · FULL HISTORY", con.get("edge") or {})
     with c2:
-        # Forward mode: ADF/KPSS describe the FORECAST series (-prediction),
-        # not a tradeable mean-reversion residual — grading them
-        # success/danger implies a pass/fail verdict on a series that isn't
-        # the verdict. Render neutral and say so; levels mode is unchanged.
-        adf_class = "neutral" if forward_mode else ("success" if signal["adf_pvalue"] < 0.05 else "danger")
-        adf_sub = "Rejects drift if p < 0.05" + (" (forecast series — not a verdict)" if forward_mode else "")
-        render_metric_card("ADF P-VALUE", f"{signal['adf_pvalue']:.3f}", adf_sub, adf_class,
-                           tooltip=TOOLTIPS["adf_pvalue"])
-    with c3:
-        kpss_class = "neutral" if forward_mode else ("success" if signal["kpss_pvalue"] > 0.05 else "danger")
-        kpss_sub = "Confirms mean-reversion if p > 0.05" + (" (forecast series — not a verdict)" if forward_mode else "")
-        render_metric_card("KPSS P-VALUE", f"{signal['kpss_pvalue']:.3f}", kpss_sub, kpss_class,
-                           tooltip=TOOLTIPS["kpss_pvalue"])
+        _edge_row("CONCLUSION C IC · OUT-OF-SAMPLE", con.get("edge_C") or {})
 
-    # Status indicators
-    ok_svg = f'<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="{COLOR_GREEN}" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>'
-    warn_svg = f'<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="{COLOR_AMBER}" stroke-width="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>'
-    stat_icon = ok_svg if "Stationary" in stationarity else warn_svg
-    theta_icon = ok_svg if "Stable" in theta_status else warn_svg
+    lift, oos = con.get("lift") or {}, con.get("oos") or {}
+    c1, c2 = st.columns(2, gap="small")
+    with c1:
+        if not lift.get("available"):
+            ls, lc = "NOT RUN / INSUFFICIENT", "neutral"
+        else:
+            ls, lc = ("PASSED", "success") if lift.get("passed") is True else ("NOT PROVEN", "neutral")
+        render_metric_card(
+            "CONVERGENCE LIFT", fmt(lift.get("lift"), "+.3f"),
+            f"{ls} · IC|confirm {fmt(lift.get('ic_confirm'), '+.3f')} (n {fmt(lift.get('n_confirm'), '.0f')}) vs "
+            f"IC|contradict {fmt(lift.get('ic_contradict'), '+.3f')} (n {fmt(lift.get('n_contradict'), '.0f')}) · "
+            f"z {fmt(lift.get('z'), '+.2f')} · one-sided p {fmt(lift.get('p_one_sided'), '.3f')} · "
+            f"MDE (80% power) {fmt(lift.get('mde'), '.3f')} · phase {fmt(lift.get('lift_phase_min'), '+.3f')}…"
+            f"{fmt(lift.get('lift_phase_max'), '+.3f')} · κ {fmt(lift.get('kappa'), '.2f')}", lc)
+    with c2:
+        adds = oos.get("adds_value") is True
+        render_metric_card(
+            "OUT-OF-SAMPLE · C vs AARAMBH", f"{fmt(oos.get('ic_C'), '+.3f')} vs {fmt(oos.get('ic_A'), '+.3f')}",
+            f"{'IMPROVED' if adds else 'NO IMPROVEMENT'} · n {fmt(oos.get('n'), '.0f')} · requires a passed latest "
+            "refit, κ enabled and IC_C ≥ IC_A", "success" if adds else "neutral")
 
-    st.markdown(
-        f'<div style="display:flex;gap:var(--sp-6);margin-top:var(--sp-3);">'
-        f'<span style="font-family:var(--data);font-size:0.78rem;color:var(--ink-secondary);display:inline-flex;align-items:center;gap:0.4rem;">Stationarity: {stat_icon} {stationarity}</span>'
-        f'<span style="font-family:var(--data);font-size:0.78rem;color:var(--ink-secondary);display:inline-flex;align-items:center;gap:0.4rem;">\u03b8 Stability: {theta_icon} {theta_status}</span>'
-        f'</div>',
-        unsafe_allow_html=True,
-    )
+    bt = con.get("backtest") or {}
+    by_cost = bt.get("by_cost") or {}
+    tradeable = tier == "TRADEABLE_EDGE"
+    rows = []
+    for k in sorted(by_cost, key=lambda s: num(s) if num(s) is not None else 1e9):
+        b = by_cost.get(k) or {}
+        rows.append({"cost (bps, one-way)": fmt(k, "g"), "gross Sharpe": fmt(b.get("gross_sharpe"), "+.2f"),
+                     "net Sharpe": fmt(b.get("net_sharpe"), "+.2f"), "HAC t": fmt(b.get("t"), "+.2f"),
+                     "ann. return": fmt(b.get("ann_return"), "+.2%"),
+                     "turnover / yr": fmt(b.get("turnover_per_year"), ".1f"),
+                     "break-even bps": fmt(b.get("breakeven_bps"), ".1f"), "n": fmt(b.get("n"), ".0f")})
+    no = bt.get("nonoverlap_reference") or {}
+    if no:
+        rows.append({"cost (bps, one-way)": f"{fmt(bt.get('reference_bps'), 'g')} · non-overlap",
+                     "gross Sharpe": fmt(no.get("gross_sharpe"), "+.2f"), "net Sharpe": fmt(no.get("net_sharpe"), "+.2f"),
+                     "HAC t": fmt(no.get("t"), "+.2f"), "ann. return": fmt(no.get("ann_return"), "+.2%"),
+                     "turnover / yr": fmt(no.get("turnover_per_year"), ".1f"),
+                     "break-even bps": fmt(no.get("breakeven_bps"), ".1f"), "n": fmt(no.get("n"), ".0f")})
+    st.markdown(f"**Cost-aware backtest** · position = C/100 · mode {bt.get('mode') or '—'} · graded at "
+                f"{BACKTEST_REFERENCE_BPS:g} bps: **{'TRADEABLE' if tradeable else 'NOT TRADEABLE'}** "
+                f"(needs HAC t and non-overlap t ≥ {EDGE_TRADEABLE_T:g} and a proven IC).")
+    if rows:
+        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
-    section_gap()
+    chain = [c for c in (con.get("chain") or []) if isinstance(c, dict)]
+    c1, c2 = st.columns(2, gap="small")
+    with c1:
+        st.markdown("**Signal chain** (same rows, h-spaced IC, + = bullish)")
+        if chain:
+            st.dataframe(pd.DataFrame([{"stage": c.get("stage"), "IC": fmt(c.get("ic"), "+.3f"),
+                                        "n": fmt(c.get("n"), ".0f")} for c in chain]),
+                         width="stretch", hide_index=True)
+    with c2:
+        yearly = (con.get("edge") or {}).get("yearly") or {}
+        ys = {str(k): num(v) for k, v in yearly.items() if num(v) is not None}
+        if ys:
+            fig = go.Figure(go.Bar(x=list(ys), y=list(ys.values()),
+                                   marker_color=[COLOR_GREEN if v > 0 else COLOR_RED for v in ys.values()]))
+            fig.update_layout(**chart_layout(height=240, show_legend=False))
+            style_axes(fig, y_title="daily rank IC by year (+ = right way)")
+            st.plotly_chart(fig, width="stretch", key="diag_yearly_ic")
 
-    # ═══════════════════════════════════════════════════════════════════════
-    # 2. FEATURE IMPACT
-    # ═══════════════════════════════════════════════════════════════════════
-    render_section_header(
-        "Feature Impact on Forecast" if forward_mode else "Feature Impact on Fair Value",
-        (f"How much each predictor's {AARAMBH_FWD_MOM_K}-day momentum shifts the forward-return "
-         "forecast now. Top features drive the signal — if they go stale, the signal degrades.")
-        if forward_mode else
-        "How much each predictor shifts the fair-value estimate now. Top features drive the signal — if they go stale, the signal degrades.",
-        icon="bar-chart",
-        accent="violet",
-    )
 
-    feature_history = engine.get_feature_impact_history()
-    if not feature_history.empty:
-        if hasattr(engine, "latest_feature_impacts") and engine.latest_feature_impacts:
-            impacts = engine.latest_feature_impacts
-            labels = list(impacts.keys())[::-1]
-            vals = list(impacts.values())[::-1]
-
-            # These ARE the predictors actually fed to this run's model. When the
-            # combined-PCA gate is on (levels mode), the model trains on orthogonal
-            # factors, so the names are MACRO_PC* — flag that honestly rather than
-            # implying they are raw predictors.
-            _names = list(impacts.keys())
-            _is_pca = any(str(n).startswith("MACRO_PC") for n in _names)
-            _roster = " · ".join(str(n) for n in _names[:18]) + ("  …" if len(_names) > 18 else "")
-            _cap = (
-                f"<b>{len(_names)} factors</b> feeding the model (causal-PCA gate ON — orthogonal "
-                f"factors, not raw predictors; see console loadings for each factor's drivers): {_roster}"
-                if _is_pca else
-                f"<b>{len(_names)} predictors</b> feeding this run"
-                + (f" ({AARAMBH_FWD_MOM_K}-day momentum)" if forward_mode else "")
-                + f": {_roster}"
-            )
-            st.markdown(
-                f'<div style="font-family:var(--data);font-size:0.72rem;color:var(--ink-tertiary);'
-                f'margin:-0.2rem 0 0.6rem 0;line-height:1.5;">{_cap}</div>',
-                unsafe_allow_html=True,
-            )
-
-            # Gradient color scale from light slate to bright slate based on relative contribution
-            colors = []
-            max_val = max(vals) if vals else 1
-            for v in vals:
-                intensity = v / max_val
-                # Light slate (148,163,184) to brighter slate (180,195,215)
-                r = int(148 + (180 - 148) * intensity)
-                g = int(163 + (195 - 163) * intensity)
-                b = int(184 + (215 - 184) * intensity)
-                alpha = 0.75 + 0.25 * intensity
-                colors.append(f"rgba({r},{g},{b},{alpha:.2f})")
-
-            fig_imp = go.Figure(go.Bar(
-                x=vals, y=labels, orientation="h",
-                marker=dict(color=colors),
-            ))
-            fig_imp.update_layout(**chart_layout(height=max(260, len(labels) * 32), show_legend=False))
-            fig_imp.update_xaxes(
-                showgrid=True, gridcolor="rgba(255,255,255,0.035)", gridwidth=0.5,
-                title_text="Momentum contribution %" if forward_mode else "Contribution %",
-                zeroline=True,
-                zerolinecolor="rgba(255,255,255,0.06)", zerolinewidth=0.5,
-            )
-            fig_imp.update_yaxes(showgrid=False)
-            st.plotly_chart(fig_imp, width='stretch', key="diagnostics_feature_impact")
-
-        if not feature_history.empty and len(feature_history) > 0:
-            st.markdown(
-                '<div style="font-family:var(--display);font-size:0.72rem;font-weight:600;color:var(--ink-tertiary);'
-                'text-transform:uppercase;letter-spacing:0.08em;margin:var(--sp-4) 0 var(--sp-2) 0;">Impact History (last 10)</div>',
-                unsafe_allow_html=True,
-            )
-            st.dataframe(feature_history.tail(10), width='stretch', height=200)
-    else:
+def _render_feature_impact(engine, mc: dict) -> None:
+    render_section_header(mc["feature_title"], mc["feature_desc"], icon="bar-chart", accent="violet")
+    impacts = getattr(engine, "latest_feature_impacts", None) or {}
+    if not impacts:
         st.info("Feature impact data not available.")
+        return
+    names = list(impacts.keys())
+    is_pca = any(str(n).startswith("MACRO_PC") for n in names)
+    roster = " · ".join(esc(n) for n in names[:18]) + (" …" if len(names) > 18 else "")
+    lead = (f"<b>{len(names)} factors</b> (causal-PCA, orthogonal — not raw predictors)" if is_pca
+            else f"<b>{len(names)} inputs</b> feeding this run")
+    st.markdown(f'<div style="font-family:var(--data);font-size:0.72rem;color:var(--ink-tertiary);'
+                f'margin:-0.2rem 0 0.6rem 0;line-height:1.5;">{lead}: {roster}</div>', unsafe_allow_html=True)
+    vals = [num(v) or 0.0 for v in impacts.values()][::-1]
+    fig = go.Figure(go.Bar(x=vals, y=[str(n) for n in names][::-1], orientation="h",
+                           marker=dict(color="rgba(148,163,184,0.85)")))
+    fig.update_layout(**chart_layout(height=max(260, len(names) * 28), show_legend=False))
+    style_axes(fig, x_title="contribution %")
+    fig.update_yaxes(showgrid=False)
+    st.plotly_chart(fig, width="stretch", key="diagnostics_feature_impact")
+    hist = engine.get_feature_impact_history() if hasattr(engine, "get_feature_impact_history") else None
+    if isinstance(hist, pd.DataFrame) and len(hist):
+        st.caption("Impact history (last 10 refits)")
+        st.dataframe(hist.tail(10), width="stretch", height=200)
 
-    section_gap()
 
-    # ═══════════════════════════════════════════════════════════════════════
-    # 3. SIGNAL PERFORMANCE
-    # ═══════════════════════════════════════════════════════════════════════
-    render_section_header(
-        "Signal Performance",
-        ("⚠ NOT meaningful in predictive mode: the target is already a forward return, so "
-         "'forward Δ of the target' is a double-forward artifact. The real edge is the "
-         "Directional / Walk-Forward IC in the Intelligence Center below.")
-        if forward_mode else
-        "Walk-forward hit rates across 5D, 10D, 20D forward return horizons.",
-        icon="trending",
-        accent="emerald",
-    )
-
-    perf = engine.get_signal_performance()
-    perf_rows = []
-    for period in (5, 10, 20):
-        p = perf[period]
-        buy_sig = "\u2713" if p["buy_p_value"] < 0.05 else "~" if p["buy_p_value"] < 0.10 else "\u2014"
-        sell_sig = "\u2713" if p["sell_p_value"] < 0.05 else "~" if p["sell_p_value"] < 0.10 else "\u2014"
-        perf_rows.append({
-            "Period": f"{period}D",
-            "Buy HR": f"{p['buy_hit'] * 100:.1f}%" if p["buy_count"] > 0 else "\u2014",
-            "Buy Avg \u0394": f"{p['buy_avg']:.2f}%" if p["buy_count"] > 0 else "\u2014",
-            "Buy t": f"{p['buy_t_stat']:.2f} {buy_sig}" if p["buy_count"] > 0 else "\u2014",
-            "Buy N": p["buy_count"],
-            "Sell HR": f"{p['sell_hit'] * 100:.1f}%" if p["sell_count"] > 0 else "\u2014",
-            "Sell Avg \u0394": f"{p['sell_avg']:.2f}%" if p["sell_count"] > 0 else "\u2014",
-            "Sell t": f"{p['sell_t_stat']:.2f} {sell_sig}" if p["sell_count"] > 0 else "\u2014",
-            "Sell N": p["sell_count"],
-        })
-    st.dataframe(pd.DataFrame(perf_rows), width='stretch', height=160)
-
-    section_gap()
-
-    # ═══════════════════════════════════════════════════════════════════════
-    # 4. HMM TELEMETRY
-    # ═══════════════════════════════════════════════════════════════════════
-    render_section_header(
-        "Regime Detection (HMM)",
-        "How the Hidden Markov Model classifies the market over time. Sustained P > 0.5 = confident. Frequent crossings = uncertainty.",
-        icon="eye",
-        accent="rose",
-    )
-
-    # Daily aggregated Nirnay regime series (app stores it under "nirnay_daily").
-    nirnay_df = st.session_state.get("nirnay_daily", pd.DataFrame())
-
-    # Empirical regime persistence, measured from the data (the dominant HMM
-    # state's day-over-day stickiness) instead of a hardcoded constant.
-    persist_val, persist_sub = "—", "no regime series this run"
-    if not nirnay_df.empty and "avg_hmm_bull" in nirnay_df.columns and "avg_hmm_bear" in nirnay_df.columns:
-        _state = (nirnay_df["avg_hmm_bull"] > nirnay_df["avg_hmm_bear"]).astype(int)
-        if len(_state) > 1:
-            _persist = float((_state.values[1:] == _state.values[:-1]).mean())
-            persist_val = f"{_persist:.2f}"
-            persist_sub = "P(state holds next day) · empirical"
-
-    # (The former "COVARIANCE SHRINKAGE 1e-4" card displayed a hardcoded
-    # emission-variance epsilon styled as measured telemetry — removed rather
-    # than left masquerading as a diagnostic. Regime persistence below IS
-    # measured from the data.)
-    c1, _ = st.columns(2)
+def _render_levels_only(engine, signal: dict) -> None:
+    render_section_header("OU Mean-Reversion Diagnostics (levels mode)",
+                          "Stationarity of the valuation residual — valuation context — falsified as a forecaster.",
+                          icon="crosshair", accent="cyan")
+    c1, c2, c3 = st.columns(3)
+    meaningful = signal.get("half_life_meaningful") is True
     with c1:
-        render_metric_card("REGIME PERSISTENCE", persist_val, persist_sub,
-                           "info" if persist_val != "—" else "neutral",
-                           tooltip=TOOLTIPS["viterbi_persist"])
-
-    if not nirnay_df.empty and "avg_hmm_bull" in nirnay_df.columns:
-        fig_hmm = go.Figure()
-        fig_hmm.add_trace(go.Scatter(
-            x=nirnay_df.index, y=nirnay_df["avg_hmm_bull"],
-            name="P(Bull)", line=dict(color=EMERALD, width=1.5),
-            fill="tozeroy", fillcolor="rgba(52,211,153,0.08)",
-        ))
-        fig_hmm.add_trace(go.Scatter(
-            x=nirnay_df.index, y=nirnay_df["avg_hmm_bear"],
-            name="P(Bear)", line=dict(color=ROSE, width=1.5),
-            fill="tozeroy", fillcolor="rgba(251,113,133,0.08)",
-        ))
-        fig_hmm.add_hline(y=0.5, line_dash="dot", line_color="rgba(255,255,255,0.08)", line_width=0.5)
-
-        fig_hmm.update_layout(**chart_layout(height=300))
-        style_axes(fig_hmm, y_title="State Probability", x_title=x_title, y_range=[0, 1])
-        st.plotly_chart(fig_hmm, width='stretch', key="diagnostics_hmm_plot")
-
-    # ═══════════════════════════════════════════════════════════════════════
-    # 4. DATA LAYER HEALTH — cache hit rate + circuit breaker state per source
-    # ═══════════════════════════════════════════════════════════════════════
-    section_gap()
-    render_section_header(
-        "Data Layer Health",
-        "Two-tier cache statistics and circuit-breaker state for each external service.",
-        icon="database",
-        accent="emerald",
-    )
-
-    # ── Caches ────────────────────────────────────────────────────────────
-    cache_cols = st.columns(len(all_caches()))
-    for col, cache in zip(cache_cols, all_caches()):
-        s = cache.stats()
-        hit_pct = s["hit_rate"] * 100.0
-        total = s["hits"] + s["misses"]
-        # Color: green ≥70% hit rate, amber 30-70%, rose <30% (or no data)
-        if total == 0:
-            color_cls = "neutral"
-        elif hit_pct >= 70:
-            color_cls = "success"
-        elif hit_pct >= 30:
-            color_cls = "warning"
-        else:
-            color_cls = "danger"
-        last_fetch = s["last_fetch_time"]
-        if last_fetch:
-            mins = (pd.Timestamp.now().timestamp() - last_fetch) / 60.0
-            sub = f"{s['disk_entries']} disk · last fetch {mins:.0f}m ago"
-        else:
-            sub = f"{s['disk_entries']} disk · no fetch this run"
-        with col:
-            render_metric_card(
-                f"CACHE · {s['namespace'].upper()}",
-                f"{hit_pct:.0f}%" if total else "—",
-                sub,
-                color_cls,
-                tooltip=(
-                    f"{s['hits']} hits / {s['misses']} misses · "
-                    f"{s['stale_hits']} stale-fallback · "
-                    f"{s['writes']} writes · TTL {s['ttl_seconds']}s · version {s['version']}"
-                ),
-            )
-
-    # ── Circuit Breakers ──────────────────────────────────────────────────
-    circ_cols = st.columns(len(all_circuits()))
-    for col, cb in zip(circ_cols, all_circuits()):
-        st_dict = cb.get_state()
-        state = st_dict["state"]
-        if state == CircuitState.CLOSED.value:
-            color_cls = "success"
-            label_val = "CLOSED"
-        elif state == CircuitState.HALF_OPEN.value:
-            color_cls = "warning"
-            label_val = "HALF-OPEN"
-        else:
-            color_cls = "danger"
-            label_val = "OPEN"
-        last_fail = st_dict["last_failure"]
-        if last_fail:
-            mins = (pd.Timestamp.now().timestamp() - last_fail) / 60.0
-            sub = f"{st_dict['failure_count']} fails · last {mins:.0f}m ago"
-        else:
-            sub = f"{st_dict['success_count']} successful calls"
-        with col:
-            render_metric_card(
-                f"CIRCUIT · {st_dict['name'].upper()}",
-                label_val,
-                sub,
-                color_cls,
-                tooltip=(
-                    f"Threshold: {st_dict['failure_threshold']} failures · "
-                    f"Recovery: {st_dict['recovery_timeout']:.0f}s · "
-                    f"OPEN blocks calls; HALF-OPEN allows 1 test call after recovery timeout."
-                ),
-            )
-
-    # ═══════════════════════════════════════════════════════════════════════
-    # 5. INTELLIGENCE CENTER — self-calibration dashboard (Sanket-pattern)
-    # ═══════════════════════════════════════════════════════════════════════
-    section_gap()
-    _render_intelligence_center(forward_mode=forward_mode, diag=diag)
-
-
-def _render_intelligence_center(forward_mode: bool = False, diag: dict | None = None) -> None:
-    """Intelligence Center — read-only diagnostic dashboard.
-
-    Calibration is now automatic during every **Run Analysis** when the
-    Intelligence Mode toggle is ON in the sidebar. This panel surfaces:
-      • Current calibrated state (Train IC, Val IC, Stability, Trials)
-      • Learned weights vs factory defaults (bar chart)
-      • Learned classification thresholds (4 cards)
-      • Optuna fANOVA factor sensitivity (top drivers)
-      • All saved profiles on disk
-
-    There is no calibrate button here — the loop is the single Run
-    Analysis flow. Reset / Import / Export controls live in the sidebar
-    Passport.
-    """
-    # v2: the Optuna calibration / profile store is retired (ruling R2); the conclusion's Edge
-    # Ledger replaces this panel (UI builder). Minimal state until then.
-    st.info("Calibration profiles are retired in v2 — see the conclusion's evidence (run report).")
-    return
-    from convergence import intelligence as intel  # noqa: F401 — unreachable v1 code, removed by the UI builder
-
-    render_section_header(
-        "Intelligence Center",
-        "Self-Training Convergence Calibration · auto-runs every analysis · diagnostics only",
-        icon="cpu",
-        accent="violet",
-    )
-
-    profile = st.session_state.get("intelligence_active_profile")
-    is_calibrated = bool(profile)
-    intel_enabled = bool(st.session_state.get("intelligence_mode", True))
-    diag = diag or {}
-    # The calibration label is now configurable (^NSEI / PE / basket) — show the
-    # one actually used this run instead of the stale hardcoded "forward PE".
-    _label = diag.get("label_src") or (
-        "index return" if (profile and profile.get("label_kind") == "index_return") else "forward target Δ"
-    )
-
-    # Top-line status banner
-    if not intel_enabled:
-        st.markdown(
-            '<div style="font-family:var(--data); font-size:0.72rem; color:var(--ink-secondary);'
-            'background:rgba(148,163,184,0.05); border:1px solid var(--border);'
-            'border-radius:6px; padding:0.7rem 0.9rem; margin-bottom:1rem;">'
-            '<b>Intelligence Mode is OFF.</b> Toggle it ON in the sidebar Passport to enable '
-            'automatic calibration on the next Run Analysis. The engine is currently using '
-            'factory weights (0.30 / 0.25 / 0.25 / 0.20) and symmetric ±0.3 / ±0.5 thresholds.'
-            '</div>',
-            unsafe_allow_html=True,
-        )
-    elif not is_calibrated:
-        st.markdown(
-            '<div style="font-family:var(--data); font-size:0.72rem; color:var(--amber);'
-            'background:rgba(212,168,83,0.08); border:1px solid rgba(212,168,83,0.22);'
-            'border-radius:6px; padding:0.7rem 0.9rem; margin-bottom:1rem;">'
-            '<b>No profile yet.</b> Intelligence Mode is ON but no calibrated profile exists '
-            'for this universe yet. Click <b>Run Analysis</b> to trigger the first calibration; '
-            'a profile will be saved automatically and used on every subsequent run.'
-            '</div>',
-            unsafe_allow_html=True,
-        )
-
-    # ── Status summary row ──────────────────────────────────────────────
-    train_ic = float(profile.get("train_ic", 0.0)) if profile else 0.0
-    val_ic   = float(profile.get("val_ic", 0.0)) if profile else 0.0
-    n_trials = int(profile.get("n_trials", 0)) if profile else 0
-    n_train  = int(profile.get("n_train_dates", 0)) if profile else 0
-    n_val    = int(profile.get("n_val_dates", 0)) if profile else 0
-    # Fold stability (% of cross-validation folds with positive IC) is the metric
-    # the acceptance gate actually keys on — and unlike the old val/train ratio it
-    # doesn't penalise a barely-fit profile whose val IC exceeds train IC (the
-    # healthy regime under a clean ^NSEI/PE label).
-    fold_pos = profile.get("cv_fraction_positive") if profile else None
-
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        render_metric_card(
-            "STATE",
-            "Calibrated" if is_calibrated else ("Disabled" if not intel_enabled else "Default"),
-            "engine state",
-            "success" if is_calibrated else ("neutral" if not intel_enabled else "warning"),
-        )
+        render_metric_card("OU HALF-LIFE", fmt(signal.get("ou_half_life"), ".0f", suffix="d") if meaningful else "—",
+                           "days to close half the gap" if meaningful else "not meaningful on this fit (θ unstable / no reversion)")
     with c2:
-        render_metric_card(
-            "VAL IC", f"{val_ic:+.3f}" if is_calibrated else "—",
-            f"OOS skill vs {_label}" if is_calibrated else "out-of-sample skill",
-            "success" if (is_calibrated and val_ic > 0) else "neutral",
-        )
+        p = num(signal.get("adf_pvalue"))
+        render_metric_card("ADF P-VALUE", fmt(p, ".3f"), f"rejects a unit root if p < {EDGE_ALPHA:g}",
+                           "neutral" if p is None else "success" if p < EDGE_ALPHA else "danger")
     with c3:
-        render_metric_card(
-            "FOLD STABILITY",
-            f"{fold_pos*100:.0f}%" if (is_calibrated and fold_pos is not None) else "—",
-            "CV folds positive (gate metric)",
-            "success" if (is_calibrated and fold_pos is not None and fold_pos >= 0.8) else "warning",
-        )
-    with c4:
-        render_metric_card(
-            "TRIALS",
-            f"{n_trials}" if is_calibrated else "—",
-            "Optuna iterations · last run",
-            "info" if is_calibrated else "neutral",
-        )
+        p = num(signal.get("kpss_pvalue"))
+        render_metric_card("KPSS P-VALUE", fmt(p, ".3f"), f"fails to reject stationarity if p > {EDGE_ALPHA:g}",
+                           "neutral" if p is None else "success" if p > EDGE_ALPHA else "danger")
+    st.caption("Edge assessment (engine levels test): " + str(signal.get("edge_assessment") or "—"))
+    if not hasattr(engine, "get_signal_performance"):
+        return
+    perf = engine.get_signal_performance() or {}
+    rows = []
+    for period, p in sorted(perf.items()):
+        if not isinstance(p, dict):
+            continue
+        row = {"Period": f"{period}D"}
+        for side in ("buy", "sell"):
+            n = int(num(p.get(f"{side}_count")) or 0)
+            pv = num(p.get(f"{side}_p_value"))
+            mark = "✓" if pv is not None and pv < EDGE_ALPHA else "—"
+            row[f"{side.title()} HR"] = fmt((num(p.get(f"{side}_hit")) or 0) * 100, ".1f", suffix="%") if n else "—"
+            row[f"{side.title()} avg Δ"] = fmt(p.get(f"{side}_avg"), "+.2f", suffix="%") if n else "—"
+            row[f"{side.title()} t"] = f"{fmt(p.get(f'{side}_t_stat'), '+.2f')} {mark}" if n else "—"
+            row[f"{side.title()} N"] = n
+        rows.append(row)
+    if rows:
+        st.caption(f"Engine signal hit rates by horizon (✓ = p < {EDGE_ALPHA:g}; levels test, not the Edge Ledger)")
+        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
-    # ── Calibration diagnostics (when calibrated) ───────────────────────
-    if is_calibrated and profile:
-        section_gap()
-        render_section_header(
-            "Calibration Diagnostics",
-            "Train vs validation scores · split size · last calibration timestamp",
-            icon="bar-chart",
-            accent="violet",
-        )
-        d1, d2, d3, d4 = st.columns(4)
-        with d1:
-            render_metric_card(
-                "TRAIN IC", f"{train_ic:+.3f}", f"in-sample IC vs {_label}",
-                "success" if train_ic > 0 else "danger",
-            )
-        with d2:
-            render_metric_card(
-                "VAL IC", f"{val_ic:+.3f}", f"out-of-sample IC vs {_label}",
-                "success" if val_ic > 0 else "danger",
-            )
-        with d3:
-            render_metric_card(
-                "TRAIN / VAL",
-                f"{n_train} / {n_val}" if (n_train or n_val) else "—",
-                "purged 70/30 · K-fold CV objective", "info",
-            )
-        with d4:
-            render_metric_card(
-                "UPDATED", profile.get("timestamp", "—"),
-                "last calibration", "info",
-            )
 
-        # ── Out-of-sample durability (the predictive edge verdict) ───────
-        # Surfaces the directional IC + re-calibrating walk-forward + fold
-        # stability — the metrics that actually decide whether there is a
-        # tradeable directional edge (vs the level/magnitude metrics above).
-        section_gap()
-        render_section_header(
-            "Out-of-Sample Edge Durability",
-            "Directional rank-IC of the signed convergence signal, its re-calibrated "
-            "walk-forward durability, and cross-validation fold stability — the predictive verdict.",
-            icon="trending",
-            accent="emerald",
-        )
-        _dic = diag.get("directional_ic")
-        _dpos = diag.get("directional_pos")
-        _wfd = diag.get("wf_durable")
-        _wfm = diag.get("wf_mean")
-        _cv_mean = profile.get("cv_ic_mean")
-        _cv_min = profile.get("cv_ic_min")
-        e1, e2, e3 = st.columns(3)
-        with e1:
-            render_metric_card(
-                "DIRECTIONAL IC",
-                f"{_dic:+.3f}" if _dic is not None else "—",
-                (f"{(_dpos or 0)*100:.0f}% folds positive vs {_label}" if _dic is not None else "signed signal vs forward return"),
-                "success" if (_dic is not None and _dic > 0.03 and (_dpos or 0) >= 0.8) else "warning",
-            )
-        with e2:
-            render_metric_card(
-                "WALK-FORWARD",
-                ("Durable" if _wfd else "Not durable") if _wfd is not None else "—",
-                (f"re-cal OOS · mean {_wfm:+.3f}" if _wfm is not None else "re-calibrated per window"),
-                "success" if _wfd else ("warning" if _wfd is not None else "neutral"),
-            )
-        with e3:
-            render_metric_card(
-                "CV FOLD IC",
-                f"{_cv_mean:+.3f}" if _cv_mean is not None else "—",
-                (f"min {_cv_min:+.3f} across folds" if _cv_min is not None else "mean across CV folds"),
-                "success" if (_cv_mean is not None and _cv_mean > 0) else "neutral",
-            )
+def _render_data_health(run_config: dict, run_report: dict) -> None:
+    render_section_header("Data Layer Health",
+                          "Provenance of every input this run used (live / cache / stale / fallback / empty).",
+                          icon="database", accent="emerald")
+    prov = run_config.get("provenance") or {}
+    keys = list(prov) or ["sheet"]
+    for col, k in zip(st.columns(len(keys), gap="small"), keys):
+        p = prov.get(k) if isinstance(prov.get(k), dict) else {}
+        word = str(p.get("provenance") or "n/a")
+        missing = p.get("missing") or []
+        with col:
+            render_metric_card(f"{k.upper()}", word.upper(),
+                               f"as of {p.get('as_of') or '—'} · {len(missing)} missing", _PROV_CLASS.get(word, "neutral"),
+                               tooltip=str(p.get("note") or "") + (f" · missing: {', '.join(map(str, missing[:10]))}"
+                                                                   if missing else ""))
+    t = run_report.get("timings") or {}
+    st.caption(f"Run {run_report.get('run_id') or '—'} · fingerprint {str(run_config.get('fingerprint') or '—')[:12]} · "
+               f"history from {run_config.get('history_start') or '—'} · total {fmt(t.get('total', t.get('t_total')), '.1f', suffix='s')}")
 
-        # ── Learned weights ─────────────────────────────────────────────
-        weights = profile.get("weights", {})
-        if weights:
-            section_gap()
-            render_section_header(
-                "Learned Weights",
-                "Calibrated dimension weights vs factory defaults (0.30 / 0.25 / 0.25 / 0.20)",
-                icon="scale",
-                accent="cyan",
-            )
-            from convergence.intelligence import DEFAULT_WEIGHTS, _normalize_weights
-            wkeys   = ["w_direction", "w_breadth", "w_magnitude", "w_regime"]
-            wlabels = ["Direction", "Breadth", "Magnitude", "Regime"]
-            cal_vals = [float(v) for v in _normalize_weights(weights)]
-            def_vals = [float(DEFAULT_WEIGHTS[k]) for k in wkeys]
-            fig_w = go.Figure()
-            fig_w.add_trace(go.Bar(
-                x=wlabels, y=def_vals, name="Default",
-                marker=dict(color="rgba(148,163,184,0.35)"),
-            ))
-            fig_w.add_trace(go.Bar(
-                x=wlabels, y=cal_vals, name="Calibrated",
-                marker=dict(color=AMBER),
-            ))
-            fig_w.update_layout(**chart_layout(height=260), barmode="group")
-            style_axes(fig_w, y_title="Weight share", y_range=[0, max(0.5, max(cal_vals + def_vals) * 1.15)])
-            st.plotly_chart(fig_w, width='stretch', key="intel_weights_plot")
 
-        # ── Learned thresholds ──────────────────────────────────────────
-        thresholds = profile.get("thresholds", {})
-        if thresholds:
-            section_gap()
-            render_section_header(
-                "Learned Thresholds",
-                "Calibrated classification cut-points · normalized [-1, +1] scale · "
-                "calibrated thresholds may be asymmetric",
-                icon="crosshair",
-                accent="amber",
-            )
-            tcols = st.columns(4)
-            for col, (k, label, base) in zip(tcols, [
-                ("buy_strong",    "STRONG BUY ≤", -0.5),
-                ("buy_moderate",  "BUY ≤",         -0.3),
-                ("sell_moderate", "SELL ≥",        +0.3),
-                ("sell_strong",   "STRONG SELL ≥", +0.5),
-            ]):
-                val = float(thresholds.get(k, base))
-                with col:
-                    render_metric_card(
-                        label, f"{val:+.3f}",
-                        f"factory {base:+.2f} → cal {val:+.3f}",
-                        "success" if "BUY" in label else "danger",
-                    )
-
-        # ── Factor sensitivity (Optuna fANOVA) ──────────────────────────
-        sensitivity = profile.get("sensitivity", {})
-        if sensitivity:
-            section_gap()
-            render_section_header(
-                "Factor Sensitivity",
-                "Optuna fANOVA importance — which parameters drove the most variance in the objective",
-                icon="zap",
-                accent="rose",
-            )
-            sorted_items = sorted(sensitivity.items(), key=lambda kv: kv[1], reverse=True)[:10]
-            sens_df = pd.DataFrame(sorted_items, columns=["parameter", "importance_pct"])
-            fig_sens = go.Figure(go.Bar(
-                x=sens_df["importance_pct"], y=sens_df["parameter"],
-                orientation="h", marker=dict(color=CYAN),
-            ))
-            fig_sens.update_layout(**chart_layout(height=max(240, len(sorted_items) * 28), show_legend=False))
-            fig_sens.update_xaxes(title_text="% importance")
-            fig_sens.update_yaxes(showgrid=False)
-            st.plotly_chart(fig_sens, width='stretch', key="intel_sensitivity_plot")
-
-    # ── Saved profiles list ─────────────────────────────────────────────
+def render_diagnostics_tab(engine, signal: dict) -> None:
+    """Diagnostics — Edge Ledger (from the conclusion), model inputs, levels-only tests, provenance."""
+    ss = st.session_state
+    con, rc = ss.get("conclusion") or {}, ss.get("run_config") or {}
+    forward = bool(rc.get("forward_mode", con.get("forward_mode", True)))
+    mc = mode_copy(forward)
+    st.markdown('<div class="tab-bg diagnostics"></div>', unsafe_allow_html=True)
+    _render_edge_ledger(con)
     section_gap()
-    saved = intel.list_profiles()
-    if saved:
-        render_section_header(
-            "Saved Profiles",
-            f"{len(saved)} profile(s) on disk · ~/.cache/nishkarsh/intelligence/",
-            icon="database",
-            accent="emerald",
-        )
-        rows = []
-        for p in saved:
-            rows.append({
-                "Universe": p.universe,
-                "Index": p.selected_index or "—",
-                "Train IC": f"{p.train_ic:+.3f}",
-                "Val IC": f"{p.val_ic:+.3f}",
-                "Trials": p.n_trials,
-                "Updated": p.timestamp,
-            })
-        st.dataframe(pd.DataFrame(rows), width='stretch', height=min(200, 60 + 35 * len(rows)))
+    _render_feature_impact(engine, mc)
+    section_gap()
+    if forward:
+        st.caption(mc["levels_only_note"])
     else:
-        render_section_header(
-            "Saved Profiles",
-            "No profiles on disk yet · run an analysis with Intelligence Mode ON to create one",
-            icon="database",
-            accent="emerald",
-        )
+        _render_levels_only(engine, signal or {})
+    section_gap()
+    _render_data_health(rc, ss.get("run_report") or {})

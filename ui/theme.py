@@ -1,5 +1,5 @@
 """
-Nishkarsh v1.4.0 — Shared CSS, chart theming, and color constants for the UI layer.
+Nishkarsh v2 — Shared CSS, chart theming, and color constants for the UI layer.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
 UI — "Obsidian Quant" Institutional Research Terminal design language.
@@ -18,29 +18,12 @@ Precision-instrument design language for quantitative finance.
 
 from __future__ import annotations
 
+import html
 from pathlib import Path
 
 import streamlit as st
 
-from core.config import (
-    VERSION,
-    CHART_BG,
-    CHART_GRID,
-    CHART_ZEROLINE,
-    CHART_FONT_COLOR,
-    COLOR_GREEN,
-    COLOR_RED,
-    COLOR_GOLD,
-    COLOR_CYAN,
-    COLOR_AMBER,
-    COLOR_PURPLE,
-    COLOR_MUTED,
-)
-
-# VERSION is single-sourced from core.config (imported above) so the masthead,
-# footer, system-spec panel and terminal header never drift out of sync again.
-PRODUCT_NAME = "Nishkarsh"
-COMPANY = "@thebullishvalue"
+from core.config import COLOR_AMBER, COLOR_CYAN, COLOR_GREEN
 
 # Path to external CSS file
 CSS_PATH = Path(__file__).parent / "theme.css"
@@ -69,16 +52,6 @@ PLOTLY_GRID = "rgba(255,255,255,0.035)"
 PLOTLY_GRID_ZERO = "rgba(255,255,255,0.06)"
 
 # Interactive chart config — click + zoom + pan
-PLOTLY_MODEBAR = dict(
-    modeBarButtonsToRemove=["lasso2d", "select2d"],
-    modeBarButtonsToAdd=[
-        "drawline",
-        "eraseshape",
-    ],
-    displaylogo=False,
-)
-
-
 def chart_layout(
     height: int = 360,
     show_legend: bool = True,
@@ -170,7 +143,10 @@ def inject_css() -> None:
 
 
 def progress_bar(slot, pct: int, label: str, sub: str = "") -> None:
-    """Render a themed progress card into an ``st.empty()`` slot."""
+    """Render a themed progress card into an ``st.empty()`` slot. ``label``/``sub`` are plain
+    text (escaped here — progress text can carry remote symbol names, A4-06)."""
+    label, sub = html.escape(str(label), quote=True), html.escape(str(sub or ""), quote=True)
+    pct = int(max(0, min(100, int(pct))))
     is_complete = pct >= 100
     bar_color = COLOR_GREEN if is_complete else COLOR_AMBER if pct > 50 else COLOR_CYAN
     dot_class = "pulse-dot complete" if is_complete else "pulse-dot"
@@ -189,9 +165,3 @@ def progress_bar(slot, pct: int, label: str, sub: str = "") -> None:
     """,
         unsafe_allow_html=True,
     )
-
-
-def apply_chart_theme(fig) -> None:
-    """Apply the Obsidian Quant Terminal theme to a Plotly figure (mutates in place)."""
-    fig.update_layout(**chart_layout())
-    style_axes(fig)

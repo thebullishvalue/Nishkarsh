@@ -1,362 +1,185 @@
 """
-Nishkarsh v1.4.0 — Convergence tab: Unified signal with timeframe filtering.
+Nishkarsh v2 — Convergence tab: the conclusion C over time, its inputs and its evidence.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
-UI — Cross-system convergence visualization: conviction scores with DDM filtering.
+Renders ONLY the conclusion layer's outputs (C-V2 / C-PIPE keys): ``conclusion_frame``
+(C, C_aarambh, zA, zN, state, κ), ``conclusion_events``, the ``conclusion`` dict's lift /
+κ / MDE / OOS read-out, and the agreement anatomy (``anatomy_df`` — descriptive, NOT used in
+the conclusion). Sign convention: C, zA, zN  + = bullish.
 """
 
 from __future__ import annotations
 
-import streamlit as st
 import pandas as pd
-import numpy as np
 import plotly.graph_objects as go
+import streamlit as st
 from plotly.subplots import make_subplots
 
-from ui.theme import chart_layout, style_axes
-from ui.components import render_metric_card, render_section_header, section_gap
 from core.config import (
-    COLOR_GREEN,
-    COLOR_RED,
-    COLOR_AMBER,
-    COLOR_CYAN,
-    COLOR_MUTED,
-    UI_AGREEMENT_STRONG,
-    UI_AGREEMENT_MODERATE,
-    UI_CONVICTION_STRONG,
-    UI_CONVICTION_MODERATE,
-    UI_NIRNAY_BULLISH,
-    UI_NIRNAY_BEARISH,
-    UI_CHART_HEIGHT_STACKED,
+    COLOR_AMBER, COLOR_CYAN, COLOR_GREEN, COLOR_MUTED, COLOR_PURPLE, COLOR_RED,
+    CONV2_TAU, CONV2_TIER_MODERATE, CONV2_TIER_STRONG, CONV2_TIER_WEAK, EDGE_ALPHA,
+    UI_CHART_HEIGHT_MEDIUM, UI_CHART_HEIGHT_STACKED,
 )
+from ui.components import (
+    CALL_TIERS, esc, fmt, render_interpretation_card, render_metric_card, render_section_header, section_gap,
+)
+from ui.copy import CONVERGENCE, LEVELS_TAG, SIGN_C, SIGN_Z, TIERS_TEXT
+from ui.theme import chart_layout, style_axes
 
-# ── Alias colors for tab-local use ────────────────────────────────────────
-EMERALD = COLOR_GREEN
-ROSE = COLOR_RED
-AMBER = COLOR_AMBER
-CYAN = COLOR_CYAN
-SLATE = COLOR_MUTED
-
-# ── Tooltip definitions ────────────────────────────────────────────────────
-TOOLTIPS = {
-    "nishkarsh_conviction": (
-        "Composite score combining Aarambh (top-down) and Nirnay (bottom-up) into a single "
-        "signal. Near 0 = both systems uncertain — avoid new positions. Large absolute values "
-        "= high-conviction opportunities."
-    ),
-    "aarambh_conviction": (
-        "Aarambh's fair-value breadth: how many lookback windows see the market as overbought "
-        "vs. oversold. Below -20 = most stocks cheap (bullish); above +20 = most expensive (bearish)."
-    ),
-    "nirnay_avg": (
-        "Average technical signal across all Nifty 50 stocks, computed bottom-up from each "
-        "constituent's price action. Negative = net bullish; positive = net bearish. Moves "
-        "slowly and confirms (or contradicts) Aarambh's top-down view."
-    ),
-    "agreement": (
-        "How often Aarambh and Nirnay point in the same direction. Above 70% = both systems "
-        "agree — trust the signal. Below 50% = they disagree — stay flat until alignment improves."
-    ),
-}
+_EVENT_STYLE = {"CONTRADICTION": (COLOR_RED, "x"), "AARAMBH_LEADS": (COLOR_PURPLE, "triangle-up"),
+                "NIRNAY_LEADS": (COLOR_CYAN, "diamond")}
 
 
-def _dynamic_range(vals, padding=0.15):
-    """Compute a padded y-axis range from a list of values."""
-    valid = [v for v in vals if v is not None and not np.isnan(v)]
-    if not valid:
-        return (-1, 1)
-    mn, mx = min(valid), max(valid)
-    span = mx - mn if mx != mn else 1.0
-    pad = span * padding
-    return (round(mn - pad, 2), round(mx + pad, 2))
+def _since(df: pd.DataFrame | None, start) -> pd.DataFrame:
+    if df is None or len(df) == 0:
+        return pd.DataFrame()
+    if start is None:
+        return df
+    return df[pd.DatetimeIndex(df.index) >= pd.Timestamp(start)]
 
 
-def render_convergence_tab(ts_filtered=None):
-    """Render the convergence dashboard tab with amber-gold system identity."""
-    # v2 (B4b minimal state — the UI builder rewrites this tab on the C-PIPE keys): the v1
-    # convergence_df / DDM / normalized-consensus keys no longer exist.
-    frame = st.session_state.get("conclusion_frame")
+def _conclusion_chart(fr: pd.DataFrame, ev: pd.DataFrame) -> None:
+    fig = make_subplots(rows=3, cols=1, shared_xaxes=True, row_heights=[0.5, 0.32, 0.18], vertical_spacing=0.05)
+    x = fr.index
+    fig.add_trace(go.Scatter(x=x, y=fr["C_aarambh"], name="C_aarambh (κ ≡ 1)", mode="lines",
+                             line=dict(color=COLOR_MUTED, width=1, dash="dot")), row=1, col=1)
+    fig.add_trace(go.Scatter(x=x, y=fr["C"], name="C (conclusion)", mode="lines",
+                             line=dict(color=COLOR_AMBER, width=1.8)), row=1, col=1)
+    for lvl in (CONV2_TIER_WEAK, CONV2_TIER_MODERATE, CONV2_TIER_STRONG):
+        for s in (1, -1):
+            fig.add_hline(y=s * lvl, line_dash="dot", line_width=0.5, line_color="rgba(148,163,184,0.25)",
+                          row=1, col=1)
+    fig.add_trace(go.Scatter(x=x, y=fr["zA"], name="zA (Aarambh)", mode="lines",
+                             line=dict(color=COLOR_PURPLE, width=1.3)), row=2, col=1)
+    fig.add_trace(go.Scatter(x=x, y=fr["zN"], name="zN (Nirnay)", mode="lines",
+                             line=dict(color=COLOR_CYAN, width=1.1), connectgaps=False), row=2, col=1)
+    for s in (1, -1):
+        fig.add_hline(y=s * CONV2_TAU, line_dash="dot", line_width=0.5, line_color="rgba(148,163,184,0.3)",
+                      row=2, col=1)
+    if len(ev):
+        for typ, (color, symbol) in _EVENT_STYLE.items():
+            e = ev[ev["type"] == typ]
+            if len(e):
+                fig.add_trace(go.Scatter(x=e.index, y=e["zA"], mode="markers", name=typ.replace("_", " ").title(),
+                                         marker=dict(color=color, symbol=symbol, size=6)), row=2, col=1)
+    fig.add_trace(go.Scatter(x=x, y=fr["kappa"], name="κ", mode="lines", line_shape="hv",
+                             line=dict(color=COLOR_GREEN, width=1.2)), row=3, col=1)
+    fig.update_layout(**chart_layout(height=UI_CHART_HEIGHT_STACKED))
+    style_axes(fig, y_title=CONVERGENCE["c_axis"], y_range=[-100, 100], row=1, col=1)
+    style_axes(fig, y_title=CONVERGENCE["z_axis"], row=2, col=1)
+    style_axes(fig, y_title=CONVERGENCE["kappa_axis"], y_range=[0, 1.05], row=3, col=1)
+    st.plotly_chart(fig, width="stretch", key="conv_conclusion_chart")
+
+
+def _evidence_cards(con: dict) -> None:
+    lift, oos = con.get("lift") or {}, con.get("oos") or {}
+    lat = con.get("latest") or {}
+    kappa_on = con.get("kappa_enabled") is True
+    if not lift.get("available"):
+        l_status, l_cls = "N/A — too few windows" if not con.get("single_system") else "N/A — single system", "neutral"
+    else:
+        l_status, l_cls = ("PASSED", "success") if lift.get("passed") is True else ("NOT PROVEN", "neutral")
+    c1, c2, c3, c4 = st.columns(4, gap="small")
+    with c1:
+        render_metric_card("CONVERGENCE LIFT", fmt(lift.get("lift"), "+.3f"),
+                           f"{l_status} · IC|confirm {fmt(lift.get('ic_confirm'), '+.3f')} (n {fmt(lift.get('n_confirm'), '.0f')})"
+                           f" vs IC|contradict {fmt(lift.get('ic_contradict'), '+.3f')} (n {fmt(lift.get('n_contradict'), '.0f')})"
+                           f" · one-sided p {fmt(lift.get('p_one_sided'), '.3f')}", l_cls,
+                           tooltip="IC(zA, forward return | CONFIRM) − IC(… | CONTRADICT) on non-overlapping windows; "
+                                   "passes only if one-sided p < α and IC|confirm > 0 (walk-forward).")
+    with c2:
+        render_metric_card("MDE (80% POWER)", fmt(lift.get("mde"), "+.3f"),
+                           "smallest lift this sample could detect — a lift below this is unmeasurable here",
+                           "neutral")
+    with c3:
+        render_metric_card("κ TODAY", fmt(lat.get("kappa"), ".2f"),
+                           f"Intelligence {'ON' if kappa_on else 'OFF (κ ≡ 1)'} · test κ {fmt(lift.get('kappa'), '.2f')}"
+                           " · κ < 1 only on CONTRADICT days after a passed test", "neutral")
+    with c4:
+        adds = oos.get("adds_value") is True
+        render_metric_card("OOS · C vs AARAMBH", f"{fmt(oos.get('ic_C'), '+.3f')} vs {fmt(oos.get('ic_A'), '+.3f')}",
+                           f"n {fmt(oos.get('n'), '.0f')} · "
+                           + ("Nirnay improved out-of-sample IC" if adds else "no out-of-sample improvement"),
+                           "success" if adds else "neutral")
+
+
+def render_convergence_tab(start_date=None) -> None:
+    """Conclusion tab — reads ``conclusion``, ``conclusion_frame``, ``conclusion_events``, ``anatomy_df``."""
+    ss = st.session_state
+    con = ss.get("conclusion") or {}
+    frame = ss.get("conclusion_frame")
+    st.markdown('<div class="tab-bg convergence"></div>', unsafe_allow_html=True)
+    render_section_header(CONVERGENCE["title"], CONVERGENCE["desc"], icon="target")
     if frame is None or len(frame) == 0:
-        st.info("No conclusion available. Run the analysis first.")
+        st.info("No conclusion for this run (Aarambh produced no valid out-of-sample forecast).")
         return
-    cols = [c for c in ("C", "C_aarambh") if c in frame.columns]
-    st.caption("Conclusion C (+ = bullish) and its pure-Aarambh counterpart C_aarambh, per date.")
-    st.line_chart(frame[cols].astype(float))
-    anatomy = st.session_state.get("anatomy_df")
-    if anatomy is not None and len(anatomy):
-        st.caption("Agreement anatomy (descriptive, not used in the conclusion).")
-        st.line_chart(anatomy[["agreement_ratio"]].astype(float))
-    return
 
-    # System identity background
-    st.markdown(
-        '<div class="tab-bg convergence"></div>',
-        unsafe_allow_html=True,
-    )
+    if con.get("forward_mode") is False:
+        st.caption(f"Levels mode: zA is the valuation head — {LEVELS_TAG}.")
+    lat = con.get("latest") or {}
+    trust = con.get("trust") or {}
+    call = str(trust.get("tier")) in CALL_TIERS
+    direction = str(lat.get("direction") or "NEUTRAL")
+    c_cls = ("success" if direction == "BULLISH" else "danger" if direction == "BEARISH" else "neutral") if call else "neutral"
+    c1, c2, c3, c4, c5 = st.columns(5, gap="small")
+    with c1:
+        render_metric_card("CONCLUSION C", fmt(lat.get("C"), "+.1f"),
+                           f"{lat.get('tier') or 'NO LEAN'} · {direction}" + ("" if call else " · no call (unproven)")
+                           + f" · {SIGN_C}", c_cls, tooltip=TIERS_TEXT)
+    with c2:
+        render_metric_card("C_AARAMBH", fmt(lat.get("C_aarambh"), "+.1f"), f"pure Aarambh (κ ≡ 1) · {SIGN_Z}")
+    with c3:
+        render_metric_card("zA · zN", f"{fmt(lat.get('zA'), '+.2f')} · {fmt(lat.get('zN'), '+.2f')}",
+                           f"causal z of each head · {SIGN_Z}")
+    with c4:
+        agr = con.get("agreement") or {}
+        render_metric_card("STATE TODAY", str(lat.get("state") or "—"),
+                           f"60-session same-sign rate {fmt(agr.get('same_sign_rate_60d'), '.0%')} (descriptive)",
+                           tooltip=CONVERGENCE["state_desc"])
+    with c5:
+        render_metric_card("AS OF", str(con.get("as_of") or "—"),
+                           f"horizon {fmt(con.get('horizon'), '.0f')}d · label {str(con.get('label_src') or '—')[:40]}")
 
-    # ═══════════════════════════════════════════════════════════════════════
-    # HEADER + METRIC CARDS
-    # ═══════════════════════════════════════════════════════════════════════
-    render_section_header(
-        "Convergence Analysis",
-        "Aarambh top-down vs Nirnay bottom-up. Agreement = reliable signal. Divergence = stand aside.",
-        icon="target",
-    )
-
-    col1, col2, col3, col4 = st.columns(4, gap="small")
-
-    with col1:
-        # Mirrors Row 1 of the Unified Signal plot: average of normalized Aarambh
-        # + Nirnay z-scores, in [-1, +1].
-        if nishkarsh_norm:
-            score = nishkarsh_norm["value"]
-            sig = nishkarsh_norm["signal"]
-            color = "success" if "BUY" in sig else "danger" if "SELL" in sig else "neutral"
-            render_metric_card("NISHKARSH CONVICTION", f"{score:+.2f}", sig, color, tooltip=TOOLTIPS["nishkarsh_conviction"])
-        else:
-            render_metric_card("NISHKARSH CONVICTION", "N/A", "Not computed", "neutral")
-
-    with col2:
-        # Mirrors Row 2 of the Unified Signal plot: raw Aarambh ConvictionRaw.
-        if aarambh_ts is not None and "ConvictionRaw" in aarambh_ts.columns:
-            a_conv = aarambh_ts["ConvictionRaw"].iloc[-1]
-            render_metric_card("AARAMBH CONVICTION", f"{a_conv:+.2f}", "Market breadth: oversold vs overbought",
-                               "success" if a_conv < -UI_CONVICTION_MODERATE else "danger" if a_conv > UI_CONVICTION_MODERATE else "neutral",
-                               tooltip=TOOLTIPS["aarambh_conviction"])
-        else:
-            render_metric_card("AARAMBH CONVICTION", "N/A", "", "neutral")
-
-    with col3:
-        # Mirrors Row 3 of the Unified Signal plot: raw Nirnay Avg Signal.
-        if nirnay_daily is not None and not nirnay_daily.empty:
-            df_n = nirnay_daily[~nirnay_daily.index.duplicated(keep="last")]
-            n_avg = 0.0
-            for candidate in ("avg_unified_osc", "Avg_Signal", "avg_signal"):
-                if candidate in df_n.columns:
-                    n_avg = df_n[candidate].iloc[-1]
-                    break
-            render_metric_card("NIRNAY AVG SIGNAL", f"{n_avg:.2f}", "Bottom-up constituent momentum",
-                               "success" if n_avg < UI_NIRNAY_BULLISH else "danger" if n_avg > UI_NIRNAY_BEARISH else "neutral",
-                               tooltip=TOOLTIPS["nirnay_avg"])
-        else:
-            render_metric_card("NIRNAY AVG SIGNAL", "N/A", "No constituent data", "neutral")
-
-    with col4:
-        agreement = convergence_df["agreement_ratio"].iloc[-1]
-        render_metric_card("AGREEMENT", f"{agreement:.0%}", "Aarambh and Nirnay alignment",
-                           "success" if agreement > UI_AGREEMENT_STRONG else "warning" if agreement > UI_AGREEMENT_MODERATE else "neutral",
-                           tooltip=TOOLTIPS["agreement"])
+    nir = con.get("nirnay") or {}
+    render_interpretation_card("NIRNAY", esc(nir.get("text") or "Nirnay: — (no read-out in this run)."), "info")
+    render_interpretation_card("TRUST", esc(trust.get("text") or "INSUFFICIENT DATA — no edge graded."),
+                               "success" if call else "danger" if trust.get("tier") == "INVERTED" else "neutral")
 
     section_gap()
+    render_section_header("Conclusion Over Time",
+                          f"Top: C and C_aarambh ({SIGN_Z}; dotted = fixed tiers ±{CONV2_TIER_WEAK:g}/"
+                          f"{CONV2_TIER_MODERATE:g}/{CONV2_TIER_STRONG:g}). Middle: zA, zN ({SIGN_Z}; dotted = ±τ "
+                          f"{CONV2_TAU:g}) with divergence events. Bottom: κ.", icon="activity", accent="cyan")
+    fr = _since(frame, start_date)
+    ev = _since(ss.get("conclusion_events"), start_date)
+    if len(fr):
+        _conclusion_chart(fr.astype({c: "float64" for c in ("C", "C_aarambh", "zA", "zN", "kappa")}), ev)
+    st.caption(CONVERGENCE["state_desc"])
 
-    # ═══════════════════════════════════════════════════════════════════════
-    # UNIFIED NORMALIZED SIGNAL — 3-row stacked chart
-    # ═══════════════════════════════════════════════════════════════════════
-    render_section_header(
-        "Unified Signal — Normalized Convergence",
-        "Z-scored to [−1, 1]. Combined signal (top) decomposed into constituent inputs (below).",
-        icon="layers",
-        accent="cyan",
-    )
+    section_gap()
+    render_section_header("Convergence-Lift Evidence",
+                          f"Does Nirnay's agreement improve Aarambh's accuracy? Graded walk-forward at α = {EDGE_ALPHA:g} "
+                          "(one threshold scale).", icon="shield", accent="emerald")
+    _evidence_cards(con)
+    if len(ev):
+        with st.expander(f"Divergence events in view ({len(ev)})", expanded=False):
+            st.dataframe(ev.sort_index(ascending=False), width="stretch", height=240)
 
-    # Build filtered date set
-    if ts_filtered is not None and not ts_filtered.empty:
-        if "Date" in ts_filtered.columns:
-            filtered_dates = set(pd.to_datetime(ts_filtered["Date"]).dt.date.astype(str))
-        else:
-            filtered_dates = set(ts_filtered.index.astype(str))
-    else:
-        filtered_dates = None
-
-    # Align Aarambh + Nirnay on overlapping dates (respecting the user's filter)
-    aligned_dates, aligned_aarambh_raw, aligned_nirnay_raw = align_aarambh_nirnay(
-        aarambh_ts, nirnay_daily, filter_dates=filtered_dates,
-    )
-
-    if not aligned_dates:
-        st.warning("No overlapping dates between Aarambh and Nirnay data sources.")
+    section_gap()
+    render_section_header(CONVERGENCE["anatomy_title"], CONVERGENCE["anatomy_desc"], icon="layers")
+    an = _since(ss.get("anatomy_df"), start_date)
+    if len(an) == 0:
+        st.info("Agreement anatomy unavailable (no warm Nirnay dates in view).")
         return
-
-    # ── Per-date CAUSAL normalization, cached per engine config + content ──
-    # Two fixes over the old single "conv_norm_params" session key:
-    #   1. CAUSAL: applying terminal full-sample μ/σ to a historical slice is
-    #      look-ahead — earlier bars appear less extreme than they were at the
-    #      time. Each date is z-scored on expanding stats up to that date.
-    #   2. KEYED: the old key was set once per session and survived
-    #      "Refresh Data" / target / predictor changes, silently normalizing
-    #      new data against a previous config's μ/σ. The key folds in the
-    #      engine config plus a content fingerprint (row count + latest raw
-    #      values), so an intraday last-bar update invalidates it too.
-    _last_a = aligned_aarambh_raw[-1] if aligned_aarambh_raw else 0.0
-    _last_n = aligned_nirnay_raw[-1] if aligned_nirnay_raw else 0.0
-    _np_key = (
-        f"conv_norm_causal::{st.session_state.get('engine_cache', st.session_state.get('active_target', ''))}"
-        f"|{len(aligned_dates)}|{_last_a:.6g}|{_last_n:.6g}"
-    )
-    if _np_key not in st.session_state:
-        _full_dates, full_a, full_n = align_aarambh_nirnay(aarambh_ts, nirnay_daily)
-        fa = np.array(full_a, dtype=np.float64)
-        fn = np.array(full_n, dtype=np.float64)
-        sa, sn = pd.Series(fa), pd.Series(fn)
-        na_full = np.clip(
-            (fa - sa.expanding().mean().to_numpy())
-            / sa.expanding().std().clip(lower=1e-10).fillna(1.0).to_numpy()
-            / 3.0, -1.0, 1.0,
-        )
-        nn_full = np.clip(
-            (fn - sn.expanding().mean().to_numpy())
-            / sn.expanding().std().clip(lower=1e-10).fillna(1.0).to_numpy()
-            / 3.0, -1.0, 1.0,
-        )
-
-        def _dk(d):
-            return str(d.date()) if hasattr(d, "date") else str(d)
-
-        st.session_state[_np_key] = {
-            "a": {_dk(d): v for d, v in zip(_full_dates, na_full)},
-            "n": {_dk(d): v for d, v in zip(_full_dates, nn_full)},
-        }
-    _norm_lookup = st.session_state[_np_key]
-
-    def _dkey(d):
-        return str(d.date()) if hasattr(d, "date") else str(d)
-
-    norm_a = np.array([_norm_lookup["a"].get(_dkey(d), 0.0) for d in aligned_dates])
-    norm_n = np.array([_norm_lookup["n"].get(_dkey(d), 0.0) for d in aligned_dates])
-    norm_avg = (norm_a + norm_n) / 2.0
-
-    # Pre-compute conviction raw for row 2
-    aligned_conv_raw = []
-    if aarambh_ts is not None:
-        at_dedup = aarambh_ts[~aarambh_ts.index.duplicated(keep="last")]
-        for d in aligned_dates:
-            d_str = str(d.date()) if hasattr(d, "date") else str(d)
-            if d in at_dedup.index:
-                aligned_conv_raw.append(float(at_dedup.loc[d]["ConvictionRaw"]))
-            elif "Date" in at_dedup.columns:
-                mask = at_dedup["Date"].astype(str).str.contains(d_str)
-                if mask.any():
-                    aligned_conv_raw.append(float(at_dedup.loc[mask, "ConvictionRaw"].iloc[0]))
-                else:
-                    aligned_conv_raw.append(None)
-            else:
-                aligned_conv_raw.append(None)
-    else:
-        aligned_conv_raw = [None] * len(aligned_dates)
-
-    # Compute ranges
-    unified_y = _dynamic_range(norm_avg)
-    conv_y = _dynamic_range(aligned_conv_raw)
-    nirnay_y = _dynamic_range(aligned_nirnay_raw)
-
-    # ── Build 3-row chart ───────────────────────────────────────────────
-    fig = make_subplots(
-        rows=3, cols=1, shared_xaxes=True,
-        row_heights=[0.50, 0.25, 0.25],
-        vertical_spacing=0.05,
-    )
-
-    # Convergence color mapping
-    avg_colors, avg_sizes = [], []
-    for v in norm_avg:
-        if v < -0.3:
-            avg_colors.append(EMERALD); avg_sizes.append(8)
-        elif v <= -0.2:
-            avg_colors.append("rgba(52,211,153,1.0)"); avg_sizes.append(6)
-        elif v > 0.3:
-            avg_colors.append(ROSE); avg_sizes.append(8)
-        elif v >= 0.2:
-            avg_colors.append("rgba(251,113,133,1.0)"); avg_sizes.append(6)
-        else:
-            avg_colors.append("rgba(148,163,184,0.95)"); avg_sizes.append(5)
-
-    # ── Row 1: Unified normalized ─────────────────────────────────────
-    fig.add_trace(go.Scatter(
-        x=aligned_dates, y=np.clip(norm_avg, 0, None),
-        fill="tozeroy", fillcolor="rgba(251,113,133,0.06)",
-        line=dict(width=0), showlegend=False, hoverinfo="skip",
-    ), row=1, col=1)
-    fig.add_trace(go.Scatter(
-        x=aligned_dates, y=np.clip(norm_avg, None, 0),
-        fill="tozeroy", fillcolor="rgba(52,211,153,0.06)",
-        line=dict(width=0), showlegend=False, hoverinfo="skip",
-    ), row=1, col=1)
-    fig.add_trace(go.Scatter(
-        x=aligned_dates, y=norm_a, mode="lines", name="Aarambh",
-        line=dict(color="rgba(148,163,184,0.25)", width=1, dash="dot"),
-    ), row=1, col=1)
-    fig.add_trace(go.Scatter(
-        x=aligned_dates, y=norm_n, mode="lines", name="Nirnay",
-        line=dict(color="rgba(34,211,238,0.2)", width=1, dash="dot"),
-    ), row=1, col=1)
-    fig.add_trace(go.Scatter(
-        x=aligned_dates, y=norm_avg, mode="lines+markers", name="Convergence",
-        line=dict(color=SLATE, width=2),
-        marker=dict(size=avg_sizes, color=avg_colors),
-    ), row=1, col=1)
-    fig.add_hline(y=0.5, line_dash="dot", line_color="rgba(251,113,133,0.15)", line_width=0.5, row=1, col=1)
-    fig.add_hline(y=-0.5, line_dash="dot", line_color="rgba(52,211,153,0.15)", line_width=0.5, row=1, col=1)
-    fig.add_hline(y=0, line_color="rgba(255,255,255,0.06)", line_width=0.5, row=1, col=1)
-
-    # ── Row 2: Base Conviction ────────────────────────────────────────
-    conv_vals = [v if v is not None else None for v in aligned_conv_raw]
-    conv_colors, conv_sizes = [], []
-    for v in aligned_conv_raw:
-        if v is None:
-            conv_colors.append("rgba(148,163,184,0.90)"); conv_sizes.append(5)
-        elif v > 40:
-            conv_colors.append(ROSE); conv_sizes.append(7)
-        elif v >= 20:
-            conv_colors.append("rgba(251,113,133,1.0)"); conv_sizes.append(6)
-        elif v < -40:
-            conv_colors.append(EMERALD); conv_sizes.append(7)
-        elif v <= -20:
-            conv_colors.append("rgba(52,211,153,1.0)"); conv_sizes.append(6)
-        else:
-            conv_colors.append("rgba(148,163,184,0.95)"); conv_sizes.append(5)
-
-    fig.add_trace(go.Scatter(
-        x=aligned_dates, y=np.clip(conv_vals, 0, None),
-        fill="tozeroy", fillcolor="rgba(251,113,133,0.05)", line=dict(width=0), showlegend=False, hoverinfo="skip",
-    ), row=2, col=1)
-    fig.add_trace(go.Scatter(
-        x=aligned_dates, y=np.clip(conv_vals, None, 0),
-        fill="tozeroy", fillcolor="rgba(52,211,153,0.05)", line=dict(width=0), showlegend=False, hoverinfo="skip",
-    ), row=2, col=1)
-    fig.add_trace(go.Scatter(
-        x=aligned_dates, y=conv_vals, mode="lines+markers", name="Base Conviction",
-        line=dict(color=SLATE, width=1.5),
-        marker=dict(size=conv_sizes, color=conv_colors),
-    ), row=2, col=1)
-    fig.add_hline(y=0, line_color="rgba(255,255,255,0.06)", line_width=0.5, row=2, col=1)
-    fig.add_hline(y=40, line_dash="dot", line_color="rgba(251,113,133,0.12)", line_width=0.5, row=2, col=1)
-    fig.add_hline(y=-40, line_dash="dot", line_color="rgba(52,211,153,0.12)", line_width=0.5, row=2, col=1)
-
-    # ── Row 3: Nirnay Avg Signal ──────────────────────────────────────
-    nirnay_colors = [EMERALD if v < -2 else ROSE if v > 2 else "rgba(148,163,184,0.95)" for v in aligned_nirnay_raw]
-
-    fig.add_trace(go.Scatter(
-        x=aligned_dates, y=np.clip(aligned_nirnay_raw, 0, None),
-        fill="tozeroy", fillcolor="rgba(251,113,133,0.05)", line=dict(width=0), showlegend=False, hoverinfo="skip",
-    ), row=3, col=1)
-    fig.add_trace(go.Scatter(
-        x=aligned_dates, y=np.clip(aligned_nirnay_raw, None, 0),
-        fill="tozeroy", fillcolor="rgba(52,211,153,0.05)", line=dict(width=0), showlegend=False, hoverinfo="skip",
-    ), row=3, col=1)
-    fig.add_trace(go.Scatter(
-        x=aligned_dates, y=aligned_nirnay_raw, mode="lines+markers", name="Avg Signal",
-        line=dict(color=SLATE, width=1.2),
-        marker=dict(size=5, color=nirnay_colors),
-    ), row=3, col=1)
-    fig.add_hline(y=2, line_dash="dot", line_color="rgba(251,113,133,0.15)", line_width=0.5, row=3, col=1)
-    fig.add_hline(y=-2, line_dash="dot", line_color="rgba(52,211,153,0.15)", line_width=0.5, row=3, col=1)
-    fig.add_hline(y=0, line_color="rgba(255,255,255,0.06)", line_width=0.5, row=3, col=1)
-
-    # ── Layout ────────────────────────────────────────────────────────
-    fig.update_layout(**chart_layout(height=UI_CHART_HEIGHT_STACKED, show_legend=False))
-    style_axes(fig, y_title="Normalized", y_range=unified_y, row=1, col=1)
-    style_axes(fig, y_title="Conviction", y_range=conv_y, row=2, col=1)
-    style_axes(fig, y_title="Avg Signal", y_range=nirnay_y, row=3, col=1)
-
-    st.plotly_chart(fig, width='stretch', key="convergence_overlay")
-    st.caption(f"{len(aligned_dates)} overlapping trading days")
+    fig = go.Figure()
+    styles = {"agreement_ratio": (COLOR_AMBER, 1.6, None), "dim_direction": (COLOR_PURPLE, 1, "dot"),
+              "dim_breadth": (COLOR_GREEN, 1, "dot"), "dim_magnitude": (COLOR_CYAN, 1, "dot"),
+              "dim_regime": (COLOR_RED, 1, "dot")}
+    for col, (color, w, dash) in styles.items():
+        if col in an.columns:
+            fig.add_trace(go.Scatter(x=an.index, y=pd.to_numeric(an[col], errors="coerce"), mode="lines",
+                                     name=col, line=dict(color=color, width=w, dash=dash)))
+    fig.update_layout(**chart_layout(height=UI_CHART_HEIGHT_MEDIUM))
+    style_axes(fig, y_title="agreement (0 = opposed · 1 = aligned)")
+    st.plotly_chart(fig, width="stretch", key="conv_anatomy")
+    st.caption("Descriptive — not used in the conclusion.")

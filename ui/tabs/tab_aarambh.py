@@ -1,692 +1,248 @@
 """
-Nishkarsh v1.4.0 — Aarambh tab: Walk-forward valuation plots, conviction, breadth, model quality.
+Nishkarsh v2 — Aarambh tab: the walk-forward engine, mode-aware (A4-08, A6-08, R3/R8).
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
-UI — AARAMBH engine visualization: ensemble regression outputs with conformal bounds.
-
-Section order (logical analytical flow):
-  Phase 1 — Trust:     Model Quality
-  Phase 2 — Anchor:    Actual vs Fair Value
-  Phase 3 — Signal:    Base Conviction → DDM-Filtered → Market Breadth
-  Phase 4 — State:     Market State → Current Lookback States
-  Phase 5 — Extremes:  Signal Frequency → Average Z-Score
+FORWARD mode (product path): the out-of-sample forecast of the h-day forward change is the
+directional head; its edge is graded by the conclusion layer (Diagnostics → Edge Ledger).
+LEVELS mode: a fair-value regression, labelled "valuation context — falsified as a forecaster".
+All wording comes from ``ui.copy.mode_copy``; every axis states its sign convention
+(engine conviction / AvgZ / Z_*: − = bullish; ForecastZ: + = expected rise).
 """
 
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import streamlit as st
+from plotly.subplots import make_subplots
 
-from ui.theme import chart_layout, style_axes
-from ui.components import (
-    render_metric_card,
-    render_interpretation_card,
-    render_section_header,
-    section_gap,
-)
 from core.config import (
-    OU_PROJECTION_DAYS,
-    COLOR_GREEN,
-    COLOR_RED,
-    COLOR_AMBER,
-    COLOR_CYAN,
-    COLOR_PURPLE,
-    COLOR_MUTED,
-    UI_CONVICTION_STRONG,
-    UI_CONVICTION_MODERATE,
-    UI_BREADTH_HIGH,
-    UI_R2_STRONG,
-    UI_R2_ACCEPTABLE,
-    UI_MODEL_SPREAD_LOW,
-    UI_MODEL_SPREAD_HIGH,
-    UI_BAND_NARROW,
-    UI_BAND_WIDE,
-    UI_CHART_HEIGHT_MEDIUM,
-    UI_CHART_HEIGHT_XLARGE,
-    UI_CHART_HEIGHT_SMALL,
+    COLOR_CYAN, COLOR_GREEN, COLOR_MUTED, COLOR_RED, LOOKBACK_WINDOWS, OU_PROJECTION_DAYS,
+    UI_CHART_HEIGHT_MEDIUM, UI_CHART_HEIGHT_SMALL, UI_CHART_HEIGHT_XLARGE,
 )
+from ui.components import (
+    CALL_TIERS, esc, fmt, num, render_interpretation_card, render_metric_card, render_section_header, section_gap,
+)
+from ui.copy import SIGN_ENGINE, mode_copy, regime_label, zone_label
+from ui.theme import chart_layout, style_axes
 
-# ── Alias colors for tab-local use ────────────────────────────────────────
-EMERALD = COLOR_GREEN
-ROSE = COLOR_RED
-AMBER = COLOR_AMBER
-CYAN = COLOR_CYAN
-VIOLET = COLOR_PURPLE
-SLATE = COLOR_MUTED
-
-# ── Tooltip definitions ────────────────────────────────────────────────────
-TOOLTIPS = {
-    "conviction_raw": (
-        "Difference between the percentage of lookback windows calling the market oversold "
-        "vs. overbought. Positive = more windows see overbought (bearish); negative = more "
-        "see oversold (bullish). Values beyond +/-40 are extremes. This is the unsmoothed "
-        "signal before any temporal filtering."
-    ),
-    "ddm_conviction": (
-        "Conviction score smoothed through a Drift-Diffusion Model that accumulates evidence "
-        "over time and reverts toward zero when signals are inconsistent. The shaded band is "
-        "the confidence interval — narrow bands mean high conviction, wide bands mean the "
-        "model is uncertain. Use this (not raw conviction) for trade decisions."
-    ),
-    "oversold_breadth": (
-        "Share of lookback windows that classify the current PE ratio as below fair value. "
-        "Above 60% means most models agree the market is cheap — a bullish signal when it "
-        "starts to turn down."
-    ),
-    "overbought_breadth": (
-        "Share of lookback windows that classify the current PE ratio as above fair value. "
-        "Above 60% means most models agree the market is expensive — a caution signal when "
-        "it starts to turn up."
-    ),
-    "current_regime": (
-        "Classification derived from OU half-life (speed of mean reversion) and DDM "
-        "conviction score. 'Oversold' = market prices in excessive pessimism; 'Overbought' "
-        "= excessive optimism. Half-life tells you how fast reversion is expected."
-    ),
-    "oos_r2": (
-        "Fraction of variance explained by the model on walk-forward out-of-sample data. "
-        "Above 0.7 = strong predictive power; below 0.4 = model struggles to forecast. "
-        "Primary metric for whether to trust the fair-value estimate."
-    ),
-    "r2_vs_rw": (
-        "R-squared minus the R-squared of a naive random-walk forecast. Positive = the "
-        "model adds value beyond 'tomorrow = today'; negative = a random walk would have "
-        "done better. This is your reality check on model edge."
-    ),
-    "hurst": (
-        "Hurst exponent via Detrended Fluctuation Analysis. Below 0.40 = mean-reverting "
-        "(signals reliable). Above 0.60 = trending (signals lag, produce false reversals). "
-        "Near 0.50 = random walk — no valuation edge."
-    ),
-    "model_spread": (
-        "Standard deviation of predictions across ensemble models. Below 0.5 = models agree "
-        "(signal is stable). Above 1.5 = models disagree (treat with caution even if "
-        "conviction is high)."
-    ),
-}
+_MUTED_FILL = "rgba(148,163,184,0.75)"
 
 
-def _conviction_colors(values):
-    """Convert conviction scores to color-coded markers for chart rendering.
-
-    Rose/red tones = overbought (bearish signal), emerald/green = oversold (bullish),
-    slate/gray = neutral. Marker size scales with conviction magnitude (4 → 7px).
-    Thresholds: |40| = strong, |20| = moderate, <20 = noise.
-    """
-    colors, sizes = [], []
-    for c in values:
-        if c > 40:
-            colors.append(ROSE); sizes.append(7)
-        elif c >= 20:
-            colors.append("rgba(251,113,133,0.85)"); sizes.append(5)
-        elif c < -40:
-            colors.append(EMERALD); sizes.append(7)
-        elif c <= -20:
-            colors.append("rgba(52,211,153,0.85)"); sizes.append(5)
-        else:
-            colors.append("rgba(148,163,184,0.75)"); sizes.append(4)
-    return colors, sizes
+def _col(df: pd.DataFrame, name: str) -> pd.Series:
+    if name in df.columns:
+        return pd.to_numeric(df[name], errors="coerce")
+    return pd.Series(float("nan"), index=df.index)
 
 
-# ═══════════════════════════════════════════════════════════════════════
-#  CHART BUILDERS (extracted so they can be reused in any section order)
-# ═══════════════════════════════════════════════════════════════════════
-
-def _render_raw_conviction_chart(ts_filtered, x_axis):
-    """Section: Base Conviction Score — unsmoothed signal."""
-    if "ConvictionRaw" not in ts_filtered.columns:
-        return
-    raw = ts_filtered["ConvictionRaw"]
-    conv_colors, marker_sizes = _conviction_colors(raw)
-
-    fig_raw = go.Figure()
-    fig_raw.add_trace(go.Scatter(
-        x=x_axis, y=raw.clip(lower=0),
-        fill="tozeroy", fillcolor="rgba(251,113,133,0.06)",
-        line=dict(width=0), showlegend=False, hoverinfo="skip",
-    ))
-    fig_raw.add_trace(go.Scatter(
-        x=x_axis, y=raw.clip(upper=0),
-        fill="tozeroy", fillcolor="rgba(52,211,153,0.06)",
-        line=dict(width=0), showlegend=False, hoverinfo="skip",
-    ))
-    fig_raw.add_trace(go.Scatter(
-        x=x_axis, y=raw, mode="lines+markers", name="Raw Conviction",
-        line=dict(color=SLATE, width=1.5),
-        marker=dict(size=marker_sizes, color=conv_colors),
-    ))
-    fig_raw.add_hline(y=0, line_color="rgba(255,255,255,0.06)", line_width=0.5)
-    fig_raw.add_hline(y=40, line_dash="dot", line_color="rgba(251,113,133,0.18)", line_width=0.5, annotation_text="OB", annotation_position="right")
-    fig_raw.add_hline(y=-40, line_dash="dot", line_color="rgba(52,211,153,0.18)", line_width=0.5, annotation_text="OS", annotation_position="right")
-
-    fig_raw.update_layout(**chart_layout(height=UI_CHART_HEIGHT_MEDIUM, show_legend=False))
-    style_axes(fig_raw, y_title="Conviction", y_range=[-100, 100])
-    st.plotly_chart(fig_raw, width='stretch', key="aarambh_raw_conviction")
-
-
-def _render_ddm_conviction_chart(ts_filtered, x_axis, signal):
-    """Section: DDM-Filtered Conviction with Confidence Bands + interpretation card."""
-    fig_conv = go.Figure()
-    if "ConvictionUpper" in ts_filtered.columns:
-        fig_conv.add_trace(go.Scatter(
-            x=x_axis, y=ts_filtered["ConvictionUpper"],
-            mode="lines", line=dict(width=0), showlegend=False, hoverinfo="skip",
-        ))
-        fig_conv.add_trace(go.Scatter(
-            x=x_axis, y=ts_filtered["ConvictionLower"],
-            mode="lines", line=dict(width=0),
-            fill="tonexty", fillcolor="rgba(148,163,184,0.06)",
-            showlegend=False, hoverinfo="skip",
-        ))
-    fig_conv.add_trace(go.Scatter(
-        x=x_axis, y=ts_filtered["ConvictionScore"].clip(lower=0),
-        fill="tozeroy", fillcolor="rgba(251,113,133,0.06)",
-        line=dict(width=0), showlegend=False, hoverinfo="skip",
-    ))
-    fig_conv.add_trace(go.Scatter(
-        x=x_axis, y=ts_filtered["ConvictionScore"].clip(upper=0),
-        fill="tozeroy", fillcolor="rgba(52,211,153,0.06)",
-        line=dict(width=0), showlegend=False, hoverinfo="skip",
-    ))
-    fig_conv.add_trace(go.Scatter(
-        x=x_axis, y=ts_filtered["ConvictionScore"], mode="lines", name="DDM Conviction",
-        line=dict(color=SLATE, width=2),
-    ))
-    fig_conv.add_hline(y=0, line_color="rgba(255,255,255,0.06)", line_width=0.5)
-
-    fig_conv.update_layout(**chart_layout(height=UI_CHART_HEIGHT_MEDIUM, show_legend=False))
-    style_axes(fig_conv, y_title="Conviction", y_range=[-100, 100])
-    st.plotly_chart(fig_conv, width='stretch', key="aarambh_ddm")
-
-    # Interpretation card
-    cv = signal["conviction_score"]
-    cu, cl = signal["conviction_upper"], signal["conviction_lower"]
-    bw = cu - cl
-
-    if cv > UI_CONVICTION_STRONG:
-        regime_title = "STRONG OVERBOUGHT"
-        regime_color = "danger"
-        regime_body = (
-            f"Conviction {cv:+.0f} — top decile. Most windows price the market above fair value. "
-            f"Elevated drawdown risk from this zone. "
-        )
-    elif cv > UI_CONVICTION_MODERATE:
-        regime_title = "MODERATE OVERBOUGHT"
-        regime_color = "warning"
-        regime_body = (
-            f"Conviction {cv:+.0f} — tilts overbought. Not at extremes, but evidence suggests "
-            f"fair value sits below current price. "
-        )
-    elif cv > -UI_CONVICTION_MODERATE:
-        regime_title = "NEUTRAL"
-        regime_color = "neutral"
-        regime_body = (
-            f"Conviction {cv:+.0f} — noise band. Windows are split — no reliable directional signal. "
-            f"Stand aside or maintain current allocation. "
-        )
-    elif cv > -UI_CONVICTION_STRONG:
-        regime_title = "MODERATE OVERSOLD"
-        regime_color = "success"
-        regime_body = (
-            f"Conviction {cv:+.0f} — tilts oversold. Market prices in more pessimism than the "
-            f"ensemble justifies. Watch for conviction to roll over before entering. "
-        )
-    else:
-        regime_title = "STRONG OVERSOLD"
-        regime_color = "success"
-        regime_body = (
-            f"Conviction {cv:+.0f} — bottom decile. Most windows agree the market is below fair value. "
-            f"Historically the most favorable return regime. "
-        )
-
-    if bw < UI_BAND_NARROW:
-        regime_body += f"Band narrow ({bw:.0f} pts) — model is confident."
-    elif bw > UI_BAND_WIDE:
-        regime_body += f"Band wide ({bw:.0f} pts) — models disagree, treat with caution."
-    else:
-        regime_body += f"Band moderate ({bw:.0f} pts) — some uncertainty."
-
-    render_interpretation_card(title=regime_title, body=regime_body, color=regime_color)
-
-
-def _render_market_breadth_chart(ts_filtered, x_axis):
-    """Section: Market Breadth — oversold/overbought zone convergence."""
-    fig_zones = go.Figure()
-    fig_zones.add_trace(go.Scatter(
-        x=x_axis, y=ts_filtered["OversoldBreadth"],
-        fill="tozeroy", fillcolor="rgba(52,211,153,0.1)",
-        line=dict(color=EMERALD, width=1.5), name="Oversold",
-    ))
-    fig_zones.add_trace(go.Scatter(
-        x=x_axis, y=ts_filtered["OverboughtBreadth"],
-        fill="tozeroy", fillcolor="rgba(251,113,133,0.1)",
-        line=dict(color=ROSE, width=1.5), name="Overbought",
-    ))
-    fig_zones.add_hline(y=UI_BREADTH_HIGH, line_dash="dot", line_color="rgba(212,168,83,0.18)", line_width=0.5)
-
-    fig_zones.update_layout(**chart_layout(height=UI_CHART_HEIGHT_MEDIUM))
-    style_axes(fig_zones, y_title="Breadth %", y_range=[0, 100])
-    st.plotly_chart(fig_zones, width='stretch', key="aarambh_breadth")
-
-
-def _render_market_state_cards(signal, regime_stats, ts):
-    """Section: Market State — metric cards + regime distribution interpretation."""
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        render_metric_card(
-            "OVERSOLD BREADTH", f'{signal["oversold_breadth"]:.0f}%',
-            "Fraction of models that see cheap valuation. Rising = bullish pressure building.",
-            "success" if signal["oversold_breadth"] > UI_BREADTH_HIGH else "neutral",
-            tooltip=TOOLTIPS["oversold_breadth"],
-        )
-    with c2:
-        render_metric_card(
-            "OVERBOUGHT BREADTH", f'{signal["overbought_breadth"]:.0f}%',
-            "Fraction of models that see expensive valuation. Rising = caution strengthening.",
-            "danger" if signal["overbought_breadth"] > UI_BREADTH_HIGH else "neutral",
-            tooltip=TOOLTIPS["overbought_breadth"],
-        )
-    with c3:
-        curr_regime = signal["regime"]
-        regime_short = curr_regime.replace("STRONGLY ", "").replace("OVERSOLD", "OS").replace("OVERBOUGHT", "OB")
-        regime_color = "success" if "OVERSOLD" in curr_regime else "danger" if "OVERBOUGHT" in curr_regime else "neutral"
-        render_metric_card(
-            "CURRENT REGIME", regime_short,
-            f"Mean reversion half-life: {signal['ou_half_life']:.0f}d. Shorter = faster snap-back to fair value.",
-            regime_color,
-            tooltip=TOOLTIPS["current_regime"],
-        )
-
-    # Regime distribution interpretation. Denominator = rows the engine
-    # actually classified (get_regime_stats now excludes the walk-forward
-    # warm-up, whose fabricated-neutral labels previously diluted these
-    # percentages by the warm-up's share of history) — NOT len(ts).
-    os_total = regime_stats["strongly_oversold"] + regime_stats["oversold"]
-    ob_total = regime_stats["strongly_overbought"] + regime_stats["overbought"]
-    neutral_count = regime_stats["neutral"]
-    total = os_total + ob_total + neutral_count
-    os_pct = os_total / total * 100 if total > 0 else 0
-    ob_pct = ob_total / total * 100 if total > 0 else 0
-    neutral_pct = neutral_count / total * 100 if total > 0 else 0
-
-    if os_pct > 50:
-        interp_title = "MARKET LEANS CHEAP"
-        interp_color = "success"
-        interp_text = (
-            f"{os_pct:.0f}% of history ({os_total}/{total} periods) classified oversold. "
-            f"Valuation sits near the lower end of its range. "
-            f"Neutral {neutral_pct:.0f}%, overbought {ob_pct:.0f}%."
-        )
-    elif ob_pct > 50:
-        interp_title = "MARKET LEANS EXPENSIVE"
-        interp_color = "danger"
-        interp_text = (
-            f"{ob_pct:.0f}% of history ({ob_total}/{total} periods) classified overbought. "
-            f"Valuation sits near the upper end of its range. "
-            f"Neutral {neutral_pct:.0f}%, oversold {os_pct:.0f}%."
-        )
-    else:
-        interp_title = "MARKET OSCILLATES EVENLY"
-        interp_color = "neutral"
-        interp_text = (
-            f"No dominant regime. Neutral {neutral_pct:.0f}% ({neutral_count} periods), "
-            f"oversold {os_pct:.0f}%, overbought {ob_pct:.0f}%. "
-            f"Mean-reversion signals equally likely in both directions."
-        )
-    render_interpretation_card(title=interp_title, body=interp_text, color=interp_color)
-
-
-def _render_model_quality_cards(model_stats, signal):
-    """Section: Model Quality — four metric cards (OOS R², R² vs RW, Hurst, Model Spread)."""
+def _quality_cards(model_stats: dict, signal: dict, ts: pd.DataFrame, mc: dict, forward: bool) -> None:
     q1, q2, q3, q4 = st.columns(4)
     with q1:
-        r2 = model_stats["r2_oos"]
-        _fwd = bool(signal.get("forward_signal", False))
-        if _fwd:
-            # A returns forecast's magnitude R² is ~0 by nature — grading it
-            # on the level-regression scale (danger below 0.4) mislabels the
-            # expected regime as failure. The edge is directional (rank IC).
-            render_metric_card(
-                "OOS R² (FORECAST)", f"{r2:.3f}",
-                "Returns forecast — R² near 0 is expected; the edge is in rank IC (Diagnostics).",
-                "neutral",
-                tooltip="Variance of the forward return explained by the forecast. For return "
-                        "forecasting this is structurally near zero even for a genuinely useful "
-                        "signal — direction (rank IC), not magnitude, is the verdict.",
-            )
-        else:
-            render_metric_card(
-                "OOS R²", f"{r2:.3f}",
-                "Variance explained on unseen data. Below 0.4 = model cannot reliably forecast.",
-                "success" if r2 > UI_R2_STRONG else "warning" if r2 > UI_R2_ACCEPTABLE else "danger",
-                tooltip=TOOLTIPS["oos_r2"],
-            )
+        render_metric_card(mc["r2_label"], fmt(model_stats.get("r2_oos"), ".3f"), mc["r2_sub"], "neutral",
+                           tooltip=mc["r2_tip"])
     with q2:
-        r2_rw = model_stats.get("r2_vs_rw", 0.0)
-        render_metric_card(
-            "R² vs RW", f"{r2_rw:+.3f}",
-            "Edge over naive forecast. Negative = 'tomorrow = today' would have beaten the model.",
-            "success" if r2_rw > 0.05 else "warning" if r2_rw > -0.05 else "danger",
-            tooltip=TOOLTIPS["r2_vs_rw"],
-        )
+        render_metric_card(mc["r2rw_label"], fmt(model_stats.get("r2_vs_rw"), "+.3f"), mc["r2rw_sub"], "neutral",
+                           tooltip=mc["r2rw_tip"])
     with q3:
-        h = signal["hurst"]
-        h_label = (
-            "Mean-reverting series. Signals reliable — price reverts to fair value reliably."
-            if h < 0.40
-            else "Trending series. Signals lag — price drifts away from fair value, reversal fails."
-            if h > 0.60
-            else "Random walk regime. No edge — price has no memory of past deviations to exploit."
-        )
-        render_metric_card(
-            "DFA Hurst", f"{h:.2f}", h_label,
-            "success" if h < 0.40 else "danger" if h > 0.60 else "neutral",
-            tooltip=TOOLTIPS["hurst"],
-        )
+        render_metric_card("DFA HURST", fmt(signal.get("hurst"), ".2f"), mc["hurst_sub"], "neutral",
+                           tooltip="< 0.5 anti-persistent, ≈ 0.5 random walk, > 0.5 persistent increments. "
+                                   "A description of the series, not evidence of edge.")
     with q4:
-        sp = signal["model_spread"]
-        render_metric_card(
-            "Model Spread", f"{sp:.2f}",
-            "Disagreement among ensemble models. Above 1.5 = models conflict — distrust signal.",
-            "success" if sp < UI_MODEL_SPREAD_LOW else "warning" if sp < UI_MODEL_SPREAD_HIGH else "danger",
-            tooltip=TOOLTIPS["model_spread"],
-        )
+        # Scale-aware: the spread is quoted in σ of the series it spreads around (A4-08).
+        base = _col(ts, "Forecast" if forward else "Residual")
+        sd = num(base[_col(ts, "Valid").fillna(0).astype(bool)].std()) if "Valid" in ts.columns else num(base.std())
+        sp = num(signal.get("model_spread"))
+        rel = (sp / sd) if (sp is not None and sd) else None
+        render_metric_card(mc["spread_label"], fmt(rel, ".2f", suffix="σ"),
+                           f"{mc['spread_sub']} · raw {fmt(sp, '.4g')}", "neutral")
 
 
-def _render_edge_verdict(signal):
-    """Edge verdict — the honest tradeability call from realized forward performance.
+def _edge_pointer(signal: dict, con: dict, mc: dict, forward: bool) -> None:
+    trust = con.get("trust") or {}
+    tier = str(trust.get("tier") or "INSUFFICIENT_DATA")
+    body = "Conclusion layer: " + esc(trust.get("text") or "no edge graded in this run.")
+    if not forward:
+        body += "<br>Engine levels test: " + esc(signal.get("edge_assessment") or "—")
+    body += "<br>Full evidence: Diagnostics → Edge Ledger."
+    color = "success" if tier in CALL_TIERS else "danger" if tier == "INVERTED" else "neutral"
+    render_interpretation_card(mc["edge_title"], body, color)
 
-    Sits in the TRUST phase: before reading any conviction, the user is told
-    whether this signal has *demonstrated* forward edge, has none (context only),
-    or is historically inverted. Driven by the engine's realized signal
-    performance (t/p), not by R²/Hurst.
-    """
-    inverted = bool(signal.get("inverted", False))
-    tradeable = bool(signal.get("tradeable", False))
-    skill = float(signal.get("forecast_skill_vs_rw", 0.0))
-    forward_signal = bool(signal.get("forward_signal", False))
 
-    if forward_signal:
-        # Predictive mode: the inverted/tradeable flags above come from the
-        # LEVEL/magnitude forward-edge test, which is not the verdict here. The
-        # tradeable edge is DIRECTIONAL — measured by rank IC in the Convergence
-        # tab. Don't show the levels-mode "valuation context" framing.
-        title, color = "PREDICTIVE MODE — DIRECTIONAL READ IN CONVERGENCE TAB", "info"
-        body = (
-            "Aarambh is <strong>forecasting forward returns</strong>, not regressing a "
-            "fair-value level. A return forecast's magnitude R&sup2; is ~0 by nature "
-            f"(R&sup2; vs random walk {skill:+.1f}) — that is <em>expected</em>, not a failure. "
-            "The tradeable signal is the <strong>direction</strong>, graded by rank IC in the "
-            "<strong>Convergence</strong> tab (Directional &amp; Walk-Forward IC), not by the "
-            "level/magnitude metrics on this tab."
-        )
-        render_interpretation_card(title=title, body=body, color=color)
-        return
-
-    if inverted:
-        title, color = "SIGNAL INVERTED — VALUATION CONTEXT ONLY", "danger"
-        body = (
-            "On history this signal has been <strong>anti-predictive</strong> — BUY/SELL "
-            "preceded the <em>wrong</em> direction with significance (p&lt;0.05). Read the "
-            "conviction below as a valuation / breadth / regime <strong>context</strong> "
-            f"gauge, <strong>not</strong> a tradeable directional call. "
-            f"R&sup2; vs random walk {skill:+.1f} (negative = worse than &ldquo;tomorrow = today&rdquo;)."
-        )
-    elif not tradeable:
-        title, color = "VALUATION CONTEXT — NOT A TRADEABLE SIGNAL", "warning"
-        body = (
-            "No significant forward predictive power on history. These readings describe "
-            "<strong>where valuation sits</strong> (cheap/expensive vs its own range) and the "
-            "regime — use them as context, not as a directional signal. "
-            f"R&sup2; vs random walk {skill:+.1f}."
-        )
+def _anchor_chart(engine, ts_f: pd.DataFrame, ts: pd.DataFrame, x, target: str, signal: dict, mc: dict,
+                  forward: bool) -> None:
+    fig = make_subplots(rows=2, cols=1, row_heights=[0.62, 0.38], shared_xaxes=True, vertical_spacing=0.06)
+    if forward:
+        a, b = _col(ts_f, "Label"), _col(ts_f, "Forecast")
+        lower = _col(ts_f, "ForecastZ")
+        lower_colors = [COLOR_GREEN if v > 0 else COLOR_RED if v < 0 else _MUTED_FILL for v in lower.fillna(0)]
     else:
-        title, color = "FORECAST EDGE PRESENT", "success"
-        body = (
-            "The signal predicted the correct direction with statistical significance on "
-            f"out-of-sample history. R&sup2; vs random walk {skill:+.1f}."
-        )
-    render_interpretation_card(title=title, body=body, color=color)
-
-
-def _render_fair_value_chart(engine, ts_filtered, x_axis, ts, active_target, signal):
-    """Section: Actual vs Walk-Forward Fair Value — dual-panel chart."""
-    fig = make_subplots(
-        rows=2, cols=1, row_heights=[0.62, 0.38],
-        shared_xaxes=True, vertical_spacing=0.06,
-    )
-    fig.add_trace(go.Scatter(
-        x=x_axis, y=ts_filtered["Actual"], mode="lines", name="Actual",
-        line=dict(color=SLATE, width=1.5),
-    ), row=1, col=1)
-    fig.add_trace(go.Scatter(
-        x=x_axis, y=ts_filtered["FairValue"], mode="lines", name="Fair Value (OOS)",
-        line=dict(color=CYAN, width=1.5, dash="dot"),
-    ), row=1, col=1)
-    if "ModelSpread" in ts_filtered.columns:
-        upper = ts_filtered["FairValue"] + ts_filtered["ModelSpread"]
-        lower = ts_filtered["FairValue"] - ts_filtered["ModelSpread"]
-        fig.add_trace(go.Scatter(
-            x=x_axis, y=upper, mode="lines", line=dict(width=0),
-            showlegend=False, hoverinfo="skip",
-        ), row=1, col=1)
-        fig.add_trace(go.Scatter(
-            x=x_axis, y=lower, mode="lines", line=dict(width=0),
-            fill="tonexty", fillcolor="rgba(34,211,238,0.07)",
-            showlegend=False, hoverinfo="skip",
-        ), row=1, col=1)
-    bar_colors = [EMERALD if r < 0 else ROSE for r in ts_filtered["Residual"]]
-    fig.add_trace(go.Bar(
-        x=x_axis, y=ts_filtered["Residual"], name="Residual (OOS)",
-        marker_color=bar_colors, showlegend=False, opacity=0.65,
-    ), row=2, col=1)
+        a, b = _col(ts_f, "Actual"), _col(ts_f, "FairValue")
+        lower = _col(ts_f, "Residual")
+        # residual < 0 = below fair value = the engine's bullish pole (− = bullish)
+        lower_colors = [COLOR_GREEN if v < 0 else COLOR_RED if v > 0 else _MUTED_FILL for v in lower.fillna(0)]
+    fig.add_trace(go.Scatter(x=x, y=a, mode="lines", name=mc["anchor_a"], line=dict(color=COLOR_MUTED, width=1.5)),
+                  row=1, col=1)
+    fig.add_trace(go.Scatter(x=x, y=b, mode="lines", name=mc["anchor_b"],
+                             line=dict(color=COLOR_CYAN, width=1.5, dash="dot")), row=1, col=1)
+    fig.add_trace(go.Bar(x=x, y=lower, name=mc["anchor_lower"], marker_color=lower_colors, opacity=0.65,
+                         showlegend=False), row=2, col=1)
     fig.add_hline(y=0, line_color="rgba(255,255,255,0.06)", line_width=0.5, row=2, col=1)
-
-    # OU is fit on the fair-value RESIDUAL. In forward mode the "residual"
-    # driving the OU estimate is -prediction (the forecast series itself, per
-    # engines/aarambh.py::fit), so the projection describes a mean-reversion
-    # dynamic that the run log already flags "not applicable in predictive
-    # mode" — drawing it here would contradict that. Levels mode is unchanged.
-    if (not bool(signal.get("forward_signal", False))
-            and hasattr(engine, "ou_projection") and len(engine.ou_projection) > 0
+    proj = getattr(engine, "ou_projection", None)
+    if (not forward and signal.get("half_life_meaningful") is True and proj is not None and len(proj) > 0
             and pd.api.types.is_datetime64_any_dtype(ts["Date"])):
-        from pandas import bdate_range
-        last_date = ts["Date"].iloc[-1]
-        proj_dates = bdate_range(start=last_date, periods=OU_PROJECTION_DAYS + 1)[1:]
-        fig.add_trace(go.Scatter(
-            x=proj_dates, y=engine.ou_projection, mode="lines", name="OU Projection",
-            line=dict(color=SLATE, width=1, dash="dot"), opacity=0.45,
-        ), row=2, col=1)
-        if len(engine.ou_projection_upper) > 0:
-            fig.add_trace(go.Scatter(x=proj_dates, y=engine.ou_projection_upper, mode="lines", line=dict(width=0), showlegend=False, hoverinfo="skip"), row=2, col=1)
-            fig.add_trace(go.Scatter(x=proj_dates, y=engine.ou_projection_lower, mode="lines", line=dict(width=0), fill="tonexty", fillcolor="rgba(148,163,184,0.08)", showlegend=False, hoverinfo="skip"), row=2, col=1)
-
+        proj_dates = pd.bdate_range(start=ts["Date"].iloc[-1], periods=OU_PROJECTION_DAYS + 1)[1:]
+        fig.add_trace(go.Scatter(x=proj_dates[:len(proj)], y=list(proj)[:len(proj_dates)], mode="lines", name="OU projection",
+                                 line=dict(color=COLOR_MUTED, width=1, dash="dot"), opacity=0.45), row=2, col=1)
     fig.update_layout(**chart_layout(height=UI_CHART_HEIGHT_XLARGE))
-    style_axes(fig, y_title=active_target, row=1, col=1)
-    style_axes(fig, y_title="Residual", row=2, col=1)
-
-    st.plotly_chart(fig, width='stretch', key="aarambh_fairvalue")
-
-
-def _render_signal_frequency_chart(ts_filtered, x_axis):
-    """Section: Signal Frequency — buy/sell threshold crossings."""
-    fig_signals = go.Figure()
-    fig_signals.add_trace(go.Bar(
-        x=x_axis, y=ts_filtered["BuySignalBreadth"], name="Buy",
-        marker=dict(color=EMERALD, opacity=0.85),
-    ))
-    fig_signals.add_trace(go.Bar(
-        x=x_axis, y=-ts_filtered["SellSignalBreadth"], name="Sell",
-        marker=dict(color=ROSE, opacity=0.85),
-    ))
-
-    fig_signals.update_layout(**chart_layout(height=UI_CHART_HEIGHT_SMALL, show_legend=False), barmode="relative")
-    style_axes(fig_signals, y_title="Count")
-    st.plotly_chart(fig_signals, width='stretch', key="aarambh_signal_freq")
+    style_axes(fig, y_title=(f"{mc['anchor_y']} {target}" if forward else target), row=1, col=1)
+    style_axes(fig, y_title=mc["anchor_lower"], row=2, col=1)
+    st.plotly_chart(fig, width="stretch", key="aarambh_anchor")
 
 
-def _render_avg_zscore_chart(ts_filtered, x_axis):
-    """Section: Average Z-Score — statistical extremes across windows."""
-    fig_z = go.Figure()
-    bar_colors = [EMERALD if z < -1 else ROSE if z > 1 else "rgba(148,163,184,0.75)" for z in ts_filtered["AvgZ"]]
-    fig_z.add_trace(go.Bar(x=x_axis, y=ts_filtered["AvgZ"], marker_color=bar_colors, opacity=0.85, showlegend=False))
-    fig_z.add_hline(y=0, line_color="rgba(255,255,255,0.06)", line_width=0.5)
-    fig_z.add_hline(y=2, line_dash="dot", line_color="rgba(251,113,133,0.18)", line_width=0.5)
-    fig_z.add_hline(y=-2, line_dash="dot", line_color="rgba(52,211,153,0.18)", line_width=0.5)
+def _conviction_chart(ts_f: pd.DataFrame, x, signal: dict, forward: bool) -> None:
+    fig = go.Figure()
+    score = _col(ts_f, "ConvictionScore")
+    if not forward and {"ConvictionUpper", "ConvictionLower"} <= set(ts_f.columns):
+        fig.add_trace(go.Scatter(x=x, y=_col(ts_f, "ConvictionUpper"), mode="lines", line=dict(width=0),
+                                 showlegend=False, hoverinfo="skip"))
+        fig.add_trace(go.Scatter(x=x, y=_col(ts_f, "ConvictionLower"), mode="lines", line=dict(width=0),
+                                 fill="tonexty", fillcolor="rgba(148,163,184,0.08)", name="uncertainty band"))
+    fig.add_trace(go.Scatter(x=x, y=score.clip(lower=0), fill="tozeroy", fillcolor="rgba(251,113,133,0.06)",
+                             line=dict(width=0), showlegend=False, hoverinfo="skip"))
+    fig.add_trace(go.Scatter(x=x, y=score.clip(upper=0), fill="tozeroy", fillcolor="rgba(52,211,153,0.06)",
+                             line=dict(width=0), showlegend=False, hoverinfo="skip"))
+    fig.add_trace(go.Scatter(x=x, y=score, mode="lines", name="engine conviction", line=dict(color=COLOR_MUTED, width=2)))
+    levels = signal.get("conviction_levels") or {}
+    for name in ("moderate", "strong"):
+        lv = num(levels.get(name))
+        if lv:
+            for s in (1, -1):
+                fig.add_hline(y=s * lv, line_dash="dot", line_width=0.5, line_color="rgba(148,163,184,0.22)")
+    fig.update_layout(**chart_layout(height=UI_CHART_HEIGHT_MEDIUM, show_legend=not forward))
+    style_axes(fig, y_title=f"conviction ({SIGN_ENGINE})", y_range=[-100, 100])
+    st.plotly_chart(fig, width="stretch", key="aarambh_conviction")
+    if not forward and "ConvictionRaw" in ts_f.columns:
+        raw = go.Figure(go.Scatter(x=x, y=_col(ts_f, "ConvictionRaw"), mode="lines", name="raw conviction",
+                                   line=dict(color=COLOR_MUTED, width=1.2)))
+        raw.update_layout(**chart_layout(height=UI_CHART_HEIGHT_SMALL, show_legend=False))
+        style_axes(raw, y_title=f"raw (pre-DDM) · {SIGN_ENGINE}", y_range=[-100, 100])
+        st.plotly_chart(raw, width="stretch", key="aarambh_raw_conviction")
 
-    fig_z.update_layout(**chart_layout(height=UI_CHART_HEIGHT_SMALL, show_legend=False))
-    style_axes(fig_z, y_title="Z-Score")
-    st.plotly_chart(fig_z, width='stretch', key="aarambh_avg_z")
+
+def _conviction_card(signal: dict, con: dict, forward: bool) -> None:
+    cv = num(signal.get("conviction_score"))
+    strength = str(signal.get("display_strength") or "—")
+    tier = str((con.get("trust") or {}).get("tier") or "INSUFFICIENT_DATA")
+    side = "—" if cv is None else ("bullish side" if cv < 0 else "bearish side" if cv > 0 else "flat")
+    body = (f"Engine conviction {esc(fmt(cv, '+.1f'))} ({esc(SIGN_ENGINE)}) — {esc(side)}, engine strength "
+            f"{esc(strength)}. Directional trust for this run: {esc(tier.replace('_', ' '))}.")
+    if not forward:
+        lo, hi = num(signal.get("conviction_lower")), num(signal.get("conviction_upper"))
+        if lo is not None and hi is not None:
+            body += f" Uncertainty band width {esc(fmt(hi - lo, '.0f'))} pts (not a calibrated interval)."
+    render_interpretation_card("ENGINE CONVICTION", body, "neutral")
 
 
-def _render_lookback_states(ts_filtered):
-    """Section: Current Lookback States — per-window z-score and zone."""
-    from core.config import LOOKBACK_WINDOWS
-    rows_html = []
+def _extension_section(ts_f: pd.DataFrame, x, mc: dict, forward: bool) -> None:
+    render_section_header(mc["ext_title"], mc["ext_desc"], icon="bar-chart", accent="emerald")
+    if {"OversoldBreadth", "OverboughtBreadth"} <= set(ts_f.columns):
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=x, y=_col(ts_f, "OversoldBreadth"), fill="tozeroy", fillcolor="rgba(52,211,153,0.1)",
+                                 line=dict(color=COLOR_GREEN, width=1.5), name=mc["breadth_bull"]))
+        fig.add_trace(go.Scatter(x=x, y=_col(ts_f, "OverboughtBreadth"), fill="tozeroy",
+                                 fillcolor="rgba(251,113,133,0.1)", line=dict(color=COLOR_RED, width=1.5),
+                                 name=mc["breadth_bear"]))
+        fig.update_layout(**chart_layout(height=UI_CHART_HEIGHT_MEDIUM))
+        style_axes(fig, y_title="% of lookback windows", y_range=[0, 100])
+        st.plotly_chart(fig, width="stretch", key="aarambh_breadth")
+    rows = []
     for lb in LOOKBACK_WINDOWS:
-        if f"Z_{lb}" not in ts_filtered.columns:
+        if f"Z_{lb}" not in ts_f.columns or not len(ts_f):
             continue
-        z = ts_filtered[f"Z_{lb}"].iloc[-1]
-        zone = ts_filtered[f"Zone_{lb}"].iloc[-1]
-        zone_color = COLOR_GREEN if "Under" in zone else COLOR_RED if "Over" in zone else SLATE
-        rows_html.append(
-            f'<div class="lookback-row">'
-            f'<span class="label">{lb}-Day Lookback</span>'
-            f'<span class="value" style="color:{zone_color};">{zone} ({z:+.2f})</span>'
-            f'</div>'
-        )
-    if rows_html:
-        st.markdown(
-            f'<div style="background:var(--glass);border:1px solid var(--border);border-radius:var(--r-md);overflow:hidden;">{"".join(rows_html)}</div>',
-            unsafe_allow_html=True,
-        )
+        z = num(ts_f[f"Z_{lb}"].iloc[-1])
+        zone = ts_f[f"Zone_{lb}"].iloc[-1] if f"Zone_{lb}" in ts_f.columns else ""
+        color = COLOR_GREEN if "Under" in str(zone) else COLOR_RED if "Over" in str(zone) else COLOR_MUTED
+        rows.append(f'<div class="lookback-row"><span class="label">{lb}-day lookback</span>'
+                    f'<span class="value" style="color:{color};">{esc(zone_label(zone, forward))} '
+                    f'({esc(fmt(z, "+.2f"))})</span></div>')
+    if rows:
+        st.caption(mc["lookback_desc"])
+        st.markdown('<div style="background:var(--glass);border:1px solid var(--border);border-radius:var(--r-md);'
+                    f'overflow:hidden;">{"".join(rows)}</div>', unsafe_allow_html=True)
+    if "AvgZ" in ts_f.columns:
+        z = _col(ts_f, "AvgZ")
+        fig = go.Figure(go.Bar(x=x, y=z, opacity=0.85, showlegend=False,
+                               marker_color=[COLOR_GREEN if v < -1 else COLOR_RED if v > 1 else _MUTED_FILL
+                                             for v in z.fillna(0)]))
+        for s in (2, -2):
+            fig.add_hline(y=s, line_dash="dot", line_width=0.5, line_color="rgba(148,163,184,0.22)")
+        fig.update_layout(**chart_layout(height=UI_CHART_HEIGHT_SMALL, show_legend=False))
+        style_axes(fig, y_title=f"AvgZ ({SIGN_ENGINE})")
+        st.caption(mc["avgz_desc"])
+        st.plotly_chart(fig, width="stretch", key="aarambh_avg_z")
+    if {"BuySignalBreadth", "SellSignalBreadth"} <= set(ts_f.columns):
+        fig = go.Figure()
+        fig.add_trace(go.Bar(x=x, y=_col(ts_f, "BuySignalBreadth"), name="bullish crossings",
+                             marker=dict(color=COLOR_GREEN, opacity=0.85)))
+        fig.add_trace(go.Bar(x=x, y=-_col(ts_f, "SellSignalBreadth"), name="bearish crossings",
+                             marker=dict(color=COLOR_RED, opacity=0.85)))
+        fig.update_layout(**chart_layout(height=UI_CHART_HEIGHT_SMALL, show_legend=False), barmode="relative")
+        style_axes(fig, y_title="crossings (bearish below 0)")
+        st.caption(mc["freq_desc"])
+        st.plotly_chart(fig, width="stretch", key="aarambh_signal_freq")
 
 
-# ═══════════════════════════════════════════════════════════════════════
-#  MAIN RENDER FUNCTION — sections arranged in logical analytical flow
-# ═══════════════════════════════════════════════════════════════════════
+def _state_section(signal: dict, regime_stats: dict, mc: dict, forward: bool) -> None:
+    render_section_header(mc["regime_title"], mc["regime_desc"], icon="crosshair", accent="emerald")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        render_metric_card(mc["breadth_bull"].upper(), fmt(signal.get("oversold_breadth"), ".0f", suffix="%"),
+                           "share of lookbacks in the bullish zone (descriptive)")
+    with c2:
+        render_metric_card(mc["breadth_bear"].upper(), fmt(signal.get("overbought_breadth"), ".0f", suffix="%"),
+                           "share of lookbacks in the bearish zone (descriptive)")
+    with c3:
+        sub = "classification of today's extension"
+        if not forward and signal.get("half_life_meaningful") is True:
+            sub = f"OU half-life {fmt(signal.get('ou_half_life'), '.0f')}d (levels fit)"
+        render_metric_card("CURRENT STATE", regime_label(signal.get("regime"), forward), sub)
+    rs = regime_stats or {}
+    os_t = int((num(rs.get("strongly_oversold")) or 0) + (num(rs.get("oversold")) or 0))
+    ob_t = int((num(rs.get("strongly_overbought")) or 0) + (num(rs.get("overbought")) or 0))
+    nt = int(num(rs.get("neutral")) or 0)
+    total = os_t + ob_t + nt
+    if total:
+        render_interpretation_card(
+            "HISTORY SHARE (DESCRIPTIVE)",
+            esc(f"Of {total} classified out-of-sample rows: {os_t / total:.0%} {mc['regime_bull'].lower()}, "
+                f"{ob_t / total:.0%} {mc['regime_bear'].lower()}, {nt / total:.0%} neutral. "
+                "A description of where the series has sat — not a forecast."), "neutral")
 
-def render_aarambh_tab(engine, ts_filtered, x_axis, x_title, signal, model_stats, regime_stats, ts, active_target):
-    """Aarambh tab — walk-forward valuation with violet system identity.
 
-    Analytical flow:
-      1. Model Quality        — "Can I trust this?"
-      2. Actual vs Fair Value  — "What are we valuing?"
-      3. Base Conviction       — "What's the raw signal?"
-      4. DDM-Filtered          — "What's the processed signal?"
-      5. Market Breadth        — "How much agreement?"
-      6. Market State          — "What's the regime?"
-      7. Lookback States       — "What do individual windows say?"
-      8. Signal Frequency      — "Where are the crossings?"
-      9. Average Z-Score       — "What's statistically extreme?"
-    """
-
-    st.markdown(
-        '<div class="tab-bg aarambh"></div>',
-        unsafe_allow_html=True,
-    )
-
-    # ── Phase 1: TRUST ─────────────────────────────────────────────────
-    render_section_header(
-        "Model Quality",
-        "Is the ensemble reliable? Weak metrics here mean treat all fair-value estimates with caution.",
-        icon="cpu",
-        accent="violet",
-    )
-    _render_model_quality_cards(model_stats, signal)
-    _render_edge_verdict(signal)
-
+def render_aarambh_tab(engine, ts_f: pd.DataFrame, ts: pd.DataFrame, signal: dict, model_stats: dict,
+                       regime_stats: dict, target: str, forward_mode: bool, conclusion: dict | None = None) -> None:
+    """Aarambh tab. ``ts_f`` = timeframe slice (RangeIndex + Date), ``ts`` = full engine frame."""
+    forward = bool(forward_mode)
+    mc = mode_copy(forward)
+    con = conclusion or {}
+    signal, model_stats = signal or {}, model_stats or {}
+    st.markdown('<div class="tab-bg aarambh"></div>', unsafe_allow_html=True)
+    render_section_header("Model Quality", mc["quality_desc"], icon="cpu", accent="violet")
+    st.caption(mc["badge"])
+    _quality_cards(model_stats, signal, ts, mc, forward)
+    _edge_pointer(signal, con, mc, forward)
+    if len(ts_f) == 0:
+        st.info("No rows in the selected time range.")
+        return
+    x = ts_f["Date"]
     section_gap()
-
-    # ── Phase 2: ANCHOR ────────────────────────────────────────────────
-    # Mode-aware header: in predictive mode "Actual" is the realized forward
-    # return and "FairValue" is the forecast — calling it a fair-value level
-    # comparison would describe a model that isn't running.
-    if bool(signal.get("forward_signal", False)):
-        render_section_header(
-            "Realized vs Forecast Forward Return",
-            "Realized h-day forward return vs the model's ex-ante forecast. The unlabeled tail (no realized value yet) is the live forecast region.",
-            icon="trending",
-            accent="cyan",
-        )
-    else:
-        render_section_header(
-            "Actual vs Walk-Forward Fair Value",
-            "Actual level vs model's fair-value estimate. Tight band + large divergence = strongest signals.",
-            icon="trending",
-            accent="cyan",
-        )
-    _render_fair_value_chart(engine, ts_filtered, x_axis, ts, active_target, signal)
-
+    render_section_header(mc["anchor_title"], mc["anchor_desc"], icon="trending", accent="cyan")
+    _anchor_chart(engine, ts_f, ts, x, target, signal, mc, forward)
     section_gap()
-
-    # ── Phase 3: SIGNAL ────────────────────────────────────────────────
-    render_section_header(
-        "Base Conviction Score",
-        "Unsmoothed oversold/overbought window differential. Feeds the DDM evidence accumulator.",
-        icon="activity",
-    )
-    _render_raw_conviction_chart(ts_filtered, x_axis)
-
+    render_section_header(mc["conv_title"], mc["conv_desc"], icon="shield", accent="cyan")
+    _conviction_chart(ts_f, x, signal, forward)
+    _conviction_card(signal, con, forward)
     section_gap()
-
-    render_section_header(
-        "DDM-Filtered Conviction with Confidence Bands",
-        "Evidence-accumulated signal with confidence bands. Narrow = high conviction. This is your primary trade signal.",
-        icon="shield",
-        accent="cyan",
-    )
-    _render_ddm_conviction_chart(ts_filtered, x_axis, signal)
-
+    _extension_section(ts_f, x, mc, forward)
     section_gap()
-
-    render_section_header(
-        "Market Breadth",
-        "Windows that agree the market is cheap (green) vs expensive (red). Convergence near zero = fairly valued.",
-        icon="bar-chart",
-        accent="emerald",
-    )
-    _render_market_breadth_chart(ts_filtered, x_axis)
-
-    section_gap()
-
-    # ── Phase 4: STATE ─────────────────────────────────────────────────
-    render_section_header(
-        "Market State",
-        "How many windows see the market as cheap vs expensive, plus the mean-reversion regime.",
-        icon="crosshair",
-        accent="emerald",
-    )
-    _render_market_state_cards(signal, regime_stats, ts)
-
-    section_gap()
-
-    render_section_header(
-        "Current Lookback States",
-        "Per-window z-score and zone. Uniform zones = high conviction. Mixed = low conviction.",
-        icon="layers",
-    )
-    _render_lookback_states(ts_filtered)
-
-    section_gap()
-
-    # ── Phase 5: EXTREMES ──────────────────────────────────────────────
-    render_section_header(
-        "Signal Frequency",
-        "Buy/sell threshold crossings per window. Clusters = conviction building.",
-        icon="zap",
-        accent="rose",
-    )
-    _render_signal_frequency_chart(ts_filtered, x_axis)
-
-    section_gap()
-
-    render_section_header(
-        "Average Z-Score",
-        "Mean z-score across all windows. Beyond ±2 (dotted) is statistically extreme. Green = cheap; red = expensive.",
-        icon="target",
-    )
-    _render_avg_zscore_chart(ts_filtered, x_axis)
+    _state_section(signal, regime_stats, mc, forward)

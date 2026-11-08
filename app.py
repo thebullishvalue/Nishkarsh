@@ -19,7 +19,6 @@ for _v in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS",
     os.environ.setdefault(_v, "1")
 os.environ.setdefault("NUMBA_CACHE_DIR", os.path.join(os.path.expanduser("~"), ".cache", "nishkarsh", "numba"))
 
-import html  # noqa: E402
 import sys  # noqa: E402
 import warnings  # noqa: E402
 from datetime import datetime, timedelta, timezone  # noqa: E402
@@ -38,14 +37,13 @@ if str(PROJECT_ROOT) in sys.path:
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.config import (  # noqa: E402
-    AARAMBH_FWD_HORIZON, AARAMBH_FWD_MOM_K, COMPANY, CONV2_TIER_MODERATE, CONV2_TIER_STRONG,
-    CONV2_TIER_WEAK, DEFAULT_PREDICTORS, PRECEDENT_HOLD_HORIZONS, PRODUCT_NAME, TIMEFRAME_TRADING_DAYS, VERSION,
+    AARAMBH_FWD_HORIZON, COMPANY, DEFAULT_PREDICTORS, PRODUCT_NAME, TIMEFRAME_TRADING_DAYS, VERSION,
 )
 from pipeline.config import PipelineConfig  # noqa: E402
 from pipeline.inputs import InputError, sheet_content_hash  # noqa: E402
-from pipeline.report import verdict_lines  # noqa: E402
 from pipeline.run import SESSION_KEYS, run_pipeline  # noqa: E402
-from ui.components import render_header, render_metric_card, section_gap  # noqa: E402
+from ui.components import build_hero_verdict, esc, render_header, render_hero_card, section_gap  # noqa: E402
+from ui.copy import LANDING_CARDS, TAGLINE, TAGLINE_EXPLAINER  # noqa: E402
 from ui.tabs.tab_aarambh import render_aarambh_tab  # noqa: E402
 from ui.tabs.tab_convergence import render_convergence_tab  # noqa: E402
 from ui.tabs.tab_data import render_data_tab  # noqa: E402
@@ -70,16 +68,10 @@ _INTEL_HELP = (
 )
 
 
-def _esc(x) -> str:
-    return html.escape(str(x))
-
-
 def _clear_derived(keep_data: bool = False) -> None:
     for k in _DERIVED_KEYS:
         if keep_data and k in ("data", "run_analysis", "_sheet_info", "_sources_kind", "_synthetic_sources", "_today"):
             continue
-        st.session_state.pop(k, None)
-    for k in [k for k in st.session_state.keys() if isinstance(k, str) and k.startswith("conv_norm_causal::")]:
         st.session_state.pop(k, None)
 
 
@@ -102,40 +94,21 @@ def _load_sheet(url: str, force: bool):
 # ─── static pages ────────────────────────────────────────────────────────────
 def _render_landing_page() -> None:
     section_gap()
-    cards = (
-        ("aarambh", "AARAMBH",
-         f"Purged walk-forward ensemble forecasting the {AARAMBH_FWD_HORIZON}-day forward change of the target "
-         f"from {AARAMBH_FWD_MOM_K}-day predictor momentum. Its causally z-scored forecast is the directional head.",
-         (("Ensemble", "Ridge + Huber + ElasticNet + PCA-OLS (equal weight)"),
-          ("Validation", "Purged walk-forward, out-of-sample only"),
-          ("Sign", "engine conviction − = bullish"))),
-        ("nirnay", "NIRNAY",
-         "Per-constituent MSF + MMR oscillator with HMM / GARCH / CUSUM regime intelligence, aggregated over the "
-         "names with live, warmed-up data each day.",
-         (("Regime", "online HMM probabilities"), ("Volatility", "GARCH vol regime"),
-          ("Breaks", "CUSUM change points"))),
-        ("convergence", "CONCLUSION",
-         "Aarambh leads. Nirnay can only shrink conviction (×κ ≤ 1) on days it contradicts, and only when a "
-         "walk-forward lift test passes — otherwise it is context only.",
-         (("Scale", "C in ±100, + = bullish"),
-          ("Tiers", f"{CONV2_TIER_STRONG} / {CONV2_TIER_MODERATE} / {CONV2_TIER_WEAK} (fixed)"),
-          ("Evidence", "Edge Ledger: IC, HAC t, bootstrap, cost backtest"))),
-    )
-    for col, (cls, title, text, spec) in zip(st.columns(3, gap="small"), cards):
-        rows = "".join(f"<span>{_esc(k)}:</span> {_esc(v)}<br>" for k, v in spec)
-        col.markdown(f"<div class='system-card {cls}'><h3>{_esc(title)}</h3><p>{_esc(text)}</p>"
+    for col, (cls, title, text, spec) in zip(st.columns(3, gap="small"), LANDING_CARDS):
+        rows = "".join(f"<span>{esc(k)}:</span> {esc(v)}<br>" for k, v in spec)
+        col.markdown(f"<div class='system-card {esc(cls)}'><h3>{esc(title)}</h3><p>{esc(text)}</p>"
                      f"<div class='spec'>{rows}</div></div>", unsafe_allow_html=True)
     section_gap()
-    st.markdown(
-        "<div class='landing-prompt'><h4>AWAITING DATA</h4><p>Load data in the <strong>Sidebar</strong> "
-        "(Google Sheet, CSV/Excel upload, or the clearly labelled synthetic demo), choose a <strong>Target</strong>"
-        " and <strong>Predictors</strong>, then <strong>Run Analysis</strong>.</p></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='landing-prompt'><h4>TWO SYSTEMS. ONE CONCLUSION.</h4><p>{esc(TAGLINE_EXPLAINER)}</p>"
+                "<h4>AWAITING DATA</h4><p>Load data in the <strong>Sidebar</strong> (Google Sheet, CSV/Excel upload, "
+                "or the clearly labelled synthetic demo), choose a <strong>Target</strong> and <strong>Predictors"
+                "</strong>, then <strong>Run Analysis</strong>.</p></div>", unsafe_allow_html=True)
 
 
 def _render_footer() -> None:
     ist_now = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
-    st.markdown(f'<div class="app-footer"><div class="content">© {ist_now.year} <strong>{_esc(PRODUCT_NAME)}</strong>'
-                f' · {_esc(COMPANY)} · v{_esc(VERSION)} · {ist_now:%Y-%m-%d %H:%M:%S} IST</div></div>',
+    st.markdown(f'<div class="app-footer"><div class="content">© {ist_now.year} <strong>{esc(PRODUCT_NAME)}</strong>'
+                f' · {esc(COMPANY)} · v{esc(VERSION)} · {ist_now:%Y-%m-%d %H:%M:%S} IST</div></div>',
                 unsafe_allow_html=True)
 
 
@@ -144,26 +117,11 @@ def _render_synthetic_banner() -> None:
              "about the real market.")
 
 
-def _render_verdict(run_report: dict, run_config: dict) -> None:
-    """Minimal hero (the UI builder replaces this with build_hero_verdict / render_hero_card)."""
-    v = verdict_lines(run_report)
-    con = run_report.get("conclusion") or {}
-    lat = con.get("latest") or {}
-    c1, c2, c3, c4 = st.columns(4, gap="small")
-    c_val = lat.get("C")
-    with c1:
-        render_metric_card("Conclusion C (+ = bullish)", "n/a" if c_val is None else f"{c_val:+.1f}",
-                           (f"{lat.get('direction', 'NEUTRAL')} · {lat.get('tier', 'NO LEAN')}"))
-    with c2:
-        render_metric_card("Trust", (v["trust_tier"].replace("_", " ")), (f"as of {lat.get('date', 'n/a')}"))
-    with c3:
-        render_metric_card("Nirnay", ((con.get("nirnay") or {}).get("state", "n/a")),
-                           (f"κ {'ON' if run_config.get('kappa_enabled') else 'OFF'} · state {lat.get('state')}"))
-    with c4:
-        render_metric_card("Return label", ((run_config.get("label_src") or "none")[:28]),
-                           (f"horizon {con.get('horizon', AARAMBH_FWD_HORIZON)}d"))
-    st.caption(v["trust"])
-    st.caption(v["nirnay"])
+def _render_verdict(ss) -> None:
+    """Hero: renders the conclusion layer's verdict (C-V2) — no statistics computed here."""
+    prec = ss.get("precedent") or {}
+    signal = ss["engine"].get_current_signal() if ss.get("engine") is not None else {}
+    render_hero_card(build_hero_verdict(ss.get("conclusion"), signal, prec.get("hero"), ss.get("run_config")))
     section_gap()
 
 
@@ -175,9 +133,10 @@ def main() -> None:
 
     with st.sidebar:
         st.markdown(f'<div style="text-align:center;padding:0.5rem 0 0.75rem 0;"><div style="font-family:var(--display);'
-                    f'font-size:1.35rem;font-weight:700;color:var(--amber);">{_esc(PRODUCT_NAME.upper())}</div>'
-                    f'<div style="font-family:var(--data);color:var(--ink-tertiary);font-size:0.6rem;">निष्कर्ष · v{_esc(VERSION)}'
+                    f'font-size:1.35rem;font-weight:700;color:var(--amber);">{esc(PRODUCT_NAME.upper())}</div>'
+                    f'<div style="font-family:var(--data);color:var(--ink-tertiary);font-size:0.6rem;">निष्कर्ष · v{esc(VERSION)}'
                     f'</div></div>', unsafe_allow_html=True)
+        st.caption(TAGLINE_EXPLAINER)
         st.markdown('<div class="sidebar-title">Data Source</div>', unsafe_allow_html=True)
         source = st.radio("Source", SOURCES, horizontal=False, label_visibility="collapsed", key="data_source")
         if ss.get("_sources_kind") and ss["_sources_kind"] != source:
@@ -237,7 +196,7 @@ def main() -> None:
     df = ss.get("data") if ss.get("run_analysis") else None
     synthetic = ss.get("_sources_kind") == "Synthetic demo"
     if df is None:
-        render_header(PRODUCT_NAME.upper(), "Two systems. One conclusion — with the evidence shown.")
+        render_header(PRODUCT_NAME.upper(), TAGLINE)
         _render_landing_page()
         _render_footer()
         return
@@ -314,7 +273,7 @@ def main() -> None:
             slot = st.empty()
 
             def _progress(pct, title, sub=""):
-                progress_bar(slot, int(pct), _esc(title), _esc(sub))
+                progress_bar(slot, int(pct), title, sub)   # progress_bar escapes
 
             try:
                 result = run_pipeline(df, cfg, sources, progress=_progress, force=bool(ss.pop("_force_next", False)),
@@ -336,11 +295,12 @@ def main() -> None:
 
 
 def _render_results(ss, synthetic: bool) -> None:
-    rc, report = ss["run_config"], ss["run_report"]
-    engine, aarambh_ts = ss["engine"], ss["aarambh_ts"]
+    rc = ss["run_config"]
+    engine, aarambh_ts, con = ss["engine"], ss["aarambh_ts"], ss.get("conclusion") or {}
     target = rc["target"]
+    forward = bool(rc.get("forward_mode", con.get("forward_mode", True)))
     render_header(PRODUCT_NAME.upper() + (f" · {SYNTH_LABEL}" if synthetic else ""),
-                  f"{target} · {len(rc['features'])} predictors · as of {rc.get('as_of') or 'n/a'}")
+                  f"{target} · {len(rc['features'])} predictors · as of {rc.get('as_of') or 'n/a'} · {TAGLINE}")
     if synthetic:
         _render_synthetic_banner()
     warns = [w for w in rc.get("warnings") or [] if not str(w).startswith("SYNTHETIC")]
@@ -349,7 +309,7 @@ def _render_results(ss, synthetic: bool) -> None:
                 k in w for w in warns for k in ("Stale", "STALE", "FALLBACK", "EMPTY", "failed"))):
             for w in warns:
                 st.warning(w)
-    _render_verdict(report, rc)
+    _render_verdict(ss)
 
     signal, model_stats, regime_stats = engine.get_current_signal(), engine.get_model_stats(), engine.get_regime_stats()
     ts = aarambh_ts.reset_index(drop=True)
@@ -362,30 +322,31 @@ def _render_results(ss, synthetic: bool) -> None:
             st.rerun()
     tf = ss["tf_selected"]
     ts_f = ts if tf == "ALL" else ts.iloc[max(0, len(ts) - int(TIMEFRAME_TRADING_DAYS[tf])):]
-    x_axis = ts_f["Date"]
+    # One date window for every tab (TIMEFRAME_TRADING_DAYS rows of the Aarambh frame).
+    start = None if tf == "ALL" or not len(ts_f) else pd.Timestamp(ts_f["Date"].iloc[0])
+    horizon = int(con.get("horizon") or AARAMBH_FWD_HORIZON)
 
     def _safe(name, fn):
         try:
             fn()
         except Exception as e:  # noqa: BLE001 — a tab failure must not take the page down
-            st.markdown(f'<div class="warning-box"><div><div class="title">Error in {_esc(name)}</div>'
-                        f'<div class="content">{_esc(e)}</div></div></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="warning-box"><div><div class="title">Error in {esc(name)}</div>'
+                        f'<div class="content">{esc(e)}</div></div></div>', unsafe_allow_html=True)
 
     tabs = st.tabs(["CONVERGENCE", "AARAMBH", "NIRNAY", "PRECEDENT", "DIAGNOSTICS", "DATA"])
     with tabs[0]:
-        _safe("Convergence", lambda: render_convergence_tab(ts_f))
+        _safe("Convergence", lambda: render_convergence_tab(start))
     with tabs[1]:
-        _safe("Aarambh", lambda: render_aarambh_tab(engine, ts_f, x_axis, "Date", signal, model_stats,
-                                                    regime_stats, ts, target))
+        _safe("Aarambh", lambda: render_aarambh_tab(engine, ts_f, ts, signal, model_stats, regime_stats, target,
+                                                    forward, con))
     with tabs[2]:
-        _safe("Nirnay", lambda: render_nirnay_tab(tf))
+        _safe("Nirnay", lambda: render_nirnay_tab(start))
     with tabs[3]:
-        _safe("Precedent", lambda: render_precedent_tab(ts, target, tuple(PRECEDENT_HOLD_HORIZONS),
-                                                        AARAMBH_FWD_MOM_K, AARAMBH_FWD_HORIZON))
+        _safe("Precedent", lambda: render_precedent_tab(ts, target, horizon, forward))
     with tabs[4]:
-        _safe("Diagnostics", lambda: render_diagnostics_tab(engine, ts_f, x_axis, "Date", signal, model_stats))
+        _safe("Diagnostics", lambda: render_diagnostics_tab(engine, signal))
     with tabs[5]:
-        _safe("Data", lambda: render_data_tab(ts_f, ts, target))
+        _safe("Data", lambda: render_data_tab(ts_f, ts, target, forward))
     _render_footer()
 
 

@@ -1275,9 +1275,8 @@ footer {
     opacity: 0.15;
 }
 
-/* Variant tints — emerald (buy/undervalued) */
-.signal-card.buy,
-.signal-card.undervalued {
+/* Variant tints — emerald (buy: proven bullish call only) */
+.signal-card.buy {
     --card-accent: var(--emerald);
     --card-glow: var(--emerald-glow);
     --card-bg: linear-gradient(145deg, rgba(45, 212, 168, 0.04) 0%, rgba(17, 24, 39, 0.4) 100%);
@@ -1285,9 +1284,8 @@ footer {
     --card-bg-hover: linear-gradient(145deg, rgba(45, 212, 168, 0.08) 0%, rgba(21, 28, 44, 0.5) 100%);
 }
 
-/* Variant tints — rose (sell/overvalued) */
-.signal-card.sell,
-.signal-card.overvalued {
+/* Variant tints — rose (sell: proven bearish call only) */
+.signal-card.sell {
     --card-accent: var(--rose);
     --card-glow: var(--rose-glow);
     --card-bg: linear-gradient(145deg, rgba(232, 85, 90, 0.04) 0%, rgba(17, 24, 39, 0.4) 100%);
@@ -1295,9 +1293,8 @@ footer {
     --card-bg-hover: linear-gradient(145deg, rgba(232, 85, 90, 0.08) 0%, rgba(21, 28, 44, 0.5) 100%);
 }
 
-/* Variant tints — amber (hold/fair) */
-.signal-card.hold,
-.signal-card.fair {
+/* Variant tints — amber (hold: no call) */
+.signal-card.hold {
     --card-accent: var(--amber);
     --card-glow: var(--amber-glow);
     --card-bg: linear-gradient(145deg, rgba(212, 168, 83, 0.04) 0%, rgba(17, 24, 39, 0.4) 100%);
@@ -1453,18 +1450,15 @@ footer {
     color: var(--ink-primary);
 }
 
-.signal-card.buy .value,
-.signal-card.undervalued .value {
+.signal-card.buy .value {
     color: var(--emerald);
 }
 
-.signal-card.sell .value,
-.signal-card.overvalued .value {
+.signal-card.sell .value {
     color: var(--rose);
 }
 
-.signal-card.hold .value,
-.signal-card.fair .value {
+.signal-card.hold .value {
     color: var(--amber);
 }
 
@@ -4010,7 +4004,7 @@ div[data-multi-file-uploader] > div {
    ================================================================ */
 @media (max-width: 768px) {
 
-    /* Disable expensive backdrop-filter on mobile */
+    /* Disable costly backdrop-filter on mobile */
     .metric-card,
     .system-card,
     .signal-card,

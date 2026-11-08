@@ -1,15 +1,22 @@
 """
-Nishkarsh v1.4.0 — Reusable UI components: metric cards, signal badges, headers, section headers.
+Nishkarsh v2 — Reusable UI components: metric cards, headers, the hero verdict, escaping.
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
-UI — Obsidian Quant Terminal design language.
+UI — Obsidian Quant Terminal design language. Every data/user string that reaches
+``unsafe_allow_html`` goes through ``esc()`` (R7); the hero only RENDERS the conclusion
+layer's verdict (C-V2) — it computes no statistics.
 """
 
 from __future__ import annotations
 
 import html as html_mod
+import math
+import re
 
 import streamlit as st
+
+from core.config import AARAMBH_FORWARD_SIGNAL, AARAMBH_FWD_HORIZON, CONV2_TIER_WEAK, EDGE_ALPHA
+from ui.copy import LEVELS_TAG, SIGN_C, SIGN_ENGINE, SIGN_Z, SYNTH_BANNER, TIERS_TEXT
 
 
 # ── SVG Icons (inline, no external deps) — with ARIA labels for accessibility
@@ -54,7 +61,6 @@ ICONS = {
 
 def get_icon(name: str, size: int = 18, stroke_width: float = 1.5) -> str:
     """Return an SVG icon string with custom size and stroke width."""
-    import re
     base_svg = ICONS.get(name, ICONS["chart"])
 
     # Clean existing attributes to avoid duplicates or stale values
@@ -163,7 +169,8 @@ def render_interpretation_card(
 
     Args:
         title: Short state label (e.g. "NEUTRAL", "STRONG OVERSOLD").
-        body: One-paragraph explanation (raw HTML allowed — caller is trusted).
+        body: One-paragraph explanation. RAW HTML: callers must pass every data value
+            through ``esc()`` (only static markup may be unescaped).
         color: Semantic color — "neutral", "success", "danger", "warning", "info".
     """
     st.markdown(
@@ -175,271 +182,261 @@ def render_interpretation_card(
     )
 
 
-# ── Hero verdict: pure interpretation logic (no Streamlit) ──────────────────
-#
-# Ported from Tattva (Tattva-main/ui/components.py) and adapted for
-# Nishkarsh's two engine theses. Tattva is forward-forecast-only, so its
-# trust chip (non-overlapping Val IC) is the sole edge verdict. Nishkarsh
-# also ships a LEVELS mode (AARAMBH_FORWARD_SIGNAL=False) where the
-# authoritative edge read is the engine's own realized-performance verdict
-# (tradeable / inverted from FairValueEngine._compute_signal_edge) — an
-# INVERTED signal must never render as a confident directional call. The
-# `forward_mode` flag threads that distinction through the headline and
-# evidence rows; everything else (trust tiers, precedent gate, evidence
-# rows, INTERNALS reconciliation) ports unchanged.
+# ── Escaping + number formatting (A4-06 / A4-18) ─────────────────────────────
 
-# Trust tiers for the NON-OVERLAPPING Val IC (see convergence.intelligence
-# — Val IC has been scored non-overlapping since v1.5.0). Its effective
-# sample size is ~n_val / stride, so at a realistic holdout (~300-500 days)
-# and a typical stride, n_eff ~ 30-50 → SE(IC) ~ 1/sqrt(n_eff-3) ~ 0.15-0.19.
-# The tier cut-points below (0.10 / 0.20) sit at roughly 1 SE (MODEST) and
-# 2 SE (SOLID) for that worst-case n_eff so the chip is not overconfident.
-def _trust_tier(val_ic: float | None, wf_pos: float | None) -> dict:
-    """Map a non-overlapping Val IC to a (tier, chip label, prose) bundle."""
-    if val_ic is None:
-        return {"tier": "uncalibrated", "chip": "UNCALIBRATED",
-                "val_ic": None, "wf_pos": wf_pos,
-                "prose": "Edge not yet calibrated (run Intelligence Mode for a Val IC)."}
-    if val_ic <= 0:
-        tier, chip = "no_edge", "NO EDGE"
-        prose = f"No validated edge (Val IC {val_ic:+.3f}) — treat the direction as noise."
-    elif val_ic < 0.10:
-        tier, chip = "marginal", "MARGINAL"
-        prose = f"Marginal edge (Val IC {val_ic:+.3f}) — within ~1 SE of zero at this sample size."
-    elif val_ic < 0.20:
-        tier, chip = "modest", "MODEST EDGE"
-        prose = f"Modest validated edge (Val IC {val_ic:+.3f})."
+def esc(x) -> str:
+    """HTML-escape ANY data/user string before it reaches ``unsafe_allow_html`` (R7)."""
+    return html_mod.escape("" if x is None else str(x), quote=True)
+
+
+def num(x) -> float | None:
+    """``x`` as a finite float, else None (bool, None, NaN, ±inf, non-numeric → None)."""
+    if x is None or isinstance(x, bool):
+        return None
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return None
+    return v if math.isfinite(v) else None
+
+
+def fmt(x, spec: str = "+.2f", dash: str = "—", suffix: str = "") -> str:
+    """Format a number; every None / NaN / inf / garbage renders as ``dash`` (never "+nan")."""
+    v = num(x)
+    if v is None:
+        return dash
+    try:
+        return format(v, spec) + suffix
+    except (TypeError, ValueError):
+        return dash
+
+
+def _d(x) -> dict:
+    return x if isinstance(x, dict) else {}
+
+
+def _str(x, default: str = "") -> str:
+    if x is None or isinstance(x, (float, int)) and num(x) is None:
+        return default
+    s = str(x).strip()
+    return s if s and s.lower() not in ("nan", "none", "inf", "-inf", "+inf") else default
+
+
+def _date(x) -> str:
+    """'YYYY-MM-DD…' strings (or timestamps) only; anything else → ''."""
+    if hasattr(x, "strftime"):
+        try:
+            return x.strftime("%Y-%m-%d")
+        except (TypeError, ValueError):
+            return ""
+    s = x.strip() if isinstance(x, str) else ""
+    return s[:10] if re.match(r"^\d{4}-\d{2}-\d{2}", s) else ""
+
+
+def is_synthetic(run_config) -> bool:
+    """True when the run's provenance (or a run warning) marks the data SYNTHETIC."""
+    rc = _d(run_config)
+    for v in _d(rc.get("provenance")).values():
+        if "SYNTHETIC" in str(_d(v).get("note", "")).upper():
+            return True
+    return any(str(w).upper().startswith("SYNTHETIC") for w in (rc.get("warnings") or []))
+
+
+# ── Hero verdict: pure (no Streamlit) — renders the conclusion, never recomputes it ──
+
+CALL_TIERS = frozenset({"DIRECTIONAL_EDGE", "TRADEABLE_EDGE"})
+TRUST_TIERS = ("INVERTED", "NO_PROVEN_EDGE", "DIRECTIONAL_EDGE", "TRADEABLE_EDGE", "INSUFFICIENT_DATA")
+_C_TIERS = ("STRONG", "MODERATE", "WEAK", "NO LEAN")
+_DIRECTIONS = ("BULLISH", "BEARISH", "NEUTRAL")
+_TRUST_DEFAULT_TEXT = {
+    "INSUFFICIENT_DATA": "INSUFFICIENT DATA — no edge could be graded for this run.",
+    "INVERTED": "INVERTED — no directional call.",
+    "NO_PROVEN_EDGE": "NO PROVEN EDGE — direction is unvalidated.",
+    "DIRECTIONAL_EDGE": "DIRECTIONAL EDGE.",
+    "TRADEABLE_EDGE": "TRADEABLE EDGE.",
+}
+TRUST_CHIP_CLASS = {"TRADEABLE_EDGE": "solid", "DIRECTIONAL_EDGE": "modest", "NO_PROVEN_EDGE": "muted",
+                    "INVERTED": "inverted", "INSUFFICIENT_DATA": "muted"}
+
+
+def _precedent_row(ph: dict, call_dir: int, target: str) -> dict:
+    n = num(ph.get("n"))
+    pos = num(ph.get("positive_pct"))
+    if not n or n < 1 or pos is None:
+        return {"tag": "PRECEDENT", "state": "info", "word": "no data", "votes": False,
+                "text": "No historical analogs for this run."}
+    n_i = int(round(n))
+    k = int(round(pos / 100.0 * n_i))
+    u, p, med = num(ph.get("unconditional_positive_pct")), num(ph.get("binomial_p")), num(ph.get("median"))
+    hp = num(ph.get("horizon"))
+    hz = f"{int(hp)}d" if hp is not None else "the horizon"
+    tgt = f" ({target})" if target else ""
+    text = (f"{k}/{n_i} analogs rose over {hz} vs {fmt(u, '.0f', suffix='%')} unconditional "
+            f"(binomial p={fmt(p, '.2f')}); median {fmt(med, '+.2f', suffix='%')}{tgt}")
+    votes = p is not None and p < EDGE_ALPHA and u is not None
+    if not votes:
+        return {"tag": "PRECEDENT", "state": "info", "word": "descriptive", "votes": False,
+                "text": text + f" — not significant at p < {EDGE_ALPHA:g}; descriptive only."}
+    lean = 1 if pos > u else -1 if pos < u else 0
+    word = "rise" if lean > 0 else "fall" if lean < 0 else "no lean"
+    if call_dir and lean:
+        state, w = ("confirm", "supports") if lean == call_dir else ("conflict", "against")
     else:
-        tier, chip = "solid", "SOLID EDGE"
-        prose = f"Solid validated edge (Val IC {val_ic:+.3f})."
-    if wf_pos is not None:
-        prose += f" Walk-forward: {wf_pos:.0%} of windows positive."
-    return {"tier": tier, "chip": chip, "val_ic": float(val_ic),
-            "wf_pos": wf_pos, "prose": prose}
-
-# Minimum number of DISTINCT analogs (post-Theiler-exclusion) before the
-# precedent's direction is treated as probative. Below this, "% positive" is
-# a handful of coin flips — the hero must not claim agreement/divergence on it.
-_PRECEDENT_MIN_N = 5
-
-_NEUTRAL_LABELS = {"HOLD", "NEUTRAL", "N/A", ""}
+        state, w = "info", "context"
+    return {"tag": "PRECEDENT", "state": state, "word": w, "votes": True,
+            "text": text + f" — significant; analogs lean to a {word}."}
 
 
-def build_hero_verdict(
-    *,
-    calib_conviction: float | None,
-    calib_signal: str | None,
-    has_profile: bool,
-    consensus: dict | None,
-    aarambh_signal: dict,
-    agreement: float,
-    val_ic: float | None,
-    wf_pos: float | None,
-    precedent: dict | None,
-    n_divergences: int,
-    horizon_days: int,
-    forward_mode: bool,
-    agreement_strong: float = 0.7,
-    agreement_moderate: float = 0.5,
-) -> dict:
-    """Assemble the hero card's verdict — ALL interpretation logic, pure data in/out.
+def build_hero_verdict(conclusion, aarambh_signal=None, precedent_hero=None, run_config=None) -> dict:
+    """Pure hero verdict from the C-V2 ``conclusion`` dict (+ engine signal, precedent hero, run config).
 
-    Separated from rendering so the decision rules (label normalisation, trust
-    tiering, the precedent minimum-n gate, agreement tiers, and the
-    forward-vs-levels edge framing) are unit-testable without Streamlit.
-    Returns a dict the renderer consumes verbatim:
+    Rules: the headline is the conclusion's latest C (+ = bullish) with its fixed tier/direction; the
+    trust chip is ``conclusion["trust"]`` verbatim; a COLOURED directional call is made only when the
+    trust tier is DIRECTIONAL_EDGE or TRADEABLE_EDGE (INVERTED → no call, ever); levels mode carries
+    "valuation context — falsified as a forecaster"; the Nirnay row is ``conclusion["nirnay"]["text"]``
+    verbatim; precedent votes only when its binomial p < EDGE_ALPHA. Never raises on missing keys or
+    NaN; every missing number renders "—"."""
+    con, sig, ph, rc = _d(conclusion), _d(aarambh_signal), _d(precedent_hero), _d(run_config)
+    lat, trust, nir = _d(con.get("latest")), _d(con.get("trust")), _d(con.get("nirnay"))
+    fm = con.get("forward_mode")
+    if not isinstance(fm, bool):
+        fm = rc.get("forward_mode")
+    forward = bool(fm) if isinstance(fm, bool) else bool(AARAMBH_FORWARD_SIGNAL)
+    h_raw = num(con.get("horizon"))
+    h = int(h_raw) if h_raw is not None and h_raw >= 1 else int(AARAMBH_FWD_HORIZON)
+    target = _str(rc.get("target"))
 
-    ``signal`` (display label), ``signal_class`` (css), ``score`` ([-1,+1]),
-    ``source``, ``direction`` (bullish/bearish/neutral), ``headline`` (one
-    sentence), ``trust`` ({tier, chip, val_ic, wf_pos}), ``consensus_score``
-    (float|None — shown so the hero's number and the Convergence tab's
-    consensus card reconcile explicitly instead of looking contradictory),
-    ``evidence`` (ordered rows of {tag, state, text};
-    state ∈ confirm|conflict|neutral|info).
-    """
-    # ── 1. Headline object: calibrated model → consensus → Aarambh-only ────
-    if calib_conviction is not None and calib_signal is not None:
-        score = float(calib_conviction) / 100.0          # DDM ±100 → [-1, +1]
-        raw_label = str(calib_signal)
-        source = "Calibrated model" if has_profile else "Convergence model (uncalibrated)"
-        headline_is_calibrated = True
-    elif consensus:
-        score = float(consensus.get("value", 0.0))
-        raw_label = str(consensus.get("signal", "HOLD"))
-        source = "System consensus (uncalibrated)"
-        headline_is_calibrated = False
+    C, Ca, zA, zN, kappa = (num(lat.get(k)) for k in ("C", "C_aarambh", "zA", "zN", "kappa"))
+    tier = _str(lat.get("tier")).upper()
+    tier = tier if tier in _C_TIERS else "NO LEAN"
+    direction = _str(lat.get("direction")).upper()
+    direction = direction if direction in _DIRECTIONS else "NEUTRAL"
+    if C is None:
+        tier, direction = "NO LEAN", "NEUTRAL"
+    t_tier = _str(trust.get("tier")).upper()
+    t_tier = t_tier if t_tier in TRUST_TIERS else "INSUFFICIENT_DATA"
+    t_text = _str(trust.get("text")) or _TRUST_DEFAULT_TEXT[t_tier]
+
+    has_dir = direction in ("BULLISH", "BEARISH") and tier != "NO LEAN"
+    call = has_dir and t_tier in CALL_TIERS
+    call_dir = (1 if direction == "BULLISH" else -1) if call else 0
+    sig_class = ("buy" if call_dir > 0 else "sell") if call else "hold"
+    dword = direction.lower()
+    c_txt = fmt(C, "+.1f")
+
+    if call:
+        label = f"{direction} · {tier}"
+        headline = (f"Conclusion C {c_txt} ({tier.lower()}) points {dword} over the next {h} trading days — "
+                    f"{t_tier.replace('_', ' ').lower()} on this data.")
+    elif t_tier == "INVERTED":
+        label = "INVERTED · context only"
+        headline = ("The directional head has pointed the wrong way on this data — no directional call "
+                    f"is made (C {c_txt} is shown as context).")
+    elif has_dir and t_tier == "NO_PROVEN_EDGE":
+        label = f"LEAN {direction} ({tier}) · unvalidated"
+        headline = f"The head leans {dword} (C {c_txt}), but no directional edge is proven on this data — no call."
+    elif has_dir:
+        label = f"LEAN {direction} ({tier}) · ungraded"
+        headline = (f"The head leans {dword} (C {c_txt}), but there is too little out-of-sample history "
+                    "to grade an edge — no call.")
+    elif C is None:
+        label = "NO CONCLUSION"
+        headline = "No conclusion value for the latest date — no lean, no call."
     else:
-        score = float(aarambh_signal.get("conviction_score", 0)) / 100.0
-        raw_label = str(aarambh_signal.get("signal", "HOLD"))
-        source = "Aarambh only (no basket convergence)"
-        headline_is_calibrated = False
+        label = "NO LEAN"
+        headline = f"C {c_txt} sits inside the ±{CONV2_TIER_WEAK:g} no-lean band — no directional lean."
+    mode_label = (f"FORWARD · {h}d forecast head" if forward else f"LEVELS · {LEVELS_TAG}")
+    if not forward:
+        headline += f" Levels mode: {LEVELS_TAG}."
 
-    # ── 2. Label normalisation (the DDM classifier says NEUTRAL, the
-    # normalized-consensus classifier says HOLD — one display vocabulary) ───
-    label_up = raw_label.upper()
-    if label_up in _NEUTRAL_LABELS:
-        signal, direction = "HOLD", "neutral"
-    elif "BUY" in label_up:
-        signal, direction = raw_label, "bullish"
-    elif "SELL" in label_up:
-        signal, direction = raw_label, "bearish"
+    # ── evidence rows ──
+    conv = num(sig.get("conviction_score"))
+    model_txt = (f"Aarambh {'forecast' if forward else 'valuation head'} zA {fmt(zA, '+.2f')} → "
+                 f"C_aarambh {fmt(Ca, '+.1f')} · κ {fmt(kappa, '.2f')} → C {c_txt} ({SIGN_Z}); "
+                 f"engine conviction {fmt(conv, '+.1f')} ({SIGN_ENGINE}).")
+    if not forward:
+        model_txt += f" {LEVELS_TAG[0].upper() + LEVELS_TAG[1:]}."
+    rows = [{"tag": "MODEL", "state": "info", "word": "head", "votes": True, "text": model_txt}]
+
+    n_state = _str(nir.get("state")).upper() or "NO_DATA"
+    lift, oos = _d(con.get("lift")), _d(con.get("oos"))
+    passed = lift.get("passed") is True
+    if passed and n_state == "CONFIRM" and oos.get("adds_value") is True:
+        n_row_state, n_word = "confirm", "measured"
+    elif passed and n_state == "CONTRADICT" and con.get("kappa_enabled") is True and (kappa or 1.0) < 1.0:
+        n_row_state, n_word = "conflict", "shrinks"
     else:
-        signal, direction = "HOLD", "neutral"
-    signal_class = ("undervalued" if direction == "bullish"
-                    else "overvalued" if direction == "bearish" else "fair")
+        n_row_state, n_word = "info", "context"
+    rows.append({"tag": "NIRNAY", "state": n_row_state, "word": n_word, "votes": n_row_state != "info",
+                 "text": _str(nir.get("text")) or "Nirnay: — (no read-out in this run)."})
 
-    # ── 3. Trust tier ───────────────────────────────────────────────────────
-    trust = _trust_tier(val_ic, wf_pos)
+    rows.append(_precedent_row(ph, call_dir, target) if ph else
+                {"tag": "PRECEDENT", "state": "info", "word": "no data", "votes": False,
+                 "text": "No historical analogs for this run."})
 
-    # ── 4. Headline sentence — mode-aware ───────────────────────────────────
-    # Forward mode promises a timed forecast horizon (coherent with the
-    # engine's non-overlapping Val IC / walk-forward durability). Levels mode
-    # is a valuation/mean-reversion context read, not a timed call — it never
-    # claims a forward horizon.
-    if direction == "neutral":
-        headline = f"{source}: {score:+.2f} — no directional lean right now."
-    elif forward_mode:
-        headline = (f"{source} reads {direction} ({signal}, {score:+.2f}) over "
-                    f"the next ~{horizon_days} trading days.")
+    div, agr = _d(con.get("divergence_recent")), _d(con.get("agreement"))
+    if con.get("single_system") is True:
+        risk = {"tag": "RISK", "state": "info", "word": "n/a", "votes": False,
+                "text": "Single-system mode — no cross-system divergence monitoring."}
     else:
-        headline = (f"{source} reads {direction} ({signal}, {score:+.2f}) — a "
-                    f"valuation/mean-reversion context read, not a timed forecast.")
+        w = num(div.get("window_days"))
+        nc = num(div.get("CONTRADICTION"))
+        risk_txt = (f"Last {fmt(w, '.0f')} sessions: {fmt(nc, '.0f')} contradiction-event days, "
+                    f"{fmt(div.get('AARAMBH_LEADS'), '.0f')} Aarambh-leads, {fmt(div.get('NIRNAY_LEADS'), '.0f')} "
+                    f"Nirnay-leads · 60-session same-sign rate "
+                    f"{fmt(agr.get('same_sign_rate_60d'), '.0%')}.")
+        flagged = nc is not None and nc > 0
+        risk = {"tag": "RISK", "state": "conflict" if flagged else "info",
+                "word": "divergence" if flagged else "calm", "votes": False, "text": risk_txt}
+    rows.append(risk)
 
-    # ── 5. Evidence rows ────────────────────────────────────────────────────
-    evidence: list[dict] = []
-
-    # MODEL — validated edge behind the headline number.
-    model_state = ("confirm" if trust["tier"] in ("modest", "solid")
-                   else "conflict" if trust["tier"] == "no_edge" else "neutral")
-    evidence.append({"tag": "MODEL", "state": model_state, "text": trust["prose"]})
-
-    # Levels mode only: the engine's own realized-performance edge verdict is
-    # the authoritative read on whether the Aarambh signal is tradeable — an
-    # INVERTED signal must never render as a confident directional call
-    # (engines/aarambh.py::_compute_signal_edge).
-    if not forward_mode:
-        if bool(aarambh_signal.get("inverted", False)):
-            evidence.append({"tag": "RISK", "state": "conflict",
-                "text": ("Aarambh signal is INVERTED on history — BUY/SELL preceded "
-                         "the WRONG direction with significance (p<0.05). Treat the "
-                         "direction as context only; do not trade it as-is.")})
-            if direction != "neutral":
-                headline += " Caution: the underlying Aarambh signal is historically inverted."
-        elif not bool(aarambh_signal.get("tradeable", False)):
-            evidence.append({"tag": "MODEL", "state": "neutral",
-                "text": ("Aarambh level signal: no significant realized forward "
-                         "edge — valuation/breadth/regime context, not a timed call.")})
-
-    # PRECEDENT — non-parametric base rate, gated on a real sample.
-    if precedent and int(precedent.get("n") or 0) >= 1:
-        p_n = int(precedent["n"])
-        p_med = float(precedent["median"])
-        p_pos = float(precedent["positive_pct"])
-        p_h = int(precedent["horizon"])
-        p_dir = int(precedent.get("dir") or 0)
-        p_word = "bullish" if p_dir > 0 else "bearish" if p_dir < 0 else "flat"
-        hero_sign = 1 if direction == "bullish" else -1 if direction == "bearish" else 0
-        stub = (f"{p_n} distinct analogs at +{p_h}d: {p_med:+.1f}% median, "
-                f"{p_pos:.0f}% positive")
-        if p_n < _PRECEDENT_MIN_N:
-            evidence.append({"tag": "PRECEDENT", "state": "neutral",
-                             "text": f"Thin sample — only {stub}. Not probative; ignore the lean."})
-        elif abs(p_pos - 50) < 15:
-            evidence.append({"tag": "PRECEDENT", "state": "neutral",
-                             "text": f"Split — {stub}. No directional lean either way."})
-        elif hero_sign == 0:
-            evidence.append({"tag": "PRECEDENT", "state": "info",
-                             "text": f"Leans {p_word} — {stub}. The model itself reads no edge."})
-        elif p_dir == hero_sign:
-            evidence.append({"tag": "PRECEDENT", "state": "confirm",
-                             "text": f"Agrees — {stub}, confirming the {direction} read."})
-        else:
-            evidence.append({"tag": "PRECEDENT", "state": "conflict",
-                             "text": (f"Diverges ({p_word}) — {stub}. The analog base rate has "
-                                      f"historically been the stronger directional read; treat "
-                                      f"the {direction} signal with caution.")})
-
-    # INTERNALS — Aarambh vs Nirnay alignment + explicit consensus reconciliation.
-    consensus_score: float | None = None
-    a_norm = consensus.get("aarambh_norm") if consensus else None
-    n_norm = consensus.get("nirnay_norm") if consensus else None
-    if a_norm is not None and n_norm is not None:
-        consensus_score = float(consensus.get("value", 0.0))
-        aligned = (a_norm < 0) == (n_norm < 0)
-        agree_tier = ("strong" if agreement > agreement_strong
-                      else "moderate" if agreement > agreement_moderate else "weak")
-        state = "confirm" if (aligned and agreement > agreement_strong) \
-            else "conflict" if not aligned else "neutral"
-        recon = (f" Consensus reads {consensus_score:+.2f} (Convergence tab)."
-                 if headline_is_calibrated else "")
-        evidence.append({
-            "tag": "INTERNALS", "state": state,
-            "text": (f"Aarambh {a_norm:+.2f} / Nirnay {n_norm:+.2f} — "
-                     f"{agree_tier} agreement ({agreement:.0%}), "
-                     + ("engines aligned." if aligned else "engines split.") + recon),
-        })
-
-    # RISK — flagged divergence events (recent window; the caller passes a
-    # count already scoped to a trailing lookback, not the full run history).
-    if n_divergences:
-        evidence.append({"tag": "RISK", "state": "conflict",
-                         "text": (f"{n_divergences} divergence event"
-                                  f"{'s' if n_divergences != 1 else ''} flagged recently — "
-                                  f"see the Convergence tab before acting.")})
-
+    as_of = _date(con.get("as_of")) or _date(lat.get("date")) or _date(rc.get("as_of")) or "—"
+    synth = is_synthetic(rc)
     return {
-        "signal": signal, "signal_class": signal_class, "score": score,
-        "source": source, "direction": direction, "headline": headline,
-        "trust": trust, "consensus_score": consensus_score, "evidence": evidence,
+        "signal": label, "signal_class": sig_class, "call": bool(call), "direction": direction, "tier": tier,
+        "score": C, "score_text": f"C {c_txt}", "sign_note": f"{SIGN_C} · {TIERS_TEXT}",
+        "horizon": h, "forward_mode": forward, "mode_label": mode_label, "headline": headline,
+        "trust": {"tier": t_tier, "label": t_tier.replace("_", " "), "text": t_text,
+                  "class": TRUST_CHIP_CLASS[t_tier]},
+        "evidence": rows, "as_of": as_of, "synthetic": synth, "banner": SYNTH_BANNER if synth else None,
     }
 
 
+_CHIP_STYLE = {
+    "solid": ("#34D399", "rgba(52,211,153,0.18)"),
+    "modest": ("#34D399", "rgba(52,211,153,0.10)"),
+    "inverted": ("#FB7185", "rgba(251,113,133,0.12)"),
+    "muted": ("var(--ink-tertiary)", "rgba(148,163,184,0.12)"),
+}
+
+
 def render_hero_card(verdict: dict) -> None:
-    """Render the hero verdict as a structured signal card.
-
-    Layout (top → bottom): eyebrow label · source · signal + score ·
-    trust chip · headline · evidence rows. Every text field is escaped here
-    (plain text in, HTML out).
-    """
-    trust = verdict["trust"]
-    tier = trust["tier"]
-    chip_style = {
-        "uncalibrated": ("var(--ink-tertiary)", "rgba(148,163,184,0.12)"),
-        "no_edge":      ("#FB7185", "rgba(251,113,133,0.12)"),
-        "marginal":     ("#D4A853", "rgba(212,168,83,0.12)"),
-        "modest":       ("#34D399", "rgba(52,211,153,0.12)"),
-        "solid":        ("#34D399", "rgba(52,211,153,0.18)"),
-    }.get(tier, ("var(--ink-tertiary)", "rgba(148,163,184,0.12)"))
-    ic_text = (f"Val IC {trust['val_ic']:+.3f}" if trust.get("val_ic") is not None
-               else "Val IC —")
-    wf_text = (f" &bull; WF {trust['wf_pos']:.0%}+" if trust.get("wf_pos") is not None
-               else "")
-    chip = (
-        f'<span class="hero-chip" style="background:{chip_style[1]};color:{chip_style[0]};">'
-        f'{html_mod.escape(trust["chip"])} &bull; {ic_text}{wf_text}</span>'
-    )
-
+    """Render a ``build_hero_verdict`` dict. Every text field is escaped here; tolerant of missing keys."""
+    v = _d(verdict)
+    trust = _d(v.get("trust"))
+    fg, bg = _CHIP_STYLE.get(str(trust.get("class", "muted")), _CHIP_STYLE["muted"])
+    cls = str(v.get("signal_class", "hold"))
+    cls = cls if cls in ("buy", "sell", "hold") else "hold"
     rows_html = "".join(
-        f'<div class="hero-evidence-row {html_mod.escape(r["state"])}">'
-        f'<span class="hero-tag"><span class="dot"></span>{html_mod.escape(r["tag"])}</span>'
-        f'<span class="hero-text">{html_mod.escape(r["text"])}</span>'
-        f'</div>'
-        for r in verdict["evidence"]
-    )
-
+        f'<div class="hero-evidence-row {esc(_d(r).get("state", "info"))}">'
+        f'<span class="hero-tag"><span class="dot"></span>{esc(_d(r).get("tag", ""))}'
+        f' · {esc(_d(r).get("word", ""))}</span>'
+        f'<span class="hero-text">{esc(_d(r).get("text", ""))}</span></div>'
+        for r in (v.get("evidence") or []))
+    banner = (f'<div class="hero-source" style="color:#FB7185;font-weight:700;">{esc(v.get("banner"))}</div>'
+              if v.get("banner") else "")
     st.markdown(
-        f"""
-        <div class="signal-card {html_mod.escape(verdict["signal_class"])}">
-            <div class="label">NISHKARSH CONVERGENCE SIGNAL &#40;&#x0928;&#x093F;&#x0937;&#x094D;&#x0915;&#x0930;&#x094D;&#x0937;&#41;</div>
-            <div class="hero-source">{html_mod.escape(verdict["source"])}</div>
-            <div class="value">{html_mod.escape(verdict["signal"])}
-                <span class="hero-score">{verdict["score"]:+.2f}</span>
-            </div>
-            <div class="hero-chip-row">{chip}</div>
-            <div class="hero-headline">{html_mod.escape(verdict["headline"])}</div>
-            <div class="hero-evidence">{rows_html}</div>
-        </div>
-        """,
+        f'<div class="signal-card {cls}">'
+        f'<div class="label">NISHKARSH CONCLUSION &#40;&#x0928;&#x093F;&#x0937;&#x094D;&#x0915;&#x0930;&#x094D;&#x0937;&#41;'
+        f' · as of {esc(v.get("as_of", "—"))}</div>{banner}'
+        f'<div class="hero-source">{esc(v.get("mode_label", ""))} · {esc(v.get("sign_note", SIGN_C))}</div>'
+        f'<div class="value">{esc(v.get("signal", "—"))} <span class="hero-score">{esc(v.get("score_text", "C —"))}'
+        f'</span></div>'
+        f'<div class="hero-chip-row"><span class="hero-chip" style="background:{bg};color:{fg};">'
+        f'{esc(trust.get("label", "INSUFFICIENT DATA"))}</span></div>'
+        f'<div class="hero-source">{esc(trust.get("text", ""))}</div>'
+        f'<div class="hero-headline">{esc(v.get("headline", ""))}</div>'
+        f'<div class="hero-evidence">{rows_html}</div></div>',
         unsafe_allow_html=True,
     )
 
