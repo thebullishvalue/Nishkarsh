@@ -86,7 +86,7 @@ secret `[aarambh] google_sheets_url = "…"`.
 |---|---|
 | **Hero verdict** (above the tabs) | The conclusion `C` (+ = bullish) with its tier, the trust chip from `conclusion.trust` (with its numbers), and evidence rows: MODEL, NIRNAY (confirms / contradicts / context only / no data), PRECEDENT (descriptive base rate vs unconditional, votes only when significant), RISK (recent divergences). No coloured directional call unless the trust tier is DIRECTIONAL or TRADEABLE edge. |
 | **CONVERGENCE** | `C` vs the Aarambh-only conclusion, `zA` / `zN`, agreement state, κ, the Convergence-Lift result (with power / MDE), divergence events, and the descriptive agreement anatomy (not used in the conclusion). |
-| **AARAMBH** | Mode-aware: in predictive mode the forecast, its z-score and the engine's walk-forward metadata; in levels mode the valuation stack, labelled as context. |
+| **AARAMBH** | Mode-aware: in predictive mode the forecast and its causal z-score (no fair-value framing); in levels mode the valuation stack, labelled as context. |
 | **NIRNAY** | Constituent breadth over `n_live` names (coverage shown), the actual adaptive oversold/overbought cuts, regime and volatility distributions, per-stock drill-down. |
 | **PRECEDENT** | Historical analogs (causal Mahalanobis match with Theiler exclusion) and what followed, against the unconditional base rate with a binomial p. |
 | **DIAGNOSTICS** | The **Edge Ledger** panel for this run (edge, out-of-sample edge, lift, cost-aware backtest, signal-chain ICs), engine diagnostics, data-layer health and provenance. |
@@ -119,7 +119,11 @@ conviction on days it contradicts Aarambh. *Intelligence Mode* ON applies κ; OF
 stationary-block-bootstrap IC, yearly ICs, own-momentum baseline), `edge_C` (out of
 sample, on the displayed series), `backtest` (tranche and non-overlapping long/short,
 0/2/5/10 bps, net Sharpe, HAC t, turnover, break-even cost) and a single trust tier:
-`INVERTED · NO_PROVEN_EDGE · DIRECTIONAL_EDGE · TRADEABLE_EDGE`.
+`INVERTED · NO_PROVEN_EDGE · DIRECTIONAL_EDGE · TRADEABLE_EDGE · INSUFFICIENT_DATA`.
+The edge IC is the mean over all h start offsets (every labelled day is used), tested
+conservatively, and every edge read-out states its **minimum detectable IC** — with
+~230 ten-day windows only ICs of roughly 0.17 or more are reliably detectable, so
+"no proven edge" can mean "not enough data".
 
 **Divergences** (one state machine): `AARAMBH_LEADS` (|zA| ≥ 1.5, Nirnay calm),
 `NIRNAY_LEADS` (|zN| ≥ 1.5, Aarambh calm), `CONTRADICTION` (≥ 5 CONTRADICT days in the
@@ -157,6 +161,9 @@ from the report. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the Pyth
 - **Cross-timezone causality**: US / EU / FX / commodity closes for date D print after
   the NSE close of D, so they are lagged one NSE session (`data.macro_lag.lag_non_ist`);
   the sheet's US yields are lagged one row.
+- **Label timestamp guard**: the return label (^NSEI) must co-move with the sheet
+  target at lag 0; if a ±1-session lag fits better the run warns that the edge
+  read-outs may be invalid (a one-day mis-stamp can fabricate an edge).
 - **Macro universe**: 83 yfinance tickers (65 global bond ETFs / yield indices + 18
   commodity / FX). Supplementary: the pipeline runs without them.
 
@@ -212,14 +219,15 @@ count — the failure that voided 1.6.0).
 ## Testing
 
 ```bash
-pytest -m "not slow" -q     # 117 tests, ~1 min
-pytest -m slow -q           # Monte-Carlo size/power of the lift, edge and backtest tests
+pytest -m "not slow" -q     # 127 tests, ~1 min
+pytest -m slow -q           # Monte-Carlo size/power, end-to-end determinism, Streamlit AppTest
 ```
 
 CI (`.github/workflows/ci.yml`) runs the fast suite on every push and the slow suite
 nightly. The suite enforces the purge invariant, prefix invariance, determinism,
-kernel/oracle parity, null false-positive rates, the no-pickle cache, the JSON schema
-of the conclusion and the package layering.
+kernel/oracle parity, null false-positive rates, end-to-end null-world honesty, the
+hero's presentation rules (no call without evidence, escaping, no NaN text), the
+no-pickle cache, the JSON schema of the conclusion and the package layering.
 
 ---
 

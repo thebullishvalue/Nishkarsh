@@ -87,6 +87,26 @@ the persisted state all change, and the CLI and run-report contracts are new.
   (`OS_Cut`, `OB_Cut`); causal PCA admits a column only with real history; dead
   duplicate implementations removed.
 
+### Changed — presentation
+- The hero renders the conclusion's own trust tier and texts: no coloured
+  directional call without a DIRECTIONAL / TRADEABLE edge, never under INVERTED;
+  Nirnay shown as confirms / contradicts / context only / no data; the precedent
+  votes only when significant against its unconditional base rate; SYNTHETIC runs
+  bannered; missing values render as a dash (the v1 hero could show "SOLID EDGE"
+  for a NaN IC and a timed call under its own NO EDGE chip).
+- Mode-aware copy (`ui/copy.py`) with stated sign conventions; levels mode labelled
+  "valuation context — falsified as a forecaster".
+- Convergence tab rebuilt on the conclusion; Diagnostics' Intelligence Center
+  replaced by an **Edge Ledger** panel; every data/user string HTML-escaped.
+
+### Fixed — red-team review
+- Results depended on predictor tick order under one cache key → canonical order.
+- The fingerprint ignored result-changing `core.config` constants → all included.
+- A one-session mis-stamped return label could fabricate a TRADEABLE edge → label
+  alignment guard (warns unless lag 0 co-moves best), recorded in the run report.
+- Edge IC scored at one start offset → mean over all h offsets (conservative test);
+  minimum detectable IC disclosed.
+
 ### Fixed — data, orchestration, security
 - ISO dates were scrambled by `dayfirst=True` under pandas 3 → `parse_dates`.
 - The result cache returned an old sheet's results for any new sheet of the same
@@ -106,7 +126,7 @@ the persisted state all change, and the CLI and run-report contracts are new.
   whole system offline, loudly labelled.
 - `data/sources.py` (`FetchResult` provenance; Live / Snapshot / Synthetic sources),
   `data/synthetic.py`, `data/dates.py`, `data/macro_lag.py`.
-- `tests/` (117 fast + 3 slow seeded tests) and CI (`.github/workflows/ci.yml`).
+- `tests/` (127 fast + 5 slow seeded, offline tests) and CI (`.github/workflows/ci.yml`).
 - `core/config.validate_config()` — refuses incoherent configuration at import.
 
 ### Removed

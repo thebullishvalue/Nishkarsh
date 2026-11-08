@@ -84,6 +84,16 @@ correctness · **S2** logic / coherence / vision · **S3** hygiene.
 | A5-16 | S1 | Pickle disk cache: a planted snapshot executed code during macro backfill. | Parquet / JSON with atomic writes; legacy `.pkl` never read. |
 | F5 | S2 | The whole pipeline lived inside Streamlit `main()` — nothing ran or could be tested headlessly. | `pipeline/` package, CLI, JSON run report; `app.py` is a UI shell. |
 
+## Adversarial red team (T2, after the build)
+
+| Attack | Result |
+|---|---|
+| End-to-end prefix invariance (sheet truncated by 20 / 60 rows; κ < 1 path forced) | PASS — max \|Δ\| = 0 for zA, zN, κ, C, Forecast, ForecastZ, Nirnay, macro panel. |
+| Label leakage | PASS on the code; **unguarded assumption** that the label's timestamps are correct — a one-day mis-stamp scored TRADEABLE. → `label_alignment_check` guard. |
+| End-to-end honesty | PASS — 0/12 no-signal worlds reached DIRECTIONAL/TRADEABLE, 0/12 passed the lift, κ = 1 on every row. **Power is low**: a planted IC of 0.15 was detected in 1/6 worlds; the engine recovers ~0.03–0.10 of it among 12 noise predictors, and ~234 windows can only detect IC ≳ 0.17. → phase-averaged IC + disclosed minimum detectable IC. |
+| Guard weakening | PASS — every edge word in the report is backed by a field. |
+| Determinism & fingerprint | Partial FAIL → fixed: predictor order changed results under one key (canonical order now); fingerprint now includes every `core.config` constant. |
+
 ## Documentation claims (A6)
 
 README tab list (5 vs 6), the config table (1500/2000 vs 15/30), "84 macro tickers" (83),
