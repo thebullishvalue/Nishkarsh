@@ -1,549 +1,283 @@
 # Nishkarsh
 
 > **निष्कर्ष** *(Nishkarsha)* — *"Conclusion / Inference."*
-> Two systems. One conclusion.
+> Two systems. One conclusion — **and a measurement of whether the second system earns its vote.**
 
-**Nishkarsh** is a unified quantitative convergence engine for the Nifty 50.
-It runs two **orthogonal** analytical systems in parallel, treats their
-agreement — and their disagreement — as the signal, and **self-calibrates**
-its convergence weights and thresholds against forward returns on every run.
+**Nishkarsh** is a quantitative conclusion engine for the Nifty 50. A top-down system
+(**Aarambh**) forecasts the index; a bottom-up system (**Nirnay**) reads the 50
+constituents. The conclusion layer combines them only as far as the data prove the
+combination helps, and every run reports — with sample sizes, test statistics and
+p-values — what is and is not established.
 
 | | |
 |---|---|
-| **Version** | 1.6.0 — *Hero verdict rebuild · round-2 residual audit* |
-| **Stack** | Python 3.12+ · Streamlit · scikit-learn · statsmodels · Optuna · Plotly |
-| **Universe** | Nifty 50 (live, fetched from niftyindices.com) |
+| **Version** | 2.0.0 — *Council audit · measured conclusion · headless pipeline* |
+| **Stack** | Python 3.13 · Streamlit · scikit-learn · statsmodels · numba · Plotly |
+| **Universe** | Nifty 50 (live list from niftyindices.com; dated fallback list) |
 | **License** | See `LICENSE.md` |
 
-> **A note on rigor.** Nishkarsh is built to be *honest about its own edge*. Every
-> signal is evaluated causally (no look-ahead, deterministic), with persistence-aware
-> reporting (`R² vs RW`, not just OOS R²), **non-overlapping** significance tests,
-> and fold-stability gating on the self-calibration. Under that scrutiny it has **not**
-> found a robust, tradeable forecasting edge on the Nifty-50 PE target — and it
-> **says so**, in the UI and the run log (edge verdicts, `INVERTED` / `NO-EDGE`
-> flags). Read it as a rigorous **valuation / breadth / regime / divergence context**
-> instrument, not a return-signal generator. The full, evidence-based conclusions are
-> in [`FINDINGS.md`](docs/FINDINGS.md); the iteration history is in [`CHANGELOG.md`](CHANGELOG.md).
+> **A note on rigor.** Nishkarsh is built to be honest about its own edge: causal
+> everywhere (prefix-invariant, tested), deterministic, h-spaced significance with
+> HAC and block-bootstrap inference, null error rates verified by simulation, and
+> evidence attached to the exact number shown. It has **not yet demonstrated a
+> tradeable edge on real data** — the most promising lead (Aarambh's directional
+> forecast) is PROVISIONAL and must be re-measured on 2.0 (an earlier measurement was
+> contaminated by look-ahead). Read [`docs/EDGE_LEDGER.md`](docs/EDGE_LEDGER.md) first.
 
 ---
 
-## Table of Contents
-
-- [Why Two Systems](#why-two-systems)
-- [Quick Start](#quick-start)
-- [What You See](#what-you-see)
-- [The Convergence Score](#the-convergence-score)
-- [Intelligence Mode](#intelligence-mode)
-- [Resilient Data Layer](#resilient-data-layer)
-- [Divergence Types](#divergence-types)
-- [Architecture](#architecture)
-  - [Directory Structure](#directory-structure)
-  - [Layering Rule](#layering-rule)
-  - [Pipeline Flow](#pipeline-flow)
-- [Configuration](#configuration)
-- [Performance Profile](#performance-profile)
-- [Known Limitations](#known-limitations)
-- [Troubleshooting](#troubleshooting)
-- [Academic References](#academic-references)
+## Contents
+[Why two systems](#why-two-systems) · [Quick start](#quick-start) · [What you see](#what-you-see) ·
+[The conclusion](#the-conclusion) · [Headless pipeline & run report](#headless-pipeline--run-report) ·
+[Data layer](#data-layer) · [Architecture](#architecture) · [Configuration](#configuration) ·
+[Testing](#testing) · [Performance](#performance) · [Known limitations](#known-limitations) ·
+[Troubleshooting](#troubleshooting) · [References](#references)
 
 ---
 
-## Why Two Systems
-
-A single quantitative model is one bet. Two **orthogonal** models that agree
-are a stronger bet — and when they disagree, the disagreement is itself
-information.
+## Why two systems
 
 | | **AARAMBH** *(आरंभ — "Beginning")* | **NIRNAY** *(निर्णय — "Judgement")* |
 |---|---|---|
 | **Direction** | Top-down | Bottom-up |
-| **Question** | *Is the index fairly valued?* | *What are the 50 constituents doing?* |
-| **Method** | Walk-forward ensemble regression on the Nifty 50 PE ratio with rolling robust-quantile z-scores, DDM smoothing, and OU mean-reversion diagnostics | Per-stock MSF (Market Strength Factor) + MMR (Macro-Micro Regime) with a four-method regime ensemble |
-| **Math** | Ridge · Huber · OLS · ElasticNet · PCA-WLS · structural-break binding · DFA-Hurst · Kendall/Orcutt-Winokur bias-corrected AR(1) | Adaptive Kalman · 3-state HMM · GARCH-like · CUSUM · sigmoid-bounded composite |
+| **Question** | *Where is the index likely to go over the next 10 sessions?* | *What are the 50 constituents doing?* |
+| **Method** | Purged walk-forward ensemble (Ridge · Huber · ElasticNet · PCA-OLS, equal weight) forecasting forward 10-day Δlog(PE) from 20-day predictor momentum | Per-stock MSF + MMR oscillator with an online regime ensemble (adaptive Kalman · 3-state HMM · GARCH · CUSUM), aggregated to daily breadth over live, warm constituents |
+| **Output** | `Forecast`, its causal z-score `zA` | Daily breadth; `zN` = causal z of −mean oscillator |
 
-The **Convergence layer** cross-validates both systems across four dimensions
-(Direction · Breadth · Magnitude · Regime), adaptively reweights by per-dimension
-clarity, runs the result through a Drift-Diffusion filter, and emits a final
+A second model that agrees is a stronger bet *only if* agreement actually predicts
+better outcomes. Nishkarsh tests exactly that on every run (the **Convergence-Lift
+test**) instead of assuming it. Until the test passes, Nirnay is shown as context and
+the conclusion is Aarambh's.
 
-> **`nishkarsh_conviction ∈ [−100, +100]`**
->
-> with 95% confidence bands and a divergence classifier on top.
-
-**Maximum conviction emerges only when both systems converge.** Neither system
-alone can produce this insight.
+Aarambh can also run in its original **levels** mode (fair-value regression on the PE
+level, `AARAMBH_FORWARD_SIGNAL = False`). That mode is kept as *valuation context*: as
+a forecaster it was falsified (Edge Ledger L-01) and the UI says so.
 
 ---
 
-## Quick Start
-
-### Prerequisites
-
-- **Python 3.12** or higher
-- **pip** (bundled with Python)
-- Internet connection (for live data from niftyindices.com and yfinance)
-
-### 1. Install Dependencies
+## Quick start
 
 ```bash
-pip install -r requirements.txt
-```
-
-### 2. Configure Data Source
-
-Nishkarsh pulls its primary Aarambh data (Nifty 50 PE ratio, breadth metrics)
-from a Google Sheet. Set the URL via environment variable:
-
-```bash
-export AARAMBH_GOOGLE_SHEETS_URL="https://docs.google.com/spreadsheets/d/<SHEET_ID>/edit?gid=<GID>"
-```
-
-Or leave it unset — the app will prompt you for a URL in the sidebar at runtime.
-
-### 3. Run
-
-```bash
+pip install -r requirements.txt          # Python 3.13
 streamlit run app.py
 ```
 
-Open the URL Streamlit prints (default `http://localhost:8501`), select a
-data source in the sidebar, and click **Run Analysis**.
+In the sidebar choose a data source:
 
-A full pipeline run takes ~30–50 seconds on a cold cache, ~3–5 seconds when
-data is cached.
+- **Google Sheets** — set the sheet URL as a secret (`.streamlit/secrets.toml`, see
+  `.streamlit/secrets.toml.example`) or `AARAMBH_GOOGLE_SHEETS_URL`; a configured URL
+  is never sent to the browser. Without one you can paste a URL.
+- **Upload** — a CSV/Excel export of the sheet (ISO or day-first dates both work).
+- **Synthetic demo** — a deterministic offline world; every surface is labelled
+  SYNTHETIC. Useful to explore the app without data or network.
 
-### Streamlit Cloud Deployment
+Select the target (default `NIFTY50_PE`), the date column and the predictors, then
+**Run Analysis**. The sheet needs at least `MIN_TRAIN_SIZE + horizon + MIN_OOS_ROWS`
+= 1500 + 10 + 252 usable rows of daily history (after the 20-row momentum warm-up).
 
-1. Push to a GitHub repository.
-2. Connect at [share.streamlit.io](https://share.streamlit.io).
-3. **Settings → Secrets** and add:
-
-   ```toml
-   [aarambh]
-   google_sheets_url = "https://docs.google.com/spreadsheets/d/.../edit?gid=..."
-   ```
-
-4. Deploy. `app.py` resolves the secret via `st.secrets["aarambh"]["google_sheets_url"]`,
-   falling back to the `AARAMBH_GOOGLE_SHEETS_URL` environment variable.
+**Streamlit Cloud:** push the repo, connect it at share.streamlit.io, and add the
+secret `[aarambh] google_sheets_url = "…"`.
 
 ---
 
-## What You See
+## What you see
 
-| Surface | What It Shows |
+| Surface | What it shows |
 |---|---|
-| **Hero verdict card** (above the tabs) | Structured signal + score + trust chip (non-overlapping Val IC / walk-forward durability) + tagged evidence rows (MODEL / PRECEDENT / INTERNALS / RISK). Built by the pure, unit-tested `build_hero_verdict` function — mode-aware (forward vs. levels) so an Aarambh signal the engine has measured as INVERTED never renders as a confident directional call. The precedent (analog) second opinion is gated on ≥5 distinct post-Theiler-exclusion analogs before it's treated as probative. |
-| **CONVERGENCE** tab | Headline conviction, normalised Aarambh-vs-Nirnay overlay, agreement metrics, divergence event timeline |
-| **AARAMBH** tab | Base conviction with DDM bands, fair-value plot, model quality (R², MAE), breadth distribution, feature-impact evolution |
-| **NIRNAY** tab | Constituent oversold / overbought distribution, signal counts, HMM regime probabilities, per-stock table |
-| **DIAGNOSTICS** tab | OU half-life and θ-stability, DFA-Hurst, signal-crossover performance, feature importance, **Data Layer Health** (cache + circuit-breaker state), **Intelligence Center** (read-only profile diagnostics — Train/Val IC, learned weights, threshold cards, fANOVA factor sensitivity, saved profiles) |
-| **DATA** tab | Merged time-series table + CSV export |
-| **Sidebar — Model Passport** | Active profile state (Default / Calibrated / Calibrated · ⚠), Trained-on label, Train IC, Val IC, last-updated timestamp, Intelligence Mode toggle, Import / Export / Reset controls |
+| **Hero verdict** (above the tabs) | The conclusion `C` (+ = bullish) with its tier, the trust chip from `conclusion.trust` (with its numbers), and evidence rows: MODEL, NIRNAY (confirms / contradicts / context only / no data), PRECEDENT (descriptive base rate vs unconditional, votes only when significant), RISK (recent divergences). No coloured directional call unless the trust tier is DIRECTIONAL or TRADEABLE edge. |
+| **CONVERGENCE** | `C` vs the Aarambh-only conclusion, `zA` / `zN`, agreement state, κ, the Convergence-Lift result (with power / MDE), divergence events, and the descriptive agreement anatomy (not used in the conclusion). |
+| **AARAMBH** | Mode-aware: in predictive mode the forecast, its z-score and the engine's walk-forward metadata; in levels mode the valuation stack, labelled as context. |
+| **NIRNAY** | Constituent breadth over `n_live` names (coverage shown), the actual adaptive oversold/overbought cuts, regime and volatility distributions, per-stock drill-down. |
+| **PRECEDENT** | Historical analogs (causal Mahalanobis match with Theiler exclusion) and what followed, against the unconditional base rate with a binomial p. |
+| **DIAGNOSTICS** | The **Edge Ledger** panel for this run (edge, out-of-sample edge, lift, cost-aware backtest, signal-chain ICs), engine diagnostics, data-layer health and provenance. |
+| **DATA** | The merged time series, searchable, CSV export. |
 
 ---
 
-## The Convergence Score
-
-Direction (30%) measures sign agreement between the two systems. Breadth (25%)
-measures alignment between Aarambh's valuation extreme and Nirnay's oversold-%
-breadth. Magnitude (25%) checks that signal strengths are comparably scaled.
-Regime (20%) checks that Aarambh's OU regime classification is consistent with
-the HMM regime distribution from the constituents. Each dimension produces a
-clarity score; the base weights are shifted up to ±10% in favour of higher-clarity
-dimensions, then renormalised. The 4-D composite is mapped to `[−100, +100]`,
-classified into one of nine zones, and finally smoothed by a leaky drift-diffusion
-filter with mean-reverting variance to produce the headline `nishkarsh_conviction`.
-
----
-
-## Intelligence Mode
-
-Nishkarsh v1.4 ships with **self-calibrating convergence** as the default
-pipeline path. Every Run Analysis runs a single end-to-end flow that learns
-the optimal convergence weights and signal thresholds for the active universe,
-applies them in the same run, and persists them for the next one.
-
-### What gets calibrated
-
-| Parameter | Default | Calibrated range |
-|---|---|---|
-| `w_direction` | `0.30` | `[0.10, 0.50]` |
-| `w_breadth`   | `0.25` | `[0.10, 0.50]` |
-| `w_magnitude` | `0.25` | `[0.10, 0.50]` |
-| `w_regime`    | `0.20` | `[0.10, 0.50]` |
-| `buy_strong`     | `−0.50` | asymmetric long threshold |
-| `buy_moderate`   | `−0.30` | asymmetric long threshold |
-| `sell_moderate`  | `+0.30` | asymmetric short threshold |
-| `sell_strong`    | `+0.50` | asymmetric short threshold |
-
-Weights are renormalised to sum to 1; thresholds are constrained so
-`buy_strong < buy_moderate < 0 < sell_moderate < sell_strong`.
-
-### Calibration objective
-
-Maximise the **Spearman Information Ratio** of the composite convergence
-signal against forward returns at horizons `[3, 5, 10, 20]` trading days,
-with **L2 regularisation toward uniform weights** to discourage overfit.
-Validates on a **purged chronological 70/30 train/val split** (purge gap =
-max horizon) with a K-fold CV search objective. Every *reported or gated*
-IC (Train, Val, fold, walk-forward) is scored **non-overlapping**
-(stride = shortest hold horizon) — overlapping daily forward returns
-overstate an IC's precision by roughly √h.
-
-The optimiser is **Optuna TPE** (Tree-structured Parzen Estimator), with
-configurable trial count (default 50 — sufficient for IC convergence on
-~250-day windows).
-
-### One-flow execution
-
-A single Run Analysis click executes:
+## The conclusion
 
 ```
-1. First-pass CrossValidator  ── prior profile (or factory defaults)
-2. Initial UnifiedConvictionModel fit (populates convergence series)
-3. Optuna TPE calibration on fresh (convergence_df, aarambh_ts)
-4. apply_calibrated_weights() ── vectorized re-weight, no re-loop
-5. Conviction model re-fit on recomputed convergence
-6. Normalised convergence classified with asymmetric thresholds
-7. Profile persisted to ~/.cache/nishkarsh/intelligence/profiles.json
+zA_t   = causal z-score of Aarambh's forecast        (strictly prior mean/std, ≥ 126 obs, clip ±4)
+zN_t   = causal z-score of −Avg_Signal (Nirnay)       (NaN on days without warm Nirnay data)
+state  = NO_DATA | CONFIRM | CONTRADICT | NEUTRAL     (|zN| ≥ τ = 0.25 to confirm/contradict)
+C_t    = 100 · tanh(zA_t / 2) · m_t                   m_t = κ_t on CONTRADICT days, else 1
+tiers  = |C| ≥ 60 STRONG · ≥ 30 MODERATE · > 10 WEAK · else NO LEAN      (+ = bullish)
 ```
 
-The Passport sidebar updates on the post-analysis rerun to show the
-freshly-saved profile.
+**Convergence-Lift test.** On h-spaced (non-overlapping) dates where both systems have
+data: IC(Aarambh | CONFIRM) vs IC(Aarambh | CONTRADICT), compared with a one-sided
+Fisher-z test (≥ 30 windows per bucket, phase range reported). Its minimum detectable
+effect is shown, because with ~7 years of constituent history the test has low power —
+a "no measured lift" verdict is often "not enough data", and the app says which.
 
-### Toggle behaviour
+**κ (the only calibrated parameter).** Re-estimated walk-forward every 126 rows on
+purged history; κ < 1 only when the lift test passes, so Nirnay can only ever *reduce*
+conviction on days it contradicts Aarambh. *Intelligence Mode* ON applies κ; OFF sets
+κ ≡ 1 (pure Aarambh). Nothing is persisted between runs.
 
-The **Intelligence Mode toggle** (Passport sidebar, default ON) controls
-whether steps 3–6 run. When OFF, the pipeline uses the factory
-`0.30 / 0.25 / 0.25 / 0.20` weights and the symmetric `±0.30 / ±0.50`
-thresholds throughout — useful for A/B baseline comparisons.
+**Evidence and trust.** `edge` (full Aarambh history: Fisher, Newey-West HAC and
+stationary-block-bootstrap IC, yearly ICs, own-momentum baseline), `edge_C` (out of
+sample, on the displayed series), `backtest` (tranche and non-overlapping long/short,
+0/2/5/10 bps, net Sharpe, HAC t, turnover, break-even cost) and a single trust tier:
+`INVERTED · NO_PROVEN_EDGE · DIRECTIONAL_EDGE · TRADEABLE_EDGE`.
 
-### Per-universe profile keying
-
-Profiles are keyed by `(universe · selected_index)` and versioned
-(`PROFILE_VERSION = "v1-nishkarsh-convergence"`). If you switch universes
-between runs, the Passport surfaces a **Profile mismatch — calibrated
-weights still active** warning until you re-run.
-
-### Progress visibility
-
-The pipeline progress bar surfaces every Intelligence Mode sub-stage —
-`Setup → Calibrating (with live trial counter) → Profile Saved → Applying
-Calibrated Profile → Re-Fitting Conviction Model`. Phase completion shows
-either `calibrated profile applied` or `factory defaults` so you always
-know which path ran.
+**Divergences** (one state machine): `AARAMBH_LEADS` (|zA| ≥ 1.5, Nirnay calm),
+`NIRNAY_LEADS` (|zN| ≥ 1.5, Aarambh calm), `CONTRADICTION` (≥ 5 CONTRADICT days in the
+last 20 trading days). Descriptive only — no edge is claimed for them.
 
 ---
 
-## Resilient Data Layer
+## Headless pipeline & run report
 
-Every external call sits behind three production-grade primitives:
+```bash
+python -m pipeline synth --seed 7 --json run.json                      # offline synthetic world
+python -m pipeline run --csv sheet.csv --date-col DATE --json run.json # your sheet + live market data
+python -m pipeline run --csv sheet.csv --snapshot snap/                # replay saved market data
+```
 
-- **Circuit breaker** (`data/circuit_breaker.py`) — `CLOSED → OPEN → HALF_OPEN`
-  state machine per service, thread-safe. Two module-level breakers protect
-  `yfinance` and Google Sheets respectively.
-- **Retry with backoff** — exponential decorator (1s → 2s → 4s, capped at 60s,
-  max 3 retries).
-- **Two-tier cache** (`data/cache.py`) — memory + disk, TTL expiry, versioned
-  keys (`version="v1"` bump invalidates a namespace atomically), and a
-  `get_stale()` last-good-snapshot fallback used automatically when a fetch
-  fails *and* the circuit is open — the UI keeps working through API outages.
-
-Open the **Diagnostics → Data Layer Health** card for live per-namespace
-cache hit rate, disk entry count, last-fetch timestamp, and per-service
-circuit-breaker state.
-
-The macro universe is **66 yfinance bond ETF tickers** (US Treasury curve,
-TIPS, aggregate bonds, corporate IG / HY, mortgage-backed, municipals,
-developed-markets sovereign, India fixed income, emerging markets) plus
-18 commodity / FX tickers — replacing the broken Stooq endpoints that
-returned HTML errors in late 2025.
+Every run produces `nishkarsh.run_report/1`: provenance (version, git sha, packages),
+the full configuration and its fingerprint, input hashes and date spans, per-source
+data provenance (live / cache / stale / fallback / SYNTHETIC), phase timings, engine
+metadata and the complete conclusion. The console SYSTEM DIAGNOSTICS block is rendered
+from the report. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the Python API.
 
 ---
 
-## Divergence Types
+## Data layer
 
-When Aarambh and Nirnay *disagree*, the disagreement is a typed signal:
-
-| Type | Meaning | Trader Read |
-|---|---|---|
-| `AARAMBH_LEADS` | Valuation is at an extreme but the constituents have not turned | Early warning — index price is stretched, breadth has not confirmed |
-| `NIRNAY_LEADS` | Constituents are extreme but valuation is still neutral | Momentum-first move — breadth is confirming before the index does |
-| `CONTRADICTION` | Persistent disagreement (≥5 events in a 20-day window) | Uncertain regime — reduce position size |
+- **Sources** return a `FetchResult` with provenance; the UI and report surface stale
+  snapshots, fallback constituent lists and partial batches instead of hiding them.
+- **Cache**: memory + disk, TTL, versioned namespaces, parquet/JSON with atomic
+  writes (no pickle), last-good snapshot fallback that survives date rollover;
+  partial batches merge per symbol and never shrink a snapshot.
+- **Circuit breaker** per service: consecutive-failure counting, `HALF_OPEN` admits two
+  probes; retry with exponential backoff.
+- **Dates** are parsed once (`data.dates.parse_dates`: ISO vs day-first detection,
+  fails loudly on unparseable or out-of-order dates).
+- **Cross-timezone causality**: US / EU / FX / commodity closes for date D print after
+  the NSE close of D, so they are lagged one NSE session (`data.macro_lag.lag_non_ist`);
+  the sheet's US yields are lagged one row.
+- **Macro universe**: 83 yfinance tickers (65 global bond ETFs / yield indices + 18
+  commodity / FX). Supplementary: the pipeline runs without them.
 
 ---
 
 ## Architecture
 
-### Directory Structure
-
 ```
-app.py                         Streamlit entrypoint and pipeline orchestrator
-
-core/
-  config.py                    Constants, thresholds, palettes (single source of truth)
-  logger_config.py             Terminal logging with color and run IDs
-
-analytics/                     Pure functions. No state. No IO. Independently testable.
-  conformal.py                 Rolling robust-quantile z-scores + empirical interval
-                               bounds (fat-tail robust; NOT conformal prediction — no
-                               coverage guarantee is claimed)
-  ddm_filter.py                Drift-Diffusion leaky integrator with mean-reverting variance
-  hurst.py                     DFA Hurst exponent with ADF stationarity guard
-  ou_process.py                Ornstein-Uhlenbeck with a Kendall (1954) / Orcutt &
-                               Winokur (1969) bias-corrected AR(1)
-  regime.py                    Adaptive Kalman / HMM (order-constrained) / GARCH-like /
-                               CUSUM (causal window)
-  structural_breaks.py         Bai-Perron multiple breakpoints (with fallback)
-  utils.py                     sigmoid, zscore_clipped, ATR, soft bounds, zone classifier
-
-data/                          Sole IO boundary. Production-grade resilience.
-  fetcher.py                   Google Sheets + yfinance — circuit-protected, retry-wrapped
-  constituents.py              Nifty 50 list (live from niftyindices.com + fallback)
-  cache.py                     Two-tier (memory + disk) TTL cache with versioned keys
-                               and last-good-snapshot fallback
-  circuit_breaker.py           CLOSED → OPEN → HALF_OPEN per-service + retry-with-backoff
-
-engines/                       Stateful orchestrators. Import from analytics/.
-  aarambh.py                   FairValueEngine — top-down walk-forward ensemble regression
-  nirnay.py                    Per-constituent MSF + MMR + regime ensemble
-
-convergence/                   Consumes both engines. No IO. No Streamlit.
-  cross_validator.py           4-dimension convergence scoring (weights either
-                               from the calibrated profile or factory defaults)
-  conviction_model.py          UnifiedConvictionModel — DDM on convergence scores
-  divergence_detector.py       Cross-system divergence detection and classification
-  normalization.py             Shared z-score / align / classify math for the
-                               Convergence cards + Unified Signal plot (single source).
-                               Thresholds either calibrated (asymmetric) or default (±)
-  intelligence.py              Self-calibration layer — Optuna-TPE search for
-                               (weights, thresholds), Spearman-IR objective vs
-                               forward returns, chronological 70/30 train/val,
-                               disk persistence at
-                               ~/.cache/nishkarsh/intelligence/profiles.json,
-                               apply_calibrated_weights() for vectorized re-weight
-
-ui/                            Rendering only. No math.
-  theme.py                     Obsidian Quant Terminal CSS + Plotly defaults
-  components.py                Reusable widgets (metric cards, signal badges, headers)
-  tabs/                        One file per tab (aarambh, nirnay, convergence, diagnostics, data)
-
-docs/                          Research notes & specs (FINDINGS, PERFORMANCE, CUSTOM_PREDICTORS)
-CHANGELOG.md                   Version history (Keep-a-Changelog 1.1.0)
-LICENSE.md                     Proprietary license — @thebullishvalue
-requirements.txt               Dependency specifications
+analytics/  →  engines/  →  convergence/  →  pipeline/  →  app.py + ui/
+data/  — the only IO boundary            core/  — config (validated at import) + logging
 ```
 
-### Layering Rule
-
 ```
-analytics/  →  engines/  →  convergence/  →  ui/
-```
-
-Never upward, never sideways. `data/` is the only IO boundary. `ui/` reads from
-`st.session_state` and never imports from `engines/` directly.
-
-### Pipeline Flow
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  app.py — Streamlit Entry Point                                 │
-│  ┌───────────────────────────────────────────────────────────┐  │
-│  │  1. DATA ACQUISITION                                      │  │
-│  │     fetcher.py → Google Sheets + yfinance (84 macro       │  │
-│  │       tickers, Sanket's Global Macro universe)            │  │
-│  │     circuit_breaker.py → per-service fault tolerance      │  │
-│  │     cache.py → two-tier TTL cache + stale-fallback        │  │
-│  │     constituents.py → Nifty 50 symbols                    │  │
-│  └───────────────────────────────────────────────────────────┘  │
-│  ┌───────────────────────────────────────────────────────────┐  │
-│  │  2. AARAMBH — FairValueEngine                             │  │
-│  │     analytics/ → conformal, ddm, ou_process, hurst,       │  │
-│  │                  structural_breaks, utils                 │  │
-│  │     Walk-forward ensemble regression (Ridge/Huber/OLS/    │  │
-│  │     ElasticNet/PCA-WLS) with robust quantile z-bounds     │  │
-│  └───────────────────────────────────────────────────────────┘  │
-│  ┌───────────────────────────────────────────────────────────┐  │
-│  │  3. NIRNAY — Constituent Regime Intelligence              │  │
-│  │     analytics/ → regime (Kalman/HMM/GARCH/CUSUM),         │  │
-│  │                  signals (MSF/MMR), hurst                 │  │
-│  │     Per-constituent MSF + MMR analysis aggregated to      │  │
-│  │     daily breadth statistics                              │  │
-│  └───────────────────────────────────────────────────────────┘  │
-│  ┌───────────────────────────────────────────────────────────┐  │
-│  │  4. CONVERGENCE — Cross-System Validation                 │  │
-│  │     ├─ 4a. First-pass CrossValidator (prior profile)      │  │
-│  │     ├─ 4b. Initial UnifiedConvictionModel fit             │  │
-│  │     ├─ 4c. intelligence.py → Optuna-TPE calibration       │  │
-│  │     │       (Spearman-IR · 70/30 chrono · L2 reg)         │  │
-│  │     ├─ 4d. apply_calibrated_weights() vectorized re-weight│  │
-│  │     ├─ 4e. Conviction model re-fit on recomputed scores   │  │
-│  │     ├─ 4f. normalization → asymmetric threshold classify  │  │
-│  │     └─ 4g. divergence_detector → Disagreement events      │  │
-│  │     Profile persisted to disk; Passport sidebar refreshes │  │
-│  └───────────────────────────────────────────────────────────┘  │
-│  ┌───────────────────────────────────────────────────────────┐  │
-│  │  5. UI RENDERING                                          │  │
-│  │     ui/tabs/ → Five tab renderers                         │  │
-│  │     ui/components.py → Metric cards, signal badges        │  │
-│  │     ui/theme.py → Obsidian Quant Terminal design system   │  │
-│  └───────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
+app.py              Streamlit shell: sidebar → PipelineConfig → run_pipeline → session state → tabs
+pipeline/           config (fingerprint) · inputs · macro · run · report · CLI (__main__)
+analytics/          causal_stats · backtest · conformal · ddm_filter · ou_process · hurst ·
+                    structural_breaks (heuristic) · regime · factors · custom_features · analogs · utils
+engines/            aarambh (purged walk-forward forecast) · nirnay (constituent breadth)
+convergence/        conclusion (the conclusion layer) · cross_validator (agreement anatomy) · labels
+data/               fetcher · cache · circuit_breaker · constituents · dates · macro_lag ·
+                    sources · synthetic
+ui/                 theme · components (hero) · copy (mode-aware text) · tabs/
+tests/              unit, statistical-regression and layering tests (pytest)
+docs/               EDGE_LEDGER · ARCHITECTURE · AUDIT · FINDINGS · PERFORMANCE · CUSTOM_PREDICTORS
 ```
 
 ---
 
 ## Configuration
 
-All tunable constants live in `core/config.py`. The most consequential ones:
+All constants live in `core/config.py`; `validate_config()` runs at import and refuses
+an incoherent configuration (for example a training window too small for the feature
+count — the failure that voided 1.6.0).
 
-| Constant | Default | Affects |
+| Constant | Default | Meaning |
 |---|---|---|
-| `LOOKBACK_WINDOWS` | `(5, 10, 20, 50, 100)` | Quantile z-score multi-horizon |
-| `MIN_TRAIN_SIZE` / `MAX_TRAIN_SIZE` | `1500 / 2000` | Aarambh walk-forward window (refit cadence is derived: `clip(n/200, 2, 5)`) |
-| `DDM_LEAK_RATE` | `0.08` | DDM smoothing (both passes) |
-| `OU_PROJECTION_DAYS` | `90` | Forward path length |
-| `CONVICTION_STRONG / MODERATE / WEAK` | `60 / 40 / 20` | Signal classification |
-| `DIV_PERSISTENCE_THRESHOLD` | `5` | Divergence event flagging |
-| `CONV_WEIGHT_DIRECTION / BREADTH / MAGNITUDE / REGIME` | `0.30 / 0.25 / 0.25 / 0.20` | Convergence base weights (overridden when Intelligence Mode is ON) |
-| **Intelligence Mode toggle** | `ON` | Sidebar Passport — when OFF, factory weights and symmetric thresholds are used |
-| `intel_n_trials` | `50` | Optuna TPE trial count per calibration |
-| `PROFILE_VERSION` | `"v1-nishkarsh-convergence"` | Schema version for persisted profiles |
+| `AARAMBH_FORWARD_SIGNAL` | `True` | Predictive mode (False = levels / valuation context) |
+| `AARAMBH_FWD_HORIZON` / `AARAMBH_FWD_MOM_K` | `10` / `20` | Forecast horizon / predictor momentum window |
+| `MIN_TRAIN_SIZE` / `MAX_TRAIN_SIZE` | `1500` / `2000` | Walk-forward window, in label-complete rows |
+| `AARAMBH_WF_REFIT` | `5` | Rows between refits (fixed) |
+| `MIN_DATA_POINTS` / `MIN_OOS_ROWS` | `1500` / `252` | Predictor history guard / minimum out-of-sample forecasts |
+| `CALIBRATION_RETURN_LABEL` | `"nsei"` | Return label: ^NSEI → target → constituent basket (with warnings) |
+| `CONV2_TAU` · `CONV2_LIFT_ALPHA` · `CONV2_MIN_BUCKET` | `0.25` · `0.05` · `30` | Agreement threshold · lift significance · windows per bucket |
+| `CONV2_REFIT_EVERY` / `CONV2_MIN_HISTORY` | `126` / `500` | κ walk-forward cadence / first refit |
+| `CONV2_TIER_STRONG/MODERATE/WEAK` | `60/30/10` | Conclusion tiers on C |
+| `EDGE_ALPHA` · `EDGE_TRADEABLE_T` | `0.05` · `2.0` | Edge significance · net-of-cost HAC t for TRADEABLE |
+| `BACKTEST_COST_BPS` / `BACKTEST_REFERENCE_BPS` | `(0,2,5,10)` / `5` | Cost grid / grading cost |
+| `HISTORY_YEARS` | `7` | yfinance history, anchored to 1 January |
+| `NIRNAY_HMM_STD_FLOOR` · `NIRNAY_WARMUP_BARS` | `0.10` · `50` | Regime-model stability · per-stock warm-up |
 
 ---
 
-## Performance Profile
+## Testing
 
-| Phase | Cold Cache | Warm Cache |
-|---|---|---|
-| Data acquisition | 5–10 s | ~0 s |
-| Aarambh walk-forward | 10–20 s | 10–20 s |
-| Nirnay (50 stocks, sequential) | 5–10 s | 5–10 s |
-| Convergence (first pass) + DDM | ~1 s | ~1 s |
-| Intelligence calibration (Optuna 50 trials) | 5–15 s | 5–15 s |
-| Apply + re-fit | <1 s | <1 s |
-| Render | <1 s | <1 s |
-| **Total (Intelligence ON)** | **35–60 s** | **20–40 s** |
-| **Total (Intelligence OFF)** | **30–50 s** | **15–30 s** |
+```bash
+pytest -m "not slow" -q     # 117 tests, ~1 min
+pytest -m slow -q           # Monte-Carlo size/power of the lift, edge and backtest tests
+```
 
-Engine outputs are **not** currently cached; every Streamlit rerun re-runs
-the math. Calibration profiles ARE cached to disk and re-used as the
-prior on the next run (warm path).
+CI (`.github/workflows/ci.yml`) runs the fast suite on every push and the slow suite
+nightly. The suite enforces the purge invariant, prefix invariance, determinism,
+kernel/oracle parity, null false-positive rates, the no-pickle cache, the JSON schema
+of the conclusion and the package layering.
 
 ---
 
-## Known Limitations
+## Performance
 
-Nishkarsh is honest about what it does not yet do:
+Measured on this release's synthetic world (~4000 sheet rows, 12 constituents,
+single thread): full pipeline ≈ 21 s, of which the Aarambh walk-forward (hundreds of
+purged-CV ensemble refits) ≈ 15 s, Nirnay ≈ 50 ms per stock, conclusion < 1 s. A real
+sheet (~4900 rows, 50 constituents) adds roughly 3–5 s of Nirnay and the cold
+yfinance download. The run report records phase timings for every run. History and
+non-optimisations: [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
 
-- **No demonstrated tradeable edge on PE.** This is the headline empirical
-  finding, not a caveat to bury: under causal, non-overlapping, fold-gated
-  evaluation, neither the Aarambh PE model nor the convergence signal shows a
-  robust forecasting edge (the Aarambh signal is historically *inverted*; the
-  convergence score is an *agreement* metric, not a directional one). The system
-  surfaces this honestly rather than hiding it. Full detail in
-  [`FINDINGS.md`](docs/FINDINGS.md). Treat the output as context, not alpha.
-- **Limited regression tests.** `tests/verify_audit.py` re-checks every
-  statistical finding from the 2026-07 audit (simulation-based, seeded);
-  broader unit coverage of `analytics/` is still open.
-- **No engine output caching.** Streamlit reruns recompute the full pipeline.
-- **Survivorship bias.** Nirnay runs against *today's* Nifty 50 over their
-  full history. Stocks dropped from the index do not appear.
-- **DDM-on-DDM lag.** Stacking the Aarambh DDM and the convergence DDM
-  compounds smoothing — true half-life is closer to ~110–140 days than the
-  nominal 80.
-- **HMM hysteresis.** The 0.98 self-transition is sticky enough to lag
-  real regime breaks.
-- **GARCH parameters are fixed**, not MLE-fit per series. Treat the GARCH
-  output as an EWMA-volatility proxy, not a true GARCH estimate.
-- **Bai-Perron fallback.** `statsmodels` ≥ 0.15 exposes `BaiPerronTest` natively.
-  Until then, a rolling-mean change-point heuristic is used as a fallback.
+---
+
+## Known limitations
+
+- **No demonstrated tradeable edge on real data yet.** The council built and verified
+  2.0 on synthetic data (no data access); the first real run answers the open Ledger
+  rows. Treat the output as a research instrument until a row reads PROVEN.
+- **Low power for the Convergence-Lift test** with ~7 years of constituent history;
+  the minimum detectable effect is shown on every run.
+- **Survivorship bias.** Nirnay uses today's index members over the whole window.
+- **Sheet provenance.** The sheet's US yields are assumed to be same-day US closes and
+  are lagged one row (`NON_IST_SHEET_COLUMNS`); set it to `()` if your sheet already
+  lags them.
+- **GARCH parameters are fixed**, not fitted per series (variance-targeted proxy).
+- **Change points** are a rolling-mean heuristic, shown as a diagnostic only.
 
 ---
 
 ## Troubleshooting
 
-### Google Sheets Connection
-
-**Error:** `Failed to load data from Google Sheets`
-
-- Verify the sheet URL is accessible (open it in your browser).
-- If the sheet is private, ensure your Google account is signed in.
-- Set `AARAMBH_GOOGLE_SHEETS_URL` as an environment variable or in Streamlit secrets.
-
-### yfinance Data Gaps
-
-**Warning:** `No macro data available`
-
-- The macro batch covers 84 tickers (66 Global Macro bond ETFs + 18 commodity/FX).
-  Individual ticker failures are tolerated; only a full-batch failure surfaces this warning.
-- The data layer falls back to the **last-good snapshot** (`cache.get_stale`) when a
-  fetch fails and the circuit is open — the UI keeps working through API outages.
-- Macro data is supplementary; the core pipeline still runs without it.
-
-### Circuit Breaker Open
-
-**Warning:** `Circuit 'yfinance' is OPEN — retry in 60s`
-
-- After 5 consecutive failures, a service's circuit opens and blocks calls for
-  60 seconds before allowing a single test request (HALF-OPEN state).
-- Check **Diagnostics → Data Layer Health** for current circuit state and
-  failure counts.
-- A successful test call closes the circuit automatically; no manual reset needed.
-
-### Stale Cache
-
-**Notice:** `Serving last-good snapshot`
-
-- This is intentional. When a fetch fails *and* the circuit is open, the data
-  layer returns the previous successful snapshot (no TTL check) so the UI
-  remains functional. The notice is informational, not an error.
-
-### Slow Pipeline Execution
-
-**Issue:** Pipeline takes >60 seconds
-
-- Nirnay processes 50 constituents sequentially. This is CPU-bound.
-- On first run, yfinance downloads ~50 stock histories. Subsequent runs
-  are faster due to `st.cache_data` with a 1-hour TTL.
-- Consider reducing the date range if you need faster iteration.
-
-### Structural Break Detection Warning
-
-**Warning:** `Bai-Perron test failed, using fallback`
-
-- The `BaiPerronTest` class is only available in unreleased statsmodels 0.15+.
-- The fallback (rolling-mean change-point detection) provides heuristic results.
-- Upgrade to statsmodels ≥ 0.15 when released for full Bai-Perron support.
-
-### Streamlit Import Errors
-
-**Error:** `ModuleNotFoundError: No module named 'streamlit'`
-
-```bash
-pip install -r requirements.txt
-```
-
-Ensure you're using the correct Python environment. Check with:
-
-```bash
-python3 --version   # Should be 3.12+
-pip3 --version      # Should match your Python version
-```
+- **"Need N rows"** — the sheet is shorter than `MIN_TRAIN_SIZE + horizon + MIN_OOS_ROWS`.
+- **Date errors** — dates are parsed strictly; a column with >1% unparseable or
+  out-of-order dates is rejected with the reason.
+- **Serving last-good snapshot / fallback constituents** — informational: a fetch
+  failed and the last good data (or the dated fallback list, `NIFTY50_FALLBACK_AS_OF`)
+  is being used; the provenance is shown in the UI and the run report.
+- **Circuit open** — after 5 consecutive failures a service pauses for 60 s, then
+  admits test calls.
+- **Slow first run** — the Aarambh walk-forward is the floor (~15–20 s); data
+  downloads are cached afterwards.
 
 ---
 
-## Academic References
+## References
 
-Mathematical primitives draw on:
-
-- **Kendall, M.G. (1954).** *Note on bias in the estimation of autocorrelation.* Biometrika 41. — First-order AR(1) bias correction (additive), with **Orcutt, G.H. & Winokur, H.S. (1969)**, Econometrica 37.
-- **Theiler, J. (1986).** *Spurious dimension from correlation algorithms applied to limited time-series data.* Phys. Rev. A 34. — Exclusion window for analog/nearest-neighbor selection.
-- **Chen, Y., Wiesel, A., Eldar, Y.C. & Hero, A.O. (2010).** *Shrinkage algorithms for MMSE covariance estimation.* IEEE Trans. Signal Processing 58(10). — OAS covariance shrinkage (analog matcher).
-- **López de Prado, M. (2018).** *Advances in Financial Machine Learning.* Wiley. — Purged walk-forward validation for overlapping labels.
-- **Bai, J. & Perron, P. (2003).** *Computation and analysis of multiple structural change models.* J. Applied Econometrics. — Regime-break detection.
-- **Peng, C.K. *et al.* (1994).** *Mosaic organization of DNA nucleotides.* Phys. Rev. E. — Detrended Fluctuation Analysis (DFA) for Hurst exponent.
-- **Ratcliff, R. & McKoon, G. (2008).** *The diffusion decision model.* Neural Computation. — Drift-Diffusion Model (DDM) for sequential evidence accumulation.
+- Kendall, M.G. (1954); Orcutt, G.H. & Winokur, H.S. (1969) — AR(1) bias correction (OU estimation).
+- López de Prado, M. (2018). *Advances in Financial Machine Learning* — purged walk-forward validation.
+- Newey, W.K. & West, K.D. (1987). *Econometrica* 55 — HAC standard errors.
+- Politis, D.N. & Romano, J.P. (1994). *JASA* 89 — the stationary bootstrap.
+- Fieller, E.C., Hartley, H.O. & Pearson, E.S. (1957). *Biometrika* 44 — variance of Fisher-z for Spearman's ρ.
+- Holm, S. (1979). *Scand. J. Statistics* 6 — step-down multiple-testing adjustment.
+- Chen, Y., Wiesel, A., Eldar, Y.C. & Hero, A.O. (2010). *IEEE TSP* 58 — OAS covariance shrinkage (analogs).
+- Theiler, J. (1986). *Phys. Rev. A* 34 — exclusion window for nearest-neighbour analogs.
+- Peng, C.K. *et al.* (1994). *Phys. Rev. E* — detrended fluctuation analysis.
+- Ratcliff, R. & McKoon, G. (2008). *Neural Computation* — drift-diffusion (levels-mode conviction filter).
 
 ---
 
-© 2026 Nishkarsh · [@thebullishvalue](https://twitter.com/thebullishvalue) · v1.6.0
+© 2026 Nishkarsh · [@thebullishvalue](https://twitter.com/thebullishvalue) · v2.0.0

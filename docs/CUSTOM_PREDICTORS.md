@@ -1,4 +1,11 @@
-# Custom Predictors — Formulation Catalog (spec, NOT yet implemented)
+# Custom Predictors — Formulation Catalog
+
+> **Status (2.0.0): implemented** in `analytics/custom_features.py` and enabled by
+> `CUSTOM_PREDICTORS_ENABLED`. Up to 44 features are built (fewer when an input series
+> is missing). In the shipped **predictive** Aarambh mode none of them reach Aarambh
+> (the combined-PCA gate is bypassed there); they feed Nirnay/MMR only, and the three
+> PE/PB/DY-embedding features are excluded from Aarambh in levels mode. Whether they
+> help is **UNTESTED** (Edge Ledger L-11).
 
 Engineered, **stationary**, **causal** features for Aarambh (PE fair value) and
 Nirnay/MMR (per-stock). Confirmed: `INIRYY` = India CPI inflation YoY.

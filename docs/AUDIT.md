@@ -87,7 +87,7 @@ correctness · **S2** logic / coherence / vision · **S3** hygiene.
 ## Documentation claims (A6)
 
 README tab list (5 vs 6), the config table (1500/2000 vs 15/30), "84 macro tickers" (83),
-"44 custom predictors" (41, none reaching Aarambh in predictive mode), "Bai-Perron",
+"44 custom predictors → Aarambh" (up to 44 are built when every input exists, but in predictive mode none reach Aarambh — they feed MMR only), "Bai-Perron",
 "95% confidence bands", the Intelligence "one-flow" steps and objective, the DDM
 half-life arithmetic, `PROFILE_VERSION` "checked", "tests/verify_audit.py", and 31
 "v1.4.0" module headers were all false or stale. Corrected in the 2.0.0 README,
