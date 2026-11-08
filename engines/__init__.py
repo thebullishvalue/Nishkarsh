@@ -1,1 +1,1 @@
-"""Nishkarsh v1.4.0 — ENGINES: Aarambh (valuation) and Nirnay (constituent regime) analysis systems."""
+"""ENGINES — Aarambh (top-down purged walk-forward forecast) and Nirnay (bottom-up constituent regime breadth)."""

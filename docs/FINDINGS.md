@@ -2,7 +2,30 @@
 
 _Consolidated record of what was empirically established about this system's
 predictive value, so it is not re-litigated. Engineering history is in
-`CHANGELOG.md` (v1.4.1 → v1.4.13)._
+`CHANGELOG.md`; the current, authoritative status of every claim is
+[`EDGE_LEDGER.md`](EDGE_LEDGER.md); the 2.0 audit is [`AUDIT.md`](AUDIT.md)._
+
+> **2.0.0 status note (council audit, 2026-11).** Read the sections below with
+> these corrections — the narrative is kept for the record, the Ledger is the
+> verdict:
+>
+> 1. **§6's +0.14 directional lead is CONTAMINATED → PROVISIONAL.** It was measured
+>    on an engine whose training rows' forward labels overlapped the forecast window
+>    (the purge arrived in 1.5.0), and the shipped 1.6.0 used 15/30 training windows
+>    under which the purge never applied at all (pure noise scored IC +0.50 there).
+>    It must be re-measured with 2.0's `conclusion.edge` (h-spaced Fisher / HAC /
+>    block-bootstrap IC on the full Aarambh history) before it is cited again.
+> 2. **§6's calibration-label table ("val IC +0.15, 100% durable") is an artifact of
+>    overlap geometry,** not generalisation: ~80% of calibration rows carried no
+>    Nirnay data, the informative rows fell into the validation slice, and the
+>    "folds" re-read validation rows. The 8-parameter calibration it evaluated was
+>    also shown to be unidentified and has been retired.
+> 3. **§3's "non-overlapping" directional test used stride 3 for horizons up to 20**;
+>    2.0 spaces every IC at its own horizon.
+> 4. **Open items:** (a) non-overlapping significance and (b) the cost/turnover
+>    backtest are now run-time instruments (`conclusion.edge`, `conclusion.backtest`)
+>    that answer on the first real-data run; (c) causal normalization was already
+>    implemented (expanding z) and is now a tested guarantee.
 
 > **Investigation status: REOPENED (2026-06-15).** Every *fair-value / levels*
 > edge hypothesis remains falsified (below). But a NEW configuration —

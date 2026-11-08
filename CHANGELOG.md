@@ -13,6 +13,108 @@ Sections used: **Added · Changed · Deprecated · Removed · Fixed · Security 
 
 ---
 
+## [2.0.0] — 2026-11-08 — *Council audit · measured conclusion · headless pipeline*
+
+A full-system audit by a multi-tier council (six specialist auditors → one decision
+register → builders on disjoint files → tests and an adversarial red team). Every
+S0/S1 finding was reproduced with a seeded offline script before it was fixed and
+re-verified after; the register is [`docs/AUDIT.md`](docs/AUDIT.md), the evidence
+status of every edge claim is [`docs/EDGE_LEDGER.md`](docs/EDGE_LEDGER.md), and the
+design is [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
+MAJOR because the meaning of the headline number, the calibration semantics and
+the persisted state all change, and the CLI and run-report contracts are new.
+
+### Erratum (1.5.0 / 1.6.0)
+- **1.6.0 shipped test-mode configuration.** `core/config.py` carried
+  `MIN_TRAIN_SIZE = 15`, `MAX_TRAIN_SIZE = 30` and `MIN_DATA_POINTS = 30` (every
+  earlier release, the README and the inline comment said 1500 / 2000 / 1500). At a
+  ≤ 30-row window the engine's "fewer than 50 rows → drop the purge" fallback fired
+  on every chunk, so the forward-label purge 1.5.0 introduced **never applied**: on
+  pure noise the shipped default reported forecast IC **+0.50** and R² vs RW
+  **+0.52**. Any 1.6.0 run's edge read-out is void.
+- `tests/verify_audit.py`, `tests/test_hero_verdict.py` and `docs/AUDIT_2026-07.md`,
+  described by 1.5.0 / 1.6.0, were never committed (no commit or vault archive holds
+  them). 2.0.0 ships a real test suite and `docs/AUDIT.md`.
+- 1.4.1 / 1.5.0 list `analytics/signals.py` and `data/schema.py` as removed; they
+  were still present (web upload cannot delete files). Removed now.
+- 1.5.0's "all package `__init__.py` files were null bytes" described a local
+  extraction artifact; the committed files were intact.
+
+### Changed — the conclusion (Convergence v2)
+- **Aarambh's forecast is the directional head; Nirnay is a measured conditioner.**
+  `C = 100·tanh(zA/2)·m` (+ = bullish), where `zA` is the causal z-score of the
+  purged walk-forward forecast and `m = κ ≤ 1` only on days Nirnay *contradicts*
+  Aarambh — and only once a walk-forward **Convergence-Lift test** shows Aarambh is
+  more accurate when the systems agree than when they contradict (h-spaced,
+  one-sided Fisher-z, with its minimum detectable effect disclosed). Until then the
+  run says "Nirnay: context only — no measured lift". Missing Nirnay data is
+  `NO_DATA` (never a neutral fill); fixed tiers; no re-filtering.
+- **Evidence travels with the number.** `conclusion.edge` (full Aarambh history:
+  Fisher, Newey-West HAC and seeded stationary-block-bootstrap IC, yearly ICs,
+  own-momentum baseline), `edge_C` (out of sample, on the displayed series),
+  `backtest` (tranche and non-overlapping, 0/2/5/10 bps, net Sharpe, HAC t,
+  turnover, break-even bps), `chain` (IC at each signal stage), and one trust tier
+  (`INVERTED · NO_PROVEN_EDGE · DIRECTIONAL_EDGE · TRADEABLE_EDGE`).
+- **Retired** (unidentified or misleading, per the audit): the 8-parameter Optuna
+  weight/threshold calibration and its acceptance gate (accepted 9–12% of pure-noise
+  runs), persisted/imported calibration profiles, the DDM-on-DDM conviction model
+  (≈ 20-day lag on a 10-day forecast), the v1 divergence detector (`CONTRADICTION`
+  was unreachable), and the normalized consensus. The four agreement dimensions
+  remain as a descriptive *agreement anatomy* (one Nirnay polarity, warm data only).
+  "Intelligence Mode" now means exactly: κ applied (ON) or κ ≡ 1 (OFF), re-estimated
+  every run — runs are idempotent and there is no hidden global state.
+
+### Fixed — Aarambh
+- Purged walk-forward: windows counted in label-complete rows; a starved chunk is
+  NaN and counted (`wf_meta`), never a dropped purge; fixed refit cadence; purged
+  inner CV (`TimeSeriesSplit(gap=h)`); equal-weight NaN-aware ensemble (the old
+  "validation" weighting was in-sample); change-point heuristic removed from the
+  training window. Verified: pure-noise forecast IC −0.03 (1500/2000) and −0.0003
+  even at a 30/60 window.
+- New `Forecast`, `Label`, `ForecastZ`, `Valid` columns; forward-mode conviction is
+  `−100·tanh(ForecastZ/2)`; the engine defers its forward-mode edge verdict to the
+  conclusion layer; the levels-mode test is drift-demeaned and Holm-adjusted.
+- Conformal z-scores correctly scaled (were 2.7–2.9× too small); DDM warm-up is NaN;
+  DFA Hurst computed on differences (its meaning was inverted); OU μ unbiased; model
+  statistics exclude unrealized labels; "Bai-Perron" no longer claimed.
+
+### Fixed — Nirnay
+- HMM emission floor 0.10 (states collapsed; a one-row start shift flipped 25% of
+  labels → 0%); CUSUM on standardized innovations; volatility regime on price
+  returns; pre-listing / warm-up rows excluded and breadth computed over `n_live`
+  (late-lister bias −6 pp → 0); MSE-based `MMR_Quality`; actual adaptive cuts exposed
+  (`OS_Cut`, `OB_Cut`); causal PCA admits a column only with real history; dead
+  duplicate implementations removed.
+
+### Fixed — data, orchestration, security
+- ISO dates were scrambled by `dayfirst=True` under pandas 3 → `parse_dates`.
+- The result cache returned an old sheet's results for any new sheet of the same
+  length → config fingerprint + content hash; the Intelligence toggle is in the key.
+- US/EU/FX/commodity closes joined onto the same NSE date (look-ahead) → lagged one
+  NSE session; the sheet's US yields lagged one row.
+- Pickle disk cache executed planted code → parquet/JSON with atomic writes.
+- Secret sheet URL was sent to every browser → never leaves the server.
+- Refresh Data was a no-op for threaded fetches; the stale fallback broke after
+  midnight; partial batches overwrote full snapshots; the circuit breaker counted
+  lifetime failures; HALF_OPEN refused the parallel probe — all fixed.
+
+### Added
+- `pipeline/` — headless `run_pipeline`, `PipelineConfig.fingerprint()`, JSON run
+  report (`nishkarsh.run_report/1`) with provenance, and `python -m pipeline
+  {run,synth}`; `app.py` is now a UI shell. A **Synthetic demo** data source runs the
+  whole system offline, loudly labelled.
+- `data/sources.py` (`FetchResult` provenance; Live / Snapshot / Synthetic sources),
+  `data/synthetic.py`, `data/dates.py`, `data/macro_lag.py`.
+- `tests/` (117 fast + 3 slow seeded tests) and CI (`.github/workflows/ci.yml`).
+- `core/config.validate_config()` — refuses incoherent configuration at import.
+
+### Removed
+- `convergence/{intelligence,conviction_model,divergence_detector,normalization}.py`,
+  `analytics/signals.py`, `data/schema.py`; `optuna` dependency.
+
+---
+
 ## [1.6.0] — 2026-07-04 — *Hero verdict rebuild · round-2 residual audit*
 
 Rebuilds the hero convergence card from a pure, unit-tested verdict function
