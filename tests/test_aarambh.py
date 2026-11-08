@@ -3,7 +3,6 @@
 Ports council/b1/{v_leak,v_causal,v_prims}.py at small walk-forward windows
 (min_train/max_train passed explicitly; config defaults are 1500/2000)."""
 import numpy as np
-import pandas as pd
 import pytest
 
 from analytics.causal_stats import causal_z

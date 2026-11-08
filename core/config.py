@@ -144,9 +144,6 @@ AARAMBH_FWD_MOM_K = 20     # trailing momentum window for the predictor features
 # Forward-return HOLD grid for the base-rate summary; the primary read is the
 # Aarambh forecast horizon (AARAMBH_FWD_HORIZON), momentum window AARAMBH_FWD_MOM_K.
 PRECEDENT_HOLD_HORIZONS = (3, 5, 10, 20)
-# An honorary +Nd reference tile shown with a caveat (the analog has no edge at this
-# horizon — reference only, NOT part of any calibration). None disables it.
-PRECEDENT_HONORARY_HORIZON = 1
 
 # Signal thresholds (conviction score → signal mapping)
 CONVICTION_STRONG = 60
@@ -274,8 +271,6 @@ CUSTOM_FEATURE_SHEET_COLUMNS = ("REPO", "INIRYY", "AD_RATIO", "REL_AD_RATIO", "R
 # Sheet bond-yield columns joined into Nirnay's macro panel.
 MACRO_SHEET_BOND_COLUMNS = ("IN10Y", "IN02Y", "IN30Y", "US10Y", "US30Y", "US02Y")
 
-# ─── Column Normalization ────────────────────────────────────────────────────
-
 # ─── Global Macro Bond ETF Universe ──────────────────────────────────────────
 # Adapted from Sanket — proxy for global yield dynamics via yfinance-available
 # bond ETFs. Replaces the (now-broken) Stooq direct yield endpoints.
@@ -394,48 +389,15 @@ NIFTY50_URL = "https://www.niftyindices.com/IndexConstituent/ind_nifty50list.csv
 
 # ─── Chart Theme ─────────────────────────────────────────────────────────────
 
-CHART_BG = "rgba(0,0,0,0)"
-CHART_GRID = "rgba(255,255,255,0.03)"
-CHART_ZEROLINE = "rgba(255,255,255,0.08)"
-CHART_FONT_COLOR = "#94A3B8"
-
 # Signal colors - Obsidian Quant
 COLOR_GREEN = "#34D399"  # EMERALD
 COLOR_RED = "#FB7185"    # ROSE
-COLOR_GOLD = "#D4A853"   # AMBER GOLD
 COLOR_CYAN = "#22D3EE"   # CYAN
 COLOR_AMBER = "#D4A853"  # AMBER
 COLOR_PURPLE = "#A78BFA"  # VIOLET (matches CSS --violet)
 COLOR_MUTED = "rgba(148,163,184,0.4)"  # SLATE
 
-# ─── UI Thresholds (centralized magic numbers) ──────────────────────────────
-
-# Conviction score thresholds for signal classification
-UI_CONVICTION_STRONG = 60
-UI_CONVICTION_MODERATE = 40
-
-# Breadth percentage thresholds
-UI_BREADTH_HIGH = 60  # % threshold for high breadth alert
-
-# Agreement ratio thresholds
-UI_AGREEMENT_STRONG = 0.7
-UI_AGREEMENT_MODERATE = 0.5
-
-# Nirnay avg signal thresholds
-UI_NIRNAY_BULLISH = -2
-UI_NIRNAY_BEARISH = 2
-
-# Model spread thresholds
-UI_MODEL_SPREAD_LOW = 0.5
-UI_MODEL_SPREAD_HIGH = 1.5
-
-# OOS R² thresholds
-UI_R2_STRONG = 0.7
-UI_R2_ACCEPTABLE = 0.4
-
-# Band width interpretation
-UI_BAND_NARROW = 30
-UI_BAND_WIDE = 60
+# ─── UI layout ───────────────────────────────────────────────────────────────
 
 # Chart height defaults
 UI_CHART_HEIGHT_SMALL = 280

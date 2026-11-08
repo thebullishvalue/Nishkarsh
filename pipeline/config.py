@@ -77,6 +77,10 @@ class PipelineConfig:
             raise ValueError("PipelineConfig: a date column is required (no 'None' date path)")
         if self.target in self.features:
             object.__setattr__(self, "features", tuple(f for f in self.features if f != self.target))
+        # Canonical predictor ORDER: results must not depend on the order a user ticked
+        # the boxes (ElasticNet's coordinate descent is order-sensitive at its tolerance —
+        # red-team T2 measured ΔC up to 10.9 for a reversed list under one cache key).
+        object.__setattr__(self, "features", tuple(sorted(dict.fromkeys(self.features))))
         if not self.features:
             raise ValueError("PipelineConfig: at least one predictor is required")
         if self.return_label not in ("nsei", "target", "basket"):
@@ -104,5 +108,8 @@ class PipelineConfig:
         d = self.to_dict()
         d["features"] = sorted(d["features"])
         d["_version"] = C.VERSION
+        # Every core.config constant participates: a tuned threshold (CONV2_*, EDGE_*,
+        # BACKTEST_*, AARAMBH_WF_REFIT, …) changes results, so it must change the key.
+        d["_core_config"] = {k: getattr(C, k) for k in dir(C) if k.isupper()}
         blob = json.dumps(d, sort_keys=True, separators=(",", ":"), default=str)
         return hashlib.sha256(blob.encode("utf-8")).hexdigest()

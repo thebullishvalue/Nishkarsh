@@ -21,7 +21,7 @@ FORBID = re.compile(r"calibrated|confirms|convergence adds value", re.I)
 TOP_KEYS = ["schema", "as_of", "horizon", "label_src", "forward_mode", "kappa_enabled", "single_system", "latest",
             "edge", "edge_C", "lift", "oos", "backtest", "chain", "trust", "nirnay", "agreement", "divergence_recent"]
 LATEST_KEYS = {"date", "C", "C_aarambh", "zA", "zN", "state", "kappa", "tier", "direction"}
-EDGE_KEYS = {"signal", "ic", "n", "t", "p", "hac_t", "boot_ci", "significant", "phase_min", "phase_max", "yearly",
+EDGE_KEYS = {"signal", "ic", "ic_phase0", "mde", "n", "t", "p", "hac_t", "boot_ci", "significant", "phase_min", "phase_max", "yearly",
              "baseline_momentum_ic", "available"}
 LIFT_KEYS = {"available", "ic_confirm", "ic_contradict", "n_confirm", "n_contradict", "lift", "z", "p_one_sided",
              "lift_phase_min", "lift_phase_max", "kappa", "passed", "mde"}

@@ -71,8 +71,8 @@ AARAMBH_LEADS, NIRNAY_LEADS, CONTRADICTION = "AARAMBH_LEADS", "NIRNAY_LEADS", "C
 DIVERGENCE_TYPES = (AARAMBH_LEADS, NIRNAY_LEADS, CONTRADICTION)
 TRUST_TIERS = ("INVERTED", "NO_PROVEN_EDGE", "DIRECTIONAL_EDGE", "TRADEABLE_EDGE", "INSUFFICIENT_DATA")
 FRAME_COLUMNS = ("zA", "zN", "state", "kappa", "lift_passed", "C", "C_aarambh", "tier")
-EDGE_KEYS = ("signal", "ic", "n", "t", "p", "hac_t", "boot_ci", "significant", "phase_min",
-             "phase_max", "yearly", "baseline_momentum_ic", "available")
+EDGE_KEYS = ("signal", "ic", "ic_phase0", "n", "t", "p", "mde", "hac_t", "boot_ci", "significant",
+             "phase_min", "phase_max", "yearly", "baseline_momentum_ic", "available")
 BACKTEST_KEYS = ("gross_sharpe", "net_sharpe", "t", "ann_return", "turnover_per_year", "breakeven_bps", "n")
 # Schema constant (the key is literally "same_sign_rate_60d"): window and its minimum coverage.
 AGREEMENT_WINDOW = 60
@@ -340,6 +340,10 @@ def divergence_events(frame: pd.DataFrame, tau: float = CONV2_TAU, extreme: floa
 # Edge evidence
 # ════════════════════════════════════════════════════════════════════════════
 
+from scipy.stats import norm as _sstats_norm
+_sstats_norm_ppf = _sstats_norm.ppf
+
+
 def _hspaced_ic(sig: pd.Series, fwd_ret: pd.Series, h: int) -> tuple[float, int]:
     df = pd.DataFrame({"s": sig, "r": fwd_ret}).dropna()
     d = df.iloc[::h]
@@ -351,8 +355,13 @@ def ic_evidence(signal: pd.Series, fwd_ret: pd.Series, h: int, *, signal_name: s
                 min_n: int = CONV2_MIN_BUCKET, bootstrap: bool = True) -> dict:
     """Directional evidence of ``signal`` (+ = bullish) for the h-row forward return.
 
-    ``ic``/``n``/``t``/``p``: Spearman IC on h-spaced (non-overlapping) rows, phase 0
-    from the first labelled row; Fisher t, one-sided p (H1: IC > 0).
+    ``ic``: mean of the h phase-wise Spearman ICs (each on h-spaced, non-overlapping
+    rows starting at offset k = 0..h−1), so every labelled row is used; ``ic_phase0``
+    is the offset-0 IC alone. ``n``: windows per phase (offset 0). ``t``/``p``: Fisher
+    t of ``ic`` with the SINGLE-phase variance 1.06/(n−3) — conservative, because the
+    mean of h equally variable phase ICs has variance ≤ that of any one of them —
+    one-sided p (H1: IC > 0). (Red-team T2: scoring one offset alone discarded
+    (h−1)/h of the data and made the verdict hinge on an arbitrary start date.)
     ``hac_t``: Newey–West(h) t of the DAILY rank IC (mean of standardized rank
     products over all labelled rows). ``boot_ci``: 95% stationary-block-bootstrap CI
     of the daily rank IC (mean block 2h, seeded). ``phase_min/max``: IC range across
@@ -364,8 +373,11 @@ def ic_evidence(signal: pd.Series, fwd_ret: pd.Series, h: int, *, signal_name: s
         df["m"] = momentum
     df = df[df["s"].notna() & df["r"].notna()]
     d = df.iloc[::h]
-    ic = spearman(d["s"], d["r"])
+    ic0 = spearman(d["s"], d["r"])
     n = int(len(d))
+    ph_all = [spearman(df["s"].iloc[k::h], df["r"].iloc[k::h]) for k in range(h)] if len(df) else []
+    ph_all = [x for x in ph_all if np.isfinite(x)]
+    ic = float(np.mean(ph_all)) if len(ph_all) == h else ic0
     available = bool(n >= min_n and np.isfinite(ic))
     zf, vf = fisher_z(ic, n)
     t = zf / np.sqrt(vf) if np.isfinite(vf) and vf > 0 else float("nan")
@@ -384,10 +396,8 @@ def ic_evidence(signal: pd.Series, fwd_ret: pd.Series, h: int, *, signal_name: s
             lo, hi = stationary_block_bootstrap_ic(df["s"], df["r"], mean_block=2 * h, alpha=alpha,
                                                    min_obs=min_n)
             boot = [lo, hi] if np.isfinite(lo) and np.isfinite(hi) else None
-        ph = [spearman(df["s"].iloc[k::h], df["r"].iloc[k::h]) for k in range(h)]
-        ph = [x for x in ph if np.isfinite(x)]
-        if ph:
-            phase_min, phase_max = float(min(ph)), float(max(ph))
+        if ph_all:
+            phase_min, phase_max = float(min(ph_all)), float(max(ph_all))
         years = pd.DatetimeIndex(df.index).year
         for y, g in df.groupby(years):
             if len(g) >= min_n:
@@ -395,9 +405,17 @@ def ic_evidence(signal: pd.Series, fwd_ret: pd.Series, h: int, *, signal_name: s
                 if np.isfinite(v):
                     yearly[str(int(y))] = float(v)
     base_ic = float("nan")
-    if momentum is not None and "m" in d.columns:
-        base_ic = spearman(d["m"], d["r"])
-    return {"signal": signal_name, "ic": ic, "n": n, "t": t, "p": p, "hac_t": hac_t, "boot_ci": boot,
+    if momentum is not None and "m" in df.columns:
+        dm = df[df["m"].notna()]
+        bph = [spearman(dm["m"].iloc[k::h], dm["r"].iloc[k::h]) for k in range(h)] if len(dm) else []
+        bph = [x for x in bph if np.isfinite(x)]
+        base_ic = float(np.mean(bph)) if bph else float("nan")   # same phase-averaged estimator
+    # Power disclosure: the smallest IC this test detects with 80% power at one-sided
+    # alpha, given n windows (Fisher-z scale) — a "no proven edge" verdict below this
+    # is "not enough data", not "no edge".
+    mde = float(np.tanh((_sstats_norm_ppf(1.0 - alpha) + _sstats_norm_ppf(0.80)) * np.sqrt(1.06 / (n - 3)))) if n > 3 else float("nan")
+    return {"signal": signal_name, "ic": ic, "ic_phase0": ic0, "n": n, "t": t, "p": p, "mde": mde,
+            "hac_t": hac_t, "boot_ci": boot,
             "significant": bool(available and np.isfinite(p) and p < alpha and ic > 0),
             "phase_min": phase_min, "phase_max": phase_max, "yearly": yearly,
             "baseline_momentum_ic": base_ic, "available": available}
@@ -437,7 +455,9 @@ def trust_readout(graded: dict, basis: str, bt_ref: dict, bt_nonoverlap: dict, h
         return {"tier": "INVERTED",
                 "text": f"INVERTED — {num}: the signal has pointed the wrong way; no directional call."}
     if not graded.get("significant"):
-        return {"tier": "NO_PROVEN_EDGE", "text": f"NO PROVEN EDGE — {num}; direction is unvalidated."}
+        return {"tier": "NO_PROVEN_EDGE",
+                "text": (f"NO PROVEN EDGE — {num}; direction is unvalidated "
+                         f"(this sample can only detect IC ≥ {_fmt(graded.get('mde'), '.2f')} reliably).")}
     t_tr, t_no = bt_ref.get("t"), bt_nonoverlap.get("t")
     if (t_tr is not None and t_no is not None and t_tr >= EDGE_TRADEABLE_T and t_no >= EDGE_TRADEABLE_T):
         return {"tier": "TRADEABLE_EDGE", "text": f"TRADEABLE EDGE — {num} · {bt}."}

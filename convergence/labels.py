@@ -133,3 +133,43 @@ def resolve_return_levels(
         return levels, src, warnings
     warnings.append("No return label available — edge, lift and backtest cannot be measured.")
     return pd.Series(dtype="float64"), "", warnings
+
+
+def label_alignment_check(target_levels: pd.Series, label_levels: pd.Series,
+                          max_lag: int = 2, min_obs: int = 120) -> dict:
+    """Timestamp-alignment guard for an external return label (red-team T2).
+
+    The sheet target (e.g. NIFTY50_PE) and an index label (^NSEI) share the price
+    leg, so their DAILY log changes must correlate most strongly at lag 0. A label
+    stamped one session late or early (e.g. a UTC-shifted close) peaks at lag ±1 —
+    and a one-day stale label can manufacture a spurious "tradeable" edge. Returns
+    ``{"available", "best_lag", "corr_by_lag": {lag: corr}, "aligned", "n"}`` where
+    ``corr_by_lag[k] = corr(Δlog target_t, Δlog label_{t+k})`` on common dates.
+    Pure diagnostic: it never alters the label.
+    """
+    out = {"available": False, "best_lag": None, "corr_by_lag": {}, "aligned": None, "n": 0}
+    try:
+        a = pd.Series(target_levels, dtype="float64")
+        b = pd.Series(label_levels, dtype="float64")
+        a.index = pd.to_datetime(a.index, errors="coerce")
+        b.index = pd.to_datetime(b.index, errors="coerce")
+        a = a[~a.index.isna() & ~a.index.duplicated(keep="last")].sort_index()
+        b = b[~b.index.isna() & ~b.index.duplicated(keep="last")].sort_index()
+        common = a.index.intersection(b.index)
+        if len(common) < min_obs:
+            return out
+        da = np.log(a.reindex(common).where(lambda s: s > 0)).diff()
+        db = np.log(b.reindex(common).where(lambda s: s > 0)).diff()
+        corr = {}
+        for k in range(-int(max_lag), int(max_lag) + 1):
+            c = da.corr(db.shift(-k))
+            if np.isfinite(c):
+                corr[k] = float(c)
+        if 0 not in corr:
+            return out
+        best = max(corr, key=lambda k: corr[k])
+        out.update(available=True, best_lag=int(best), corr_by_lag=corr, n=int(len(common)),
+                   aligned=bool(best == 0))
+    except Exception:
+        return out
+    return out

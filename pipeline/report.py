@@ -158,6 +158,7 @@ def build_run_report(result) -> dict:
         "aarambh": _aarambh(result),
         "nirnay": _nirnay(result),
         "label_src": result.label_src,
+        "label_alignment": getattr(result, "label_alignment", None),
         "conclusion": result.conclusion.to_dict(),
         "anatomy": _anatomy(result.anatomy_df),
         "precedent": {"hero": prec.get("hero"), "summary": prec.get("summary") or {},

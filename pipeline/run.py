@@ -56,6 +56,7 @@ class PipelineResult:
     timings: dict = field(default_factory=dict)
     warnings: list = field(default_factory=list)
     run_report: dict = field(default_factory=dict)
+    label_alignment: dict | None = None    # convergence.labels.label_alignment_check
 
     @property
     def synthetic(self) -> bool:
@@ -133,7 +134,8 @@ def compute_precedent(ts_rows: pd.DataFrame, cfg: PipelineConfig) -> dict:
     holds = tuple(int(h) for h in cfg.precedent_horizons)
     analogs = find_similar_periods(ts_rows, cfg.target, hold_horizons=holds, mom_window=int(cfg.mom_k))
     summary = summarize_forward(analogs, holds, ts=ts_rows) if analogs else {}
-    hp = int(cfg.horizon) if cfg.forward_mode else int(max(holds))
+    # The precedent read is graded at the SAME horizon as the conclusion (both modes).
+    hp = int(cfg.horizon)
     if not summary.get(hp):
         hp = int(max(holds))
     row = summary.get(hp)
@@ -165,7 +167,7 @@ def _run(sheet_df, cfg, sources, *, progress, log, force, sheet_info, today) -> 
     from engines.nirnay import aggregate_constituent_timeseries
     from convergence.conclusion import run_conclusion
     from convergence.cross_validator import compute_agreement_anatomy
-    from convergence.labels import build_index_return_levels, resolve_return_levels
+    from convergence.labels import build_index_return_levels, label_alignment_check, resolve_return_levels
 
     prog = progress or (lambda pct, title, sub="": None)
     T: dict[str, float] = {}
@@ -306,6 +308,17 @@ def _run(sheet_df, cfg, sources, *, progress, log, force, sheet_info, today) -> 
     levels, label_src, lw = resolve_return_levels(cfg.return_label, r_index.value, target_levels, basket,
                                                   target_name=cfg.target)
     warnings += lw
+    # Timestamp-alignment guard: an external label must co-move with the sheet target
+    # at lag 0 (a one-session misstamp can fabricate an edge — red-team T2).
+    label_alignment = None
+    if len(levels) and not str(label_src).startswith("Target"):
+        label_alignment = label_alignment_check(target_levels, levels)
+        if label_alignment.get("available") and not label_alignment.get("aligned"):
+            warnings.append(
+                f"LABEL TIMESTAMP MISALIGNMENT suspected: daily returns of the return label "
+                f"({label_src}) co-move with {cfg.target} most strongly at lag "
+                f"{label_alignment['best_lag']:+d} sessions, not 0 — edge / backtest read-outs "
+                f"may be invalid until the label's dates are corrected.")
     log.item("Return label", f"{label_src or 'NONE'} · {len(levels)} levels"
              + (f" ({levels.index[0].date()} → {levels.index[-1].date()})" if len(levels) else ""))
     prog(82, "Computing Conclusion", "causal z · walk-forward κ · edge ledger")
@@ -334,7 +347,7 @@ def _run(sheet_df, cfg, sources, *, progress, log, force, sheet_info, today) -> 
     result = PipelineResult(config=cfg, prepared=prepared, engine=engine, aarambh_ts=aarambh_ts,
                             nirnay_daily=nirnay_daily, nirnay_constituent_dfs=dfs, nirnay_failures=failures,
                             anatomy_df=anatomy, conclusion=conclusion, precedent=precedent, macro=macro,
-                            provenance=prov, label_src=label_src, run_id=run_id, today=str(today_ts.date()),
+                            label_alignment=label_alignment, provenance=prov, label_src=label_src, run_id=run_id, today=str(today_ts.date()),
                             warnings=warnings)
     if result.synthetic:
         result.warnings.insert(0, "SYNTHETIC DEMO DATA — not market data; no conclusion here is about the real market.")
