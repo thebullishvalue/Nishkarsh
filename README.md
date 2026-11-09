@@ -29,7 +29,7 @@ p-values — what is and is not established.
 
 ## Contents
 [Why two systems](#why-two-systems) · [Quick start](#quick-start) · [What you see](#what-you-see) ·
-[The conclusion](#the-conclusion) · [Headless pipeline & run report](#headless-pipeline--run-report) ·
+[The conclusion](#the-conclusion) · [The Agreement Oscillator](#the-agreement-oscillator) · [Headless pipeline & run report](#headless-pipeline--run-report) ·
 [Data layer](#data-layer) · [Architecture](#architecture) · [Configuration](#configuration) ·
 [Testing](#testing) · [Performance](#performance) · [Known limitations](#known-limitations) ·
 [Troubleshooting](#troubleshooting) · [References](#references)
@@ -132,11 +132,39 @@ last 20 trading days). Descriptive only — no edge is claimed for them.
 
 ---
 
+## The Agreement Oscillator
+
+How strongly — and on which side — the two systems agree:
+
+```
+consensus_t = +1 if Aarambh and Nirnay both lean bullish, −1 if both lean bearish, 0 if they split
+agreement_t = the agreement ratio (fixed-weight anatomy of direction · breadth · magnitude · regime)
+SAO_t       = consensus_t × agreement_t        ∈ [−1, +1]   (+ = buy-side agreement)
+```
+
+It was measured on real data before it was promoted (pre-registered:
+[`docs/research/AGREEMENT_OSCILLATOR_PREREG.md`](docs/research/AGREEMENT_OSCILLATOR_PREREG.md);
+results: [`…_RESULTS.md`](docs/research/AGREEMENT_OSCILLATOR_RESULTS.md)). On all 50
+constituents 2020–2026 the **signed** oscillator is the best directional read the system
+has produced — IC +0.09, positive in 5 of 7 years — but **not yet statistically proven**
+(p 0.13 over 163 windows; the sample can only confirm IC ≥ 0.20). The unsigned agreement
+level carries nothing. So the app shows it as the central gauge of the two systems'
+agreement, with its measured status beside it, and uses no buy/sell wording for it.
+**Every run re-tests it**; the status upgrades to VALIDATED by itself only when the
+pre-registered rule passes (p < 0.05, bootstrap CI above 0, ≥ 60% of years positive).
+
+The same data gave the first real support for the two-system thesis: Aarambh's accuracy
+is +0.08 when Nirnay confirms it and −0.26 when Nirnay contradicts it (lift p 0.033) —
+not yet stable across start offsets or out of sample.
+
+---
+
 ## Headless pipeline & run report
 
 ```bash
 python -m pipeline synth --seed 7 --json run.json                      # offline synthetic world
 python -m pipeline run --csv sheet.csv --date-col DATE --json run.json # your sheet + live market data
+python -m pipeline run --csv sheet.csv --market nse                     # constituents from NSE's official archives
 python -m pipeline run --csv sheet.csv --snapshot snap/                # replay saved market data
 ```
 
@@ -165,6 +193,11 @@ from the report. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the Pyth
 - **Label timestamp guard**: the return label (^NSEI) must co-move with the sheet
   target at lag 0; if a ±1-session lag fits better the run warns that the edge
   read-outs may be invalid (a one-day mis-stamp can fabricate an edge).
+- **Official fallback — NSE archives** (`data/nse_archive.py`): when Yahoo Finance is
+  throttled, constituents and their daily OHLCV come from NSE's public bhavcopies
+  (no API key; ISIN-linked across symbol renames; splits/bonuses back-adjusted with
+  NSE's own adjusted previous close; cached per day). If ^NSEI is unavailable the
+  return label is the sheet's own NIFTY column.
 - **Macro universe**: 83 yfinance tickers (65 global bond ETFs / yield indices + 18
   commodity / FX). Supplementary: the pipeline runs without them.
 
