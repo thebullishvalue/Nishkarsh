@@ -677,3 +677,81 @@ def _engine_conviction(aarambh_ts: pd.DataFrame, idx: pd.Index) -> pd.Series:
         if col in a.columns:
             return -pd.to_numeric(a[col], errors="coerce").astype("float64").reindex(idx)
     return pd.Series(np.nan, index=idx, dtype="float64")
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Agreement Oscillator — the signed read of how much, and on which side, the two
+# systems agree (docs/research/AGREEMENT_OSCILLATOR_*.md). Measured on every run;
+# its status is VALIDATED only when the pre-registered H1 rule passes on the data
+# in hand — until then it is a context gauge with no buy/sell wording.
+# ════════════════════════════════════════════════════════════════════════════
+
+OSCILLATOR_STATUSES = ("VALIDATED", "UNPROVEN", "INSUFFICIENT_DATA")
+
+
+def oscillator_series(frame: pd.DataFrame, anatomy: pd.DataFrame | None) -> pd.DataFrame:
+    """``agreement_ratio`` (anatomy, [0,1]), ``consensus`` (+1 both lean bullish, −1 both
+    bearish, 0 split; NaN without Nirnay data) and ``SAO = consensus · agreement_ratio``
+    on the conclusion frame's dates. Causal: every input is causal at its date."""
+    out = pd.DataFrame(index=frame.index)
+    agr = (anatomy["agreement_ratio"].reindex(frame.index) if anatomy is not None and len(anatomy)
+           and "agreement_ratio" in anatomy.columns else pd.Series(np.nan, index=frame.index))
+    za, zn = frame["zA"], frame["zN"]
+    la, ln = np.sign(za), np.sign(zn)
+    cons = pd.Series(np.where((la == ln) & (la != 0), la, 0.0), index=frame.index)
+    cons[za.isna() | zn.isna()] = np.nan
+    out["agreement_ratio"] = agr
+    out["consensus"] = cons
+    out["SAO"] = cons * agr
+    return out
+
+
+def oscillator_readout(sao: pd.Series, price_levels: pd.Series | None, h: int,
+                       alpha: float = EDGE_ALPHA) -> dict:
+    """Evidence and status of the Signed Agreement Oscillator at horizon ``h``.
+
+    VALIDATED ⇔ one-sided p < alpha (IC > 0, phase-averaged h-spaced, conservative
+    single-phase variance) AND the block-bootstrap CI excludes 0 AND ≥ 60% of calendar
+    years show a positive IC — the pre-registered H1 rule."""
+    s = sao.dropna()
+    latest = float(s.iloc[-1]) if len(s) else None
+    base = {"value": latest, "as_of": str(s.index[-1].date()) if len(s) else None,
+            "side": ("BUY-SIDE" if latest and latest > 0 else "SELL-SIDE" if latest and latest < 0 else "SPLIT")
+            if latest is not None else None,
+            "strength": abs(latest) if latest is not None else None}
+    logp = align_log_price(price_levels, sao.index) if price_levels is not None and len(price_levels) else None
+    if logp is None or s.empty:
+        return base | {"status": "INSUFFICIENT_DATA", "evidence": None,
+                       "text": "Agreement Oscillator: not enough two-system data to measure it."}
+    e = ic_evidence(sao, logp.shift(-h) - logp, h, signal_name="SAO", alpha=alpha)
+    yearly = e.get("yearly") or {}
+    yr_pos = (sum(v > 0 for v in yearly.values()) / len(yearly)) if yearly else None
+    boot = e.get("boot_ci")
+    if not e.get("available"):
+        status = "INSUFFICIENT_DATA"
+    elif (np.isfinite(e["p"]) and e["p"] < alpha and boot and boot[0] > 0 and yr_pos is not None and yr_pos >= 0.6):
+        status = "VALIDATED"
+    else:
+        status = "UNPROVEN"
+    num = (f"IC {_fmt(e.get('ic'), '+.3f')} over {int(e.get('n') or 0)} non-overlapping {h}-day windows "
+           f"(p {_fmt(e.get('p'), '.2f')}; positive in {int(round((yr_pos or 0) * len(yearly)))}/{len(yearly)} years)")
+    if status == "VALIDATED":
+        text = f"Validated directional read — {num}."
+    elif status == "UNPROVEN":
+        text = (f"Not yet a validated buy/sell signal — {num}; this sample can only confirm an IC of "
+                f"{_fmt(e.get('mde'), '.2f')} or more.")
+    else:
+        text = f"Not enough two-system history to measure the oscillator ({int(e.get('n') or 0)} windows)."
+    ev = {k: e.get(k) for k in ("ic", "n", "p", "mde", "hac_t", "boot_ci", "yearly")}
+    ev["yearly_positive_share"] = yr_pos
+    return base | {"status": status, "evidence": ev, "text": text}
+
+
+def attach_oscillator(result: ConclusionResult, anatomy: pd.DataFrame | None,
+                      price_levels: pd.Series | None, h: int) -> ConclusionResult:
+    """Add the oscillator columns to ``result.frame`` and ``"oscillator"`` to its payload."""
+    osc = oscillator_series(result.frame, anatomy)
+    for c in osc.columns:
+        result.frame[c] = osc[c]
+    result.payload["oscillator"] = _json_safe(oscillator_readout(osc["SAO"], price_levels, h))
+    return result

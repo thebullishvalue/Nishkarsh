@@ -35,6 +35,8 @@ def main(argv=None) -> int:
     r.add_argument("--date-col", default="DATE")
     r.add_argument("--snapshot", type=Path, metavar="DIR", help="replay market data from a snapshot dir (offline)")
     r.add_argument("--force", action="store_true", help="bypass cache TTLs (live sources)")
+    r.add_argument("--market", choices=("auto", "yahoo", "nse"), default="auto",
+                   help="market data: Yahoo Finance, NSE's official archives, or Yahoo with NSE fallback (default)")
     _common(r)
     s = sub.add_parser("synth", help="run on the deterministic SYNTHETIC world (offline)")
     s.add_argument("--seed", type=int, default=7)
@@ -62,7 +64,16 @@ def main(argv=None) -> int:
         else:
             from data.sources import LiveSources, SnapshotSources
             sheet = pd.read_csv(a.csv)
-            sources = SnapshotSources(a.snapshot) if a.snapshot else LiveSources()
+            if a.snapshot:
+                sources = SnapshotSources(a.snapshot)
+            elif a.market == "nse":
+                from data.nse_archive import NSEArchiveSources
+                sources = NSEArchiveSources()
+            elif a.market == "yahoo":
+                sources = LiveSources()
+            else:
+                from data.nse_archive import AutoSources
+                sources = AutoSources()
             cfg = PipelineConfig.build(target=a.target, date_col=a.date_col, kappa_enabled=not a.no_kappa)
             info = FetchResult(None, "live", None, [], f"CSV {a.csv.name}")
             res = run_pipeline(sheet, cfg, sources, sheet_info=info, force=a.force)

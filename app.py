@@ -268,8 +268,8 @@ def main() -> None:
                     sources = synthetic_world(SYNTH_SEED)[1]
                     ss["_synthetic_sources"] = sources
             else:
-                from data.sources import LiveSources
-                sources = LiveSources()
+                from data.nse_archive import AutoSources   # Yahoo first, NSE archives on failure
+                sources = AutoSources()
             slot = st.empty()
 
             def _progress(pct, title, sub=""):

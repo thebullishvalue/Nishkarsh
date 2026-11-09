@@ -304,10 +304,21 @@ def _run(sheet_df, cfg, sources, *, progress, log, force, sheet_info, today) -> 
     r_index = _as_fetch(_call(sources.index_levels, cfg.index_symbol, pd.Timestamp(prepared.sheet_span[0]), end,
                               force=force), pd.Series(dtype="float64"))
     target_levels = pd.Series(prepared.data[cfg.target].to_numpy(dtype=np.float64), index=prepared.dates)
+    from core.config import INDEX_SHEET_COLUMNS
+    idx_col = next((c for c in INDEX_SHEET_COLUMNS if c in prepared.sheet_panel.columns), None)
+    if (r_index.value is None or len(r_index.value) == 0) and idx_col is not None:
+        sheet_idx = prepared.sheet_panel[idx_col].dropna()
+        sheet_idx = sheet_idx[sheet_idx > 0]
+        if len(sheet_idx):
+            r_index = FetchResult(sheet_idx, "live", as_of=str(sheet_idx.index[-1].date()),
+                                  note=f"sheet column {idx_col} (IST index level) — {cfg.index_symbol} unavailable")
+            warnings.append(f"{cfg.index_symbol} unavailable — the return label is the sheet's {idx_col} column.")
     basket = build_index_return_levels(ohlcv) if ohlcv else None
     levels, label_src, lw = resolve_return_levels(cfg.return_label, r_index.value, target_levels, basket,
                                                   target_name=cfg.target)
     warnings += lw
+    if str(getattr(r_index, "note", "")).startswith("sheet column") and str(label_src).startswith("NIFTY 50 index"):
+        label_src = f"NIFTY 50 index (sheet {idx_col} column) fwd return"
     # Timestamp-alignment guard: an external label must co-move with the sheet target
     # at lag 0 (a one-session misstamp can fabricate an edge — red-team T2).
     label_alignment = None
@@ -329,6 +340,11 @@ def _run(sheet_df, cfg, sources, *, progress, log, force, sheet_info, today) -> 
     except Exception as e:  # noqa: BLE001 — descriptive only
         anatomy = pd.DataFrame()
         warnings.append(f"Agreement anatomy failed: {e}")
+    try:   # the Agreement Oscillator — measured every run (docs/research/AGREEMENT_OSCILLATOR_*.md)
+        from convergence.conclusion import attach_oscillator
+        attach_oscillator(conclusion, anatomy, levels, int(cfg.horizon))
+    except Exception as e:  # noqa: BLE001
+        warnings.append(f"Agreement oscillator failed: {e}")
     log.end_phase("CONCLUSION")
     T["conclusion"] = time.perf_counter() - t
 

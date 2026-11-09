@@ -235,6 +235,11 @@ EDGE_BOOTSTRAP_SEED = 20260704
 BACKTEST_COST_BPS = (0.0, 2.0, 5.0, 10.0)  # one-way cost grid (bps per unit turnover)
 BACKTEST_REFERENCE_BPS = 5.0     # the cost level verdicts are graded at
 
+# Sheet columns that hold the NIFTY 50 index LEVEL (IST-dated). When the live ^NSEI
+# fetch is unavailable, the first one present is the return label — preferred over the
+# PE proxy because it is the traded price, and it spans the sheet's full history.
+INDEX_SHEET_COLUMNS = ("NIFTY", "NIFTY50", "NIFTY_50", "NSEI")
+
 # ─── Pipeline / data window ──────────────────────────────────────────────────
 # yfinance history (constituents + macro). The start is ANCHORED to 1 January of
 # (current year − HISTORY_YEARS) so the window slides once a year, not daily — a

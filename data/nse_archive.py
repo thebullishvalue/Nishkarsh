@@ -264,7 +264,11 @@ class NSEArchiveSources:
     official NIFTY 50 close. NSE publishes no global macro panel, so ``macro()`` is
     empty — the pipeline then uses the sheet's own rate columns for Nirnay's MMR."""
 
-    def __init__(self, cache_dir: Path | None = None, max_workers: int = 6, progress=None):
+    def __init__(self, cache_dir: Path | None = None, max_workers: int = 6, progress=None,
+                 index_from_archive: bool = False):
+        # index_from_archive=False: the label comes from the sheet's own NIFTY column (the
+        # pipeline's fallback); the archive needs one request per day of the sheet's span.
+        self.index_from_archive = bool(index_from_archive)
         self.cache_dir = Path(cache_dir or default_cache_dir())
         self.max_workers = int(max_workers)
         self.progress = progress
@@ -305,8 +309,61 @@ class NSEArchiveSources:
                            note=f"NSE bhavcopy · {len(out)} ISIN-linked histories · {actions} split/bonus adjustments")
 
     def index_levels(self, symbol, start, end, force: bool = False) -> FetchResult:
+        if not self.index_from_archive:
+            return FetchResult(pd.Series(dtype="float64"), "empty",
+                               note="index label from the sheet's NIFTY column (archive fetch disabled)")
         idx = load_index_closes(start, end, "Nifty 50", cache_dir=self.cache_dir, max_workers=self.max_workers)
         s = idx["Close"].dropna() if len(idx) else pd.Series(dtype="float64")
         if s.empty:
             return FetchResult(s, "empty", note="NSE index closes unavailable")
         return FetchResult(s, "live", as_of=str(s.index[-1].date()), note="NSE archives (ind_close_all) · NIFTY 50 close")
+
+
+class AutoSources:
+    """Yahoo Finance first, NSE's official archives when Yahoo is unavailable.
+
+    Constituents and constituent OHLCV fall back to NSE (bhavcopies) when the primary
+    returns nothing or misses more than half the symbols; the macro panel and the
+    index label stay with the primary (the pipeline itself falls back to the sheet's
+    own NIFTY column for the label). Every fallback is recorded in the provenance note."""
+
+    def __init__(self, primary=None, fallback=None):
+        if primary is None:
+            from data.sources import LiveSources
+            primary = LiveSources()
+        self.primary = primary
+        self.fallback = fallback or NSEArchiveSources()
+
+    def constituents(self, force: bool = False) -> FetchResult:
+        r = self.primary.constituents(force=force)
+        if r.provenance in ("empty", "fallback") or not r.value:
+            try:
+                f = self.fallback.constituents()
+                if f.value:
+                    return FetchResult(f.value, f.provenance, f.as_of, f.missing,
+                                       f"{f.note} — primary source {r.provenance}")
+            except Exception as e:  # noqa: BLE001
+                _LOG.warning("NSE constituent fallback failed: %s", e)
+        return r
+
+    def macro(self, start, end, force: bool = False) -> FetchResult:
+        return self.primary.macro(start, end, force=force)
+
+    def ohlcv(self, symbols, start, end, force: bool = False) -> FetchResult:
+        r = self.primary.ohlcv(symbols, start, end, force=force)
+        got = len(r.value or {})
+        if got < 0.5 * max(len(symbols), 1):
+            try:
+                f = self.fallback.ohlcv(symbols, start, end)
+                if len(f.value or {}) > got:
+                    return FetchResult(f.value, f.provenance, f.as_of, f.missing,
+                                       f"{f.note} — Yahoo returned {got}/{len(symbols)} symbols")
+            except Exception as e:  # noqa: BLE001
+                _LOG.warning("NSE OHLCV fallback failed: %s", e)
+        return r
+
+    def index_levels(self, symbol, start, end, force: bool = False) -> FetchResult:
+        return self.primary.index_levels(symbol, start, end, force=force)
+
+    def sheet(self, url: str, force: bool = False) -> FetchResult:
+        return self.primary.sheet(url, force=force)

@@ -160,3 +160,40 @@ def test_late_predictor_history_cost_is_disclosed():
     msg = " ".join(prep.warnings)
     assert prep.bounding_predictor == "INIRYY"
     assert "Predictor INIRYY" in msg and "truncates the usable history" in msg
+
+
+def test_agreement_oscillator_is_measured_and_never_claims_without_evidence(e2e):
+    """The oscillator is computed every run; on a no-signal world it must not be VALIDATED,
+    and its text must carry the numbers (pre-registered rule, docs/research)."""
+    o = e2e.conclusion.to_dict().get("oscillator")
+    assert o is not None and o["status"] in {"VALIDATED", "UNPROVEN", "INSUFFICIENT_DATA"}
+    assert o["status"] != "VALIDATED"
+    assert {"agreement_ratio", "consensus", "SAO"} <= set(e2e.conclusion.frame.columns)
+    sao = e2e.conclusion.frame["SAO"].dropna()
+    assert sao.between(-1, 1).all()
+    if o["status"] == "UNPROVEN":
+        assert "Not yet a validated buy/sell signal" in o["text"] and "IC" in o["text"]
+
+
+def test_auto_sources_fall_back_to_nse_when_yahoo_is_empty():
+    from data.nse_archive import AutoSources
+    from data.sources import FetchResult
+
+    class Empty:
+        def constituents(self, force=False):
+            return FetchResult([], "empty", note="429")
+        def ohlcv(self, symbols, start, end, force=False):
+            return FetchResult({}, "empty", note="429")
+
+    class Fallback:
+        def constituents(self):
+            return FetchResult(["AAA.NS", "BBB.NS"], "live", note="NSE archives")
+        def ohlcv(self, symbols, start, end, force=False):
+            df = pd.DataFrame({"Close": [1.0]}, index=pd.DatetimeIndex(["2024-01-01"]))
+            return FetchResult({s: df for s in symbols}, "live", note="NSE bhavcopy")
+
+    a = AutoSources(primary=Empty(), fallback=Fallback())
+    c = a.constituents()
+    assert c.value == ["AAA.NS", "BBB.NS"] and "NSE" in c.note
+    o = a.ohlcv(["AAA.NS", "BBB.NS"], "2024-01-01", "2024-01-02")
+    assert set(o.value) == {"AAA.NS", "BBB.NS"} and "Yahoo returned 0/2" in o.note
