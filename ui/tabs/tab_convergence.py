@@ -121,29 +121,26 @@ def render_convergence_tab(start_date=None) -> None:
     call = str(trust.get("tier")) in CALL_TIERS
     direction = str(lat.get("direction") or "NEUTRAL")
     c_cls = ("success" if direction == "BULLISH" else "danger" if direction == "BEARISH" else "neutral") if call else "neutral"
-    c1, c2, c3, c4, c5 = st.columns(5, gap="small")
+    c1, c2, c3, c4 = st.columns(4, gap="small")
     with c1:
-        render_metric_card("CONCLUSION C", fmt(lat.get("C"), "+.1f"),
+        render_metric_card("Conclusion C", fmt(lat.get("C"), "+.1f"),
                            f"{lat.get('tier') or 'NO LEAN'} · {direction}" + ("" if call else " · no call (unproven)")
                            + f" · {SIGN_C}", c_cls, tooltip=TIERS_TEXT)
     with c2:
-        render_metric_card("C_AARAMBH", fmt(lat.get("C_aarambh"), "+.1f"), f"pure Aarambh (κ ≡ 1) · {SIGN_Z}")
+        render_metric_card("C_aarambh", fmt(lat.get("C_aarambh"), "+.1f"), f"pure Aarambh (κ ≡ 1) · {SIGN_Z}")
     with c3:
         render_metric_card("zA · zN", f"{fmt(lat.get('zA'), '+.2f')} · {fmt(lat.get('zN'), '+.2f')}",
                            f"causal z of each head · {SIGN_Z}")
     with c4:
         agr = con.get("agreement") or {}
-        render_metric_card("STATE TODAY", str(lat.get("state") or "—"),
+        render_metric_card("State today", str(lat.get("state") or "—").replace("_", " ").capitalize(),
                            f"60-session same-sign rate {fmt(agr.get('same_sign_rate_60d'), '.0%')} (descriptive)",
                            tooltip=CONVERGENCE["state_desc"])
-    with c5:
-        render_metric_card("AS OF", str(con.get("as_of") or "—"),
-                           f"horizon {fmt(con.get('horizon'), '.0f')}d · label {str(con.get('label_src') or '—')[:40]}")
+    st.caption(f"As of {con.get('as_of') or '—'} · horizon {fmt(con.get('horizon'), '.0f')} trading days · "
+               f"label {str(con.get('label_src') or '—')[:60]}")
 
     nir = con.get("nirnay") or {}
-    render_interpretation_card("NIRNAY", esc(nir.get("text") or "Nirnay: — (no read-out in this run)."), "info")
-    render_interpretation_card("TRUST", esc(trust.get("text") or "INSUFFICIENT DATA — no edge graded."),
-                               "success" if call else "danger" if trust.get("tier") == "INVERTED" else "neutral")
+    render_interpretation_card("Nirnay", esc(nir.get("text") or "Nirnay: — (no read-out in this run)."), "info")
 
     section_gap()
     render_section_header("Conclusion Over Time",

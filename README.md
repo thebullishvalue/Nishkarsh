@@ -11,7 +11,7 @@ p-values — what is and is not established.
 
 | | |
 |---|---|
-| **Version** | 2.0.2 — *Council audit · measured conclusion · headless pipeline* |
+| **Version** | 2.1.0 — *Agreement Oscillator · NSE archives · product UI* |
 | **Stack** | Python 3.13 · Streamlit · scikit-learn · statsmodels · numba · Plotly |
 | **Universe** | Nifty 50 (live list from niftyindices.com; dated fallback list) |
 | **License** | See `LICENSE.md` |
@@ -83,8 +83,16 @@ secret `[aarambh] google_sheets_url = "…"`.
 
 ## What you see
 
-| Surface | What it shows |
+| Tab | What it shows |
 |---|---|
+| **Overview** (default) | *Today's market read* in plain language — whether the two systems agree, on which side, and what each sees ("Nirnay: 52% of the 50 Nifty stocks overbought"); the **Agreement Oscillator** gauge with its measured status beside it (e.g. *Unproven*, numbers one click away); the oscillator's history against the Nifty; an Aarambh and a Nirnay card; "How reliable is this?" (the Edge Ledger in plain words); data notes. No buy/sell wording for anything the data have not validated. |
+| **Aarambh** | Mode-aware: in predictive mode the forecast and its causal z-score (no fair-value framing); in levels mode the valuation stack, labelled as context. |
+| **Nirnay** | Constituent breadth over `n_live` names (coverage shown), the actual adaptive oversold/overbought cuts, regime and volatility distributions, per-stock drill-down. |
+| **Precedent** | Historical analogs (causal Mahalanobis match with Theiler exclusion) and what followed, against the unconditional base rate with a binomial p. |
+| **Evidence** | The full measurement for experts, with a glossary: the verdict in detail, the Edge Ledger (edge, out-of-sample edge, Convergence-Lift with power, κ, signal chain, cost-aware backtest), the oscillator's own test, agreement anatomy, model inputs and data health. |
+| **Data** | The merged time series, searchable, CSV export. |
+
+---|---|
 | **Hero verdict** (above the tabs) | The conclusion `C` (+ = bullish) with its tier, the trust chip from `conclusion.trust` (with its numbers), and evidence rows: MODEL, NIRNAY (confirms / contradicts / context only / no data), PRECEDENT (descriptive base rate vs unconditional, votes only when significant), RISK (recent divergences). No coloured directional call unless the trust tier is DIRECTIONAL or TRADEABLE edge. |
 | **CONVERGENCE** | `C` vs the Aarambh-only conclusion, `zA` / `zN`, agreement state, κ, the Convergence-Lift result (with power / MDE), divergence events, and the descriptive agreement anatomy (not used in the conclusion). |
 | **AARAMBH** | Mode-aware: in predictive mode the forecast and its causal z-score (no fair-value framing); in levels mode the valuation stack, labelled as context. |
@@ -253,7 +261,7 @@ count — the failure that voided 1.6.0).
 ## Testing
 
 ```bash
-pytest -m "not slow" -q     # 127 tests, ~1 min
+pytest -m "not slow" -q     # 142 tests, ~1.5 min
 pytest -m slow -q           # Monte-Carlo size/power, end-to-end determinism, Streamlit AppTest
 ```
 
@@ -331,4 +339,4 @@ non-optimisations: [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
 
 ---
 
-© 2026 Nishkarsh · [@thebullishvalue](https://twitter.com/thebullishvalue) · v2.0.2
+© 2026 Nishkarsh · [@thebullishvalue](https://twitter.com/thebullishvalue) · v2.1.0

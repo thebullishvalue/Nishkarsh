@@ -48,6 +48,6 @@ def render_data_tab(ts_f: pd.DataFrame, ts: pd.DataFrame, target: str, forward_m
                  column_config={c: st.column_config.NumberColumn(format="%.6g")
                                 for c in shown.columns if pd.api.types.is_float_dtype(shown[c])})
     csv = _table(ts, frame, forward).to_csv(index=False).encode("utf-8")
-    st.download_button("⤓  Download Full CSV", csv,
+    st.download_button("Download full CSV", csv,
                        f"nishkarsh_{''.join(ch for ch in str(target) if ch.isalnum() or ch in '_-')}"
                        f"_{datetime.now().strftime('%Y%m%d')}.csv", "text/csv")

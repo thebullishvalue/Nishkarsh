@@ -12,6 +12,9 @@ Successor of council/a4/hero_harness.py (rules R0–R11 of the v1 hero), re-stat
   H8  SYNTHETIC banner iff run_config provenance / warnings say SYNTHETIC
   H9  the hero's own words never claim edge (confirms / calibrated / adds value / validated)
   H10 render_hero_card never raises and escapes injected markup
+  H11 market read (Overview): no buy/sell/signal wording unless the oscillator is VALIDATED; the
+      oscillator's status is always named in plain words; side/colour follow the oscillator's own
+      side; no nan text; levels mode keeps its tag; render_market_hero escapes and never raises
 Inputs are produced COHERENTLY with the real conclusion-layer producers (tier_of, direction_of,
 trust_readout, nirnay_readout, _json_safe) and then poisoned for robustness. Deterministic.
 """
@@ -35,7 +38,9 @@ from convergence.conclusion import (  # noqa: E402
     LiftResult, _json_safe, direction_of, nirnay_readout, tier_of, trust_readout,
 )
 from core.config import EDGE_ALPHA  # noqa: E402
-from ui.components import CALL_TIERS, build_hero_verdict, render_hero_card  # noqa: E402
+from ui.components import (  # noqa: E402
+    BUY_SELL_RE, CALL_TIERS, build_hero_verdict, build_market_read, market_texts, render_hero_card, render_market_hero,
+)
 from ui.copy import EDGE_WORDS, LEVELS_TAG, forbidden_hits  # noqa: E402
 
 NAN = float("nan")
@@ -45,7 +50,10 @@ STATES = ("CONFIRM", "CONTRADICT", "NEUTRAL", "NO_DATA", None)
 C_VALUES = (88.0, -72.0, 45.0, -31.0, 12.0, -9.0, 0.0, None, NAN)
 _BAD = re.compile(r"(?<![a-z])(nan|inf)(?![a-z])", re.I)
 KEYS = ("signal", "signal_class", "call", "direction", "tier", "score", "score_text", "headline",
-        "mode_label", "trust", "evidence", "as_of", "synthetic", "banner", "horizon", "forward_mode")
+        "mode_label", "trust", "evidence", "as_of", "synthetic", "banner", "horizon", "forward_mode", "market")
+MARKET_KEYS = ("headline", "tag", "side", "validated", "value", "value_text", "gauge_label", "subline",
+               "aarambh_text", "nirnay_text", "as_of", "status", "status_label", "status_class", "status_text",
+               "numbers", "trust_tier", "levels_note")
 
 
 # ── coherent producers ───────────────────────────────────────────────────────
@@ -248,6 +256,95 @@ def test_real_pipeline_shape_example():
     pr = [r for r in v["evidence"] if r["tag"] == "PRECEDENT"][0]
     assert pr["text"].startswith("7/10 analogs rose over 10d vs 50% unconditional (binomial p=0.34)")
     assert not pr["votes"] and v["banner"]
+
+
+# ── H11: the Overview market read and the Agreement Oscillator ────────────────
+OSC_EVIDENCE = {"ic": 0.0914, "n": 164, "p": 0.13, "mde": 0.199, "hac_t": 1.4, "boot_ci": [-0.02, 0.2],
+                "yearly": {"2020": 0.1, "2021": 0.2, "2022": -0.05, "2023": 0.1, "2024": 0.2, "2025": 0.05,
+                           "2026": -0.1}, "yearly_positive_share": 5 / 7}
+OSC_VALUES = (0.72, -0.72, 0.35, -0.12, 0.0, None, NAN, 3.0, "x")
+NIRNAY_LATEST = (None, {}, {"n_live": 50, "Oversold_Pct": 10.0, "Overbought_Pct": 52.0},
+                 {"n_live": 12, "Oversold_Pct": 16.7, "Overbought_Pct": 0.0},
+                 {"n_live": 50, "Oversold_Pct": 0.0, "Overbought_Pct": 0.0},
+                 {"n_live": NAN, "Oversold_Pct": NAN, "Overbought_Pct": None})
+
+
+def _osc(status, value):
+    v = comp.num(value)
+    side = None if v is None else ("BUY-SIDE" if v > 0 else "SELL-SIDE" if v < 0 else "SPLIT")
+    ev = None if status == "INSUFFICIENT_DATA" else OSC_EVIDENCE
+    return {"value": value, "side": side, "strength": None if v is None else abs(v), "status": status,
+            "evidence": ev, "as_of": "2025-05-01",
+            "text": "Not yet a validated buy/sell signal — IC +0.091 over 164 windows (p 0.13)."}
+
+
+def _check_market(m: dict, status: str, forward: bool) -> None:
+    for k in MARKET_KEYS:
+        assert k in m, k
+    texts = market_texts(m)
+    for t in texts:
+        assert not _BAD.search(t), t
+    if status != "VALIDATED":
+        assert not m["validated"]
+        for t in texts:
+            assert not BUY_SELL_RE.search(t), (t, status)
+    assert m["status"] == status and m["status_label"] and m["status_text"]
+    assert m["side"] in ("buy", "sell", "split", "none")
+    v = comp.num(m["value"])
+    if m["side"] == "buy":
+        assert v is not None and v > 0 and "buy-side" in m["headline"]
+    if m["side"] == "sell":
+        assert v is not None and v < 0 and "sell-side" in m["headline"]
+    if m["side"] == "none":
+        assert v is None and m["value_text"] == "—"
+    if not forward:
+        assert m["levels_note"] == LEVELS_TAG
+    for w in EDGE_WORDS:
+        for t in texts:
+            if status != "VALIDATED" or w != "validated":
+                assert not re.search(r"\b" + w + r"\b", t, re.I), (w, t)
+
+
+def test_market_read_oscillator_honesty_grid():
+    n = 0
+    for status, value, tier, C, fwd, nl in product(("VALIDATED", "UNPROVEN", "INSUFFICIENT_DATA"), OSC_VALUES,
+                                                   TRUST_TIERS, (72.0, -31.0, 4.0, None), (True, False),
+                                                   NIRNAY_LATEST):
+        con = make_conclusion(tier, C, "CONTRADICT", fwd)
+        con["oscillator"] = _osc(status, value)
+        m = build_market_read(con, dict(LIVE_RC, forward_mode=fwd), nl)
+        _check_market(m, status, fwd)
+        v = build_hero_verdict(con, None, None, dict(LIVE_RC, forward_mode=fwd), nirnay_latest=nl)
+        assert v["market"]["status"] == status
+        n += 1
+    assert n > 3000
+
+
+def test_market_read_split_and_missing():
+    con = make_conclusion("NO_PROVEN_EDGE", 3.9, "CONTRADICT", True)
+    con["oscillator"] = _osc("UNPROVEN", 0.0)
+    m = build_market_read(con, LIVE_RC, {"n_live": 50, "Oversold_Pct": 10.0, "Overbought_Pct": 52.0})
+    assert m["side"] == "split" and m["value_text"] == "0.00" and m["status_label"] == "Unproven"
+    assert "52% of the 50 Nifty stocks overbought" in m["subline"] and "forecast flat" in m["subline"]
+    for bad in (None, {}, "x", {"oscillator": None}, {"oscillator": {"status": "BOGUS", "value": "nan"}}):
+        mm = build_market_read(bad)
+        assert mm["status"] == "INSUFFICIENT_DATA" and mm["side"] == "none"
+        for t in market_texts(mm):
+            assert not _BAD.search(t) and not BUY_SELL_RE.search(t)
+
+
+def test_market_hero_escapes_and_never_raises(monkeypatch):
+    out = []
+    monkeypatch.setattr(comp.st, "markdown", lambda body, **kw: out.append(body))
+    con = make_conclusion("NO_PROVEN_EDGE", -47.8, "CONTRADICT", True)
+    con["oscillator"] = _osc("UNPROVEN", -0.63)
+    con["oscillator"]["evidence"] = dict(OSC_EVIDENCE, yearly={"<script>": 0.1})
+    render_market_hero(build_market_read(con, SYN_RC, {"n_live": "<img src=x onerror=alert(1)>"}))
+    for bad in (None, {}, {"numbers": [None, {"label": "<b>x</b>"}], "side": "<x>"}):
+        render_market_hero(bad)
+    html = "\n".join(out)
+    assert "<script" not in html and "<img" not in html and "<b>x" not in html
+    assert "Unproven" in html and "sell-side" in html.lower()
 
 
 if __name__ == "__main__":

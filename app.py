@@ -37,22 +37,25 @@ if str(PROJECT_ROOT) in sys.path:
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.config import (  # noqa: E402
-    AARAMBH_FWD_HORIZON, COMPANY, DEFAULT_PREDICTORS, PRODUCT_NAME, TIMEFRAME_TRADING_DAYS, VERSION,
+    AARAMBH_FWD_HORIZON, COMPANY, DEFAULT_PREDICTORS, TIMEFRAME_TRADING_DAYS, VERSION,
 )
 from pipeline.config import PipelineConfig  # noqa: E402
 from pipeline.inputs import InputError, sheet_content_hash  # noqa: E402
 from pipeline.run import SESSION_KEYS, run_pipeline  # noqa: E402
-from ui.components import build_hero_verdict, esc, render_header, render_hero_card, section_gap  # noqa: E402
-from ui.copy import LANDING_CARDS, TAGLINE, TAGLINE_EXPLAINER  # noqa: E402
+from ui.components import esc, pretty_date  # noqa: E402
+from ui.copy import (  # noqa: E402
+    ABOUT_LINES, INTEL_HELP_PLAIN, LANDING_FOOTNOTE, LANDING_INTRO, LANDING_STEPS, PRODUCT_TAGLINE, PRODUCT_TITLE,
+)
 from ui.tabs.tab_aarambh import render_aarambh_tab  # noqa: E402
-from ui.tabs.tab_convergence import render_convergence_tab  # noqa: E402
 from ui.tabs.tab_data import render_data_tab  # noqa: E402
-from ui.tabs.tab_diagnostics import render_diagnostics_tab  # noqa: E402
+from ui.tabs.tab_evidence import render_evidence_tab  # noqa: E402
 from ui.tabs.tab_nirnay import render_nirnay_tab  # noqa: E402
+from ui.tabs.tab_overview import render_overview_tab  # noqa: E402
 from ui.tabs.tab_precedent import render_precedent_tab  # noqa: E402
 from ui.theme import inject_css, progress_bar  # noqa: E402
 
 SOURCES = ("Google Sheets", "Upload", "Synthetic demo")
+TAB_NAMES = ("Overview", "Aarambh", "Nirnay", "Precedent", "Evidence", "Data")
 SYNTH_LABEL = "SYNTHETIC DEMO DATA"
 SYNTH_SEED = 7
 _RESULTS_CACHE_MAX = 3
@@ -60,12 +63,7 @@ _RESULTS_CACHE_MAX = 3
 _DERIVED_KEYS = SESSION_KEYS + ("data", "run_analysis", "results_cache", "_result_key", "_sheet_info",
                                 "_sources_kind", "_synthetic_sources", "_force_next", "_today",
                                 "precedent_summary", "_prec_key", "tf_selected")
-_INTEL_HELP = (
-    "ON: on days Nirnay CONTRADICTS Aarambh, the conclusion's conviction is multiplied by κ ≤ 1 — "
-    "but only if the walk-forward Convergence-Lift test passes on this data (κ is re-estimated every run "
-    "from the data in hand; nothing is stored). If the test does not pass, κ = 1 and ON equals OFF. "
-    "Nirnay can never add conviction or flip the direction. OFF: κ ≡ 1 — the conclusion is pure Aarambh."
-)
+_INTEL_HELP = INTEL_HELP_PLAIN
 
 
 def _clear_derived(keep_data: bool = False) -> None:
@@ -93,51 +91,55 @@ def _load_sheet(url: str, force: bool):
 
 # ─── static pages ────────────────────────────────────────────────────────────
 def _render_landing_page() -> None:
-    section_gap()
-    for col, (cls, title, text, spec) in zip(st.columns(3, gap="small"), LANDING_CARDS):
-        rows = "".join(f"<span>{esc(k)}:</span> {esc(v)}<br>" for k, v in spec)
-        col.markdown(f"<div class='system-card {esc(cls)}'><h3>{esc(title)}</h3><p>{esc(text)}</p>"
-                     f"<div class='spec'>{rows}</div></div>", unsafe_allow_html=True)
-    section_gap()
-    st.markdown(f"<div class='landing-prompt'><h4>TWO SYSTEMS. ONE CONCLUSION.</h4><p>{esc(TAGLINE_EXPLAINER)}</p>"
-                "<h4>AWAITING DATA</h4><p>Load data in the <strong>Sidebar</strong> (Google Sheet, CSV/Excel upload, "
-                "or the clearly labelled synthetic demo), choose a <strong>Target</strong> and <strong>Predictors"
-                "</strong>, then <strong>Run Analysis</strong>.</p></div>", unsafe_allow_html=True)
+    steps = "".join(f'<div class="nk-step"><div class="nk-step-n">{i}</div><h4>{esc(t)}</h4><p>{esc(d)}</p></div>'
+                    for i, (t, d) in enumerate(LANDING_STEPS, start=1))
+    st.markdown(
+        f'<div class="nk-landing"><div class="nk-brand-lg">{esc(PRODUCT_TITLE)}<span>निष्कर्ष</span></div>'
+        f'<h1>{esc(PRODUCT_TAGLINE)}</h1><p class="nk-lede">{esc(LANDING_INTRO)}</p>'
+        f'<div class="nk-steps">{steps}</div><p class="nk-landing-foot">{esc(LANDING_FOOTNOTE)}</p></div>',
+        unsafe_allow_html=True)
 
 
 def _render_footer() -> None:
     ist_now = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
-    st.markdown(f'<div class="app-footer"><div class="content">© {ist_now.year} <strong>{esc(PRODUCT_NAME)}</strong>'
-                f' · {esc(COMPANY)} · v{esc(VERSION)} · {ist_now:%Y-%m-%d %H:%M:%S} IST</div></div>',
-                unsafe_allow_html=True)
+    st.markdown(f'<div class="nk-footer">{esc(PRODUCT_TITLE)} v{esc(VERSION)} · {esc(COMPANY)} · '
+                f'{ist_now:%d %b %Y, %H:%M} IST · Not investment advice.</div>', unsafe_allow_html=True)
 
 
 def _render_synthetic_banner() -> None:
-    st.error(f"**{SYNTH_LABEL}** — a seeded, simulated world (seed {SYNTH_SEED}). Nothing on this page is "
-             "about the real market.")
+    st.markdown(f'<div class="nk-banner synth"><b>{esc(SYNTH_LABEL)}</b> — a seeded, simulated market (seed '
+                f'{SYNTH_SEED}). Nothing on this page is about the real market.</div>', unsafe_allow_html=True)
 
 
-def _render_verdict(ss) -> None:
-    """Hero: renders the conclusion layer's verdict (C-V2) — no statistics computed here."""
-    prec = ss.get("precedent") or {}
-    signal = ss["engine"].get_current_signal() if ss.get("engine") is not None else {}
-    render_hero_card(build_hero_verdict(ss.get("conclusion"), signal, prec.get("hero"), ss.get("run_config")))
-    section_gap()
+def _render_topbar(rc: dict, con: dict) -> str:
+    """Brand + run context on the left, the page-wide date range on the right. Returns the range."""
+    ss = st.session_state
+    frames = list(TIMEFRAME_TRADING_DAYS) + ["ALL"]
+    if ss.get("tf_selected") not in frames:
+        ss["tf_selected"] = "6M"
+    left, right = st.columns([3, 1.25], vertical_alignment="bottom")
+    as_of = pretty_date(con.get("as_of") or rc.get("as_of"))
+    left.markdown(
+        f'<div class="nk-topbar"><div class="nk-wordmark">{esc(PRODUCT_TITLE)}<span>निष्कर्ष</span></div>'
+        f'<div class="nk-context">Nifty 50 market read · as of {esc(as_of)} · model target '
+        f'{esc(rc.get("target") or "—")}</div></div>', unsafe_allow_html=True)
+    with right:
+        st.segmented_control("Date range", frames, key="tf_selected", required=True, label_visibility="collapsed",
+                             format_func=lambda f: "All" if f == "ALL" else f, width="stretch")
+    return ss.get("tf_selected") or "6M"
 
 
 # ─── main ────────────────────────────────────────────────────────────────────
 def main() -> None:
-    st.set_page_config(page_title="NISHKARSH | Unified Analysis", layout="wide", initial_sidebar_state="expanded")
+    st.set_page_config(page_title="Nishkarsh", page_icon="◐", layout="wide", initial_sidebar_state="expanded")
     inject_css()
     ss = st.session_state
 
+    synthetic = ss.get("_sources_kind") == "Synthetic demo"
     with st.sidebar:
-        st.markdown(f'<div style="text-align:center;padding:0.5rem 0 0.75rem 0;"><div style="font-family:var(--display);'
-                    f'font-size:1.35rem;font-weight:700;color:var(--amber);">{esc(PRODUCT_NAME.upper())}</div>'
-                    f'<div style="font-family:var(--data);color:var(--ink-tertiary);font-size:0.6rem;">निष्कर्ष · v{esc(VERSION)}'
-                    f'</div></div>', unsafe_allow_html=True)
-        st.caption(TAGLINE_EXPLAINER)
-        st.markdown('<div class="sidebar-title">Data Source</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="nk-side-brand">{esc(PRODUCT_TITLE)}<span>v{esc(VERSION)}</span></div>',
+                    unsafe_allow_html=True)
+        st.markdown('<div class="nk-side-label">Data source</div>', unsafe_allow_html=True)
         source = st.radio("Source", SOURCES, horizontal=False, label_visibility="collapsed", key="data_source")
         if ss.get("_sources_kind") and ss["_sources_kind"] != source:
             _clear_derived()                       # switching source discards everything derived
@@ -145,7 +147,7 @@ def main() -> None:
 
         if source == "Upload":
             up = st.file_uploader("CSV/Excel", type=["csv", "xlsx"], label_visibility="collapsed")
-            if up is not None and not has_data and st.button("Run Analysis", type="primary"):
+            if up is not None and not has_data and st.button("Run analysis", type="primary", width="stretch"):
                 try:
                     df = pd.read_csv(up) if up.name.lower().endswith(".csv") else pd.read_excel(up)
                 except Exception as e:  # noqa: BLE001
@@ -156,19 +158,19 @@ def main() -> None:
                           _sheet_info=FetchResult(None, "live", None, [], f"upload {up.name}"))
                 st.rerun()
             elif up is None and not has_data:
-                st.info("Upload a CSV or Excel file to begin.")
+                st.caption("Upload a CSV or Excel file to begin.")
         elif source == "Google Sheets":
             secret = _secret_sheet_url()
             if secret:
-                st.caption("Using configured sheet.")
+                st.caption("Using the configured sheet.")
                 url = secret
             else:
                 url = st.text_input("Sheet URL", value="", label_visibility="collapsed",
-                                    placeholder="Google Sheets URL (or set AARAMBH_GOOGLE_SHEETS_URL)")
-            if (not has_data and st.button("Run Analysis", type="primary")) or (has_data and ss.get("_force_next")
-                                                                                 and ss.get("_sources_kind") == source):
+                                    placeholder="Paste a Google Sheets link")
+            if (not has_data and st.button("Run analysis", type="primary", width="stretch")) or (
+                    has_data and ss.get("_force_next") and ss.get("_sources_kind") == source):
                 if not url:
-                    st.error("Provide a Google Sheets URL or configure one in secrets.")
+                    st.error("Paste a Google Sheets link (or configure one in secrets).")
                     return
                 with st.spinner("Loading sheet…"):
                     r = _load_sheet(url, force=bool(ss.get("_force_next")))
@@ -181,8 +183,8 @@ def main() -> None:
                 if not has_data:
                     st.rerun()
         else:
-            st.warning(f"**{SYNTH_LABEL}** — offline, seeded simulation. Not market data.")
-            if not has_data and st.button("Run Analysis", type="primary"):
+            st.caption("A seeded, simulated market — not market data.")
+            if not has_data and st.button("Run analysis", type="primary", width="stretch"):
                 from data.sources import FetchResult
                 from data.synthetic import synthetic_world
                 df, src = synthetic_world(SYNTH_SEED)
@@ -191,12 +193,25 @@ def main() -> None:
                           _today=str(pd.Timestamp(df["DATE"].iloc[-1]).date()),
                           _sheet_info=FetchResult(None, info.provenance, info.as_of, [], info.note))
                 st.rerun()
-        st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+        if has_data:
+            b1, b2 = st.columns(2, gap="small")
+            if b1.button("Refresh data", type="secondary", width="stretch", disabled=synthetic,
+                         help="Re-fetch live data (bypassing caches), then re-run."):
+                _clear_derived(keep_data=True)
+                ss["_force_next"] = True
+                st.rerun()
+            if b2.button("Reset", type="secondary", width="stretch", help="Discard the data and all results."):
+                _clear_derived()
+                st.rerun()
+    settings_box = st.sidebar.container()
+    with st.sidebar:
+        with st.expander("About Nishkarsh", expanded=False):
+            st.markdown("".join(f'<p class="nk-about">{esc(line)}</p>' for line in ABOUT_LINES),
+                        unsafe_allow_html=True)
 
     df = ss.get("data") if ss.get("run_analysis") else None
     synthetic = ss.get("_sources_kind") == "Synthetic demo"
     if df is None:
-        render_header(PRODUCT_NAME.upper(), TAGLINE)
         _render_landing_page()
         _render_footer()
         return
@@ -208,14 +223,13 @@ def main() -> None:
         st.error("The sheet needs a date column and at least 2 numeric columns.")
         return
 
-    with st.sidebar:
-        st.markdown('<div class="sidebar-title">Model Configuration</div>', unsafe_allow_html=True)
+    with settings_box, st.expander("Model settings", expanded=False):
         num_choices = [c for c in numeric_cols if c not in date_cols]
         tgt0 = ss.get("active_target") if ss.get("active_target") in num_choices else (
             "NIFTY50_PE" if "NIFTY50_PE" in num_choices else num_choices[0])
-        target = st.selectbox("Target Variable", num_choices, index=num_choices.index(tgt0))
+        target = st.selectbox("Target series", num_choices, index=num_choices.index(tgt0))
         d0 = ss.get("active_date_col") if ss.get("active_date_col") in date_cols else date_cols[0]
-        date_col = st.selectbox("Date Column (required)", date_cols, index=date_cols.index(d0))
+        date_col = st.selectbox("Date column", date_cols, index=date_cols.index(d0))
         if target != ss.get("active_target") or date_col != ss.get("active_date_col"):
             ss["active_target"], ss["active_date_col"] = target, date_col
             if "active_features" in ss:
@@ -223,27 +237,15 @@ def main() -> None:
         available = [c for c in num_choices if c != target]
         if not ss.get("active_features"):
             ss["active_features"] = tuple(p for p in DEFAULT_PREDICTORS if p in available) or tuple(available[:3])
-        with st.expander("Predictor Columns", expanded=False):
-            st.caption("The predictors the displayed run used — edit, then Apply.")
-            key = "pred_select::" + "|".join(sorted(ss["active_features"]))
-            staged = st.multiselect("Predictors", available, default=[f for f in ss["active_features"] if f in available],
-                                    label_visibility="collapsed", key=key)
-            changed = bool(staged) and set(staged) != set(ss["active_features"])
-            if st.button("Apply Predictors" if changed else "No changes", disabled=not changed,
-                         type="primary" if changed else "secondary"):
-                ss["active_features"] = tuple(staged)
-                st.rerun()
-        st.markdown('<div class="sidebar-title">Intelligence</div>', unsafe_allow_html=True)
-        kappa = st.toggle("Intelligence (κ shrink)", value=True, help=_INTEL_HELP, key="intel_toggle")
-        st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-        if st.button("Reset Analysis", type="secondary", width="stretch"):
-            _clear_derived()
+        key = "pred_select::" + "|".join(sorted(ss["active_features"]))
+        staged = st.multiselect("Predictors", available, default=[f for f in ss["active_features"] if f in available],
+                                key=key, help="The inputs the displayed run used — edit, then apply.")
+        changed = bool(staged) and set(staged) != set(ss["active_features"])
+        if st.button("Apply predictors" if changed else "Predictors up to date", disabled=not changed,
+                     type="primary" if changed else "secondary", width="stretch"):
+            ss["active_features"] = tuple(staged)
             st.rerun()
-        if st.button("Refresh Data", type="secondary", width="stretch", disabled=synthetic):
-            _clear_derived(keep_data=True)
-            ss["_force_next"] = True
-            st.rerun()
-        st.caption("Reset = discard data and all results · Refresh = re-fetch live data (bypassing caches), then re-run")
+        kappa = st.toggle("Intelligence mode", value=True, help=_INTEL_HELP, key="intel_toggle")
 
     features = tuple(f for f in ss["active_features"] if f in available)
     try:
@@ -299,28 +301,12 @@ def _render_results(ss, synthetic: bool) -> None:
     engine, aarambh_ts, con = ss["engine"], ss["aarambh_ts"], ss.get("conclusion") or {}
     target = rc["target"]
     forward = bool(rc.get("forward_mode", con.get("forward_mode", True)))
-    render_header(PRODUCT_NAME.upper() + (f" · {SYNTH_LABEL}" if synthetic else ""),
-                  f"{target} · {len(rc['features'])} predictors · as of {rc.get('as_of') or 'n/a'} · {TAGLINE}")
     if synthetic:
         _render_synthetic_banner()
-    warns = [w for w in rc.get("warnings") or [] if not str(w).startswith("SYNTHETIC")]
-    if warns:
-        with st.expander(f"Data & provenance warnings ({len(warns)})", expanded=any(
-                k in w for w in warns for k in ("Stale", "STALE", "FALLBACK", "EMPTY", "failed"))):
-            for w in warns:
-                st.warning(w)
-    _render_verdict(ss)
+    tf = _render_topbar(rc, con)
 
     signal, model_stats, regime_stats = engine.get_current_signal(), engine.get_model_stats(), engine.get_regime_stats()
     ts = aarambh_ts.reset_index(drop=True)
-    if "tf_selected" not in ss:
-        ss["tf_selected"] = "6M"
-    frames = list(TIMEFRAME_TRADING_DAYS) + ["ALL"]
-    for col, tf in zip(st.columns(len(frames), gap="small"), frames):
-        if col.button(tf, key=f"tf_{tf}", type="primary" if ss["tf_selected"] == tf else "secondary", width="stretch"):
-            ss["tf_selected"] = tf
-            st.rerun()
-    tf = ss["tf_selected"]
     ts_f = ts if tf == "ALL" else ts.iloc[max(0, len(ts) - int(TIMEFRAME_TRADING_DAYS[tf])):]
     # One date window for every tab (TIMEFRAME_TRADING_DAYS rows of the Aarambh frame).
     start = None if tf == "ALL" or not len(ts_f) else pd.Timestamp(ts_f["Date"].iloc[0])
@@ -333,9 +319,9 @@ def _render_results(ss, synthetic: bool) -> None:
             st.markdown(f'<div class="warning-box"><div><div class="title">Error in {esc(name)}</div>'
                         f'<div class="content">{esc(e)}</div></div></div>', unsafe_allow_html=True)
 
-    tabs = st.tabs(["CONVERGENCE", "AARAMBH", "NIRNAY", "PRECEDENT", "DIAGNOSTICS", "DATA"])
+    tabs = st.tabs(list(TAB_NAMES))
     with tabs[0]:
-        _safe("Convergence", lambda: render_convergence_tab(start))
+        _safe("Overview", lambda: render_overview_tab(start, tf))
     with tabs[1]:
         _safe("Aarambh", lambda: render_aarambh_tab(engine, ts_f, ts, signal, model_stats, regime_stats, target,
                                                     forward, con))
@@ -344,7 +330,7 @@ def _render_results(ss, synthetic: bool) -> None:
     with tabs[3]:
         _safe("Precedent", lambda: render_precedent_tab(ts, target, horizon, forward))
     with tabs[4]:
-        _safe("Diagnostics", lambda: render_diagnostics_tab(engine, signal))
+        _safe("Evidence", lambda: render_evidence_tab(engine, signal, start))
     with tabs[5]:
         _safe("Data", lambda: render_data_tab(ts_f, ts, target, forward))
     _render_footer()

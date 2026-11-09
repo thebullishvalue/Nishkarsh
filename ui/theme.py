@@ -25,16 +25,17 @@ import streamlit as st
 
 from core.config import COLOR_AMBER, COLOR_CYAN, COLOR_GREEN
 
-# Path to external CSS file
+# Path to external CSS files: the Obsidian base, then the product layer (typography, cards, Overview)
 CSS_PATH = Path(__file__).parent / "theme.css"
+PRODUCT_CSS_PATH = Path(__file__).parent / "product.css"
 
 # ── Shared Plotly layout config ─────────────────────────────────────────────
 # Eliminates massive duplication across all tab files.
 
-PLOTLY_FONT = dict(family="JetBrains Mono, monospace", color="#94A3B8", size=10)
+PLOTLY_FONT = dict(family="Inter, -apple-system, sans-serif", color="#94A3B8", size=11)
 PLOTLY_HOVERLABEL = dict(
-    bgcolor="rgba(10, 14, 23, 0.95)",
-    font=dict(family="JetBrains Mono, monospace", size=11, color="#F1F5F9"),
+    bgcolor="rgba(13, 18, 32, 0.96)",
+    font=dict(family="Inter, -apple-system, sans-serif", size=12, color="#F1F5F9"),
     bordercolor="rgba(255,255,255,0.08)",
     align="left",
 )
@@ -44,7 +45,7 @@ PLOTLY_LEGEND = dict(
     y=1.02,
     xanchor="right",
     x=1,
-    font=dict(size=10, family="JetBrains Mono, monospace"),
+    font=dict(size=11, family="Inter, -apple-system, sans-serif"),
     bgcolor="rgba(0,0,0,0)",
 )
 PLOTLY_MARGIN = dict(t=20, l=50, r=20, b=40)
@@ -98,7 +99,7 @@ def style_axes(fig, y_title: str = "", x_title: str = "", y_range=None, row=None
         zeroline=False,
         linecolor="rgba(255,255,255,0.04)",
         title_text=x_title,
-        tickfont=dict(size=9, family="JetBrains Mono, monospace", color="#64748B"),
+        tickfont=dict(size=10, family="Inter, -apple-system, sans-serif", color="#7C879A"),
         # Vertical crosshair — dashed dim grey
         showspikes=True,
         spikemode="across",
@@ -118,7 +119,7 @@ def style_axes(fig, y_title: str = "", x_title: str = "", y_range=None, row=None
         linecolor="rgba(255,255,255,0.04)",
         title_text=y_title,
         range=y_range,
-        tickfont=dict(size=9, family="JetBrains Mono, monospace", color="#64748B"),
+        tickfont=dict(size=10, family="Inter, -apple-system, sans-serif", color="#7C879A"),
         hoverformat=".2f",
         **kw,
     )
@@ -130,14 +131,10 @@ def inject_css() -> None:
     Loads from external theme.css file for maintainability.
     Injects on every render — Streamlit deduplicates identical <style> blocks.
     """
-    if CSS_PATH.exists():
-        # Explicit UTF-8: theme.css embeds Devanagari strings, and
-        # Path.read_text() with no encoding falls back to the OS locale
-        # (commonly cp1252 on Windows) → UnicodeDecodeError before anything
-        # renders. Verified: the file does not decode under cp1252.
-        css = CSS_PATH.read_text(encoding="utf-8")
-    else:
-        css = "/* theme.css not found */"
+    # Explicit UTF-8: theme.css embeds Devanagari strings, and Path.read_text() with no
+    # encoding falls back to the OS locale (commonly cp1252 on Windows) → UnicodeDecodeError.
+    css = "\n".join(p.read_text(encoding="utf-8") if p.exists() else f"/* {p.name} not found */"
+                    for p in (CSS_PATH, PRODUCT_CSS_PATH))
 
     st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
 

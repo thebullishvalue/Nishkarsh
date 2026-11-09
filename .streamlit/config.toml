@@ -23,3 +23,10 @@ magicEnabled = false
 
 [theme]
 base = "dark"
+# Product typography: Inter for text, IBM Plex Mono for code/numerals; Obsidian palette + amber accent.
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap, sans-serif"
+codeFont = "'IBM Plex Mono':https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap, monospace"
+primaryColor = "#D4A853"
+backgroundColor = "#050810"
+secondaryBackgroundColor = "#111827"
+textColor = "#E8EDF5"

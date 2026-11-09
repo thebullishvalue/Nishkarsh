@@ -13,6 +13,40 @@ Sections used: **Added · Changed · Deprecated · Removed · Fixed · Security 
 
 ---
 
+## [2.1.0] — 2026-11-09 — *Agreement Oscillator · NSE archives · product UI*
+
+### Added
+- **The Agreement Oscillator** — `SAO = consensus × agreement ratio` (+ = both systems
+  lean buy-side), computed and **measured on every run** (`conclusion.oscillator`):
+  status VALIDATED only when the pre-registered rule passes on the data in hand,
+  otherwise UNPROVEN with the numbers and the sample's minimum detectable effect.
+- **Pre-registered real-data measurement** (`docs/research/AGREEMENT_OSCILLATOR_*`):
+  committed before the run; on all 50 constituents 2020–2026 the signed oscillator
+  shows IC +0.091 (HAC t 1.92, 5/7 years positive) but is not significant (Holm p
+  0.53, 163 windows) → shown as a context gauge, not a buy/sell signal. The unsigned
+  agreement level, agreement extremes and Nirnay alone carry nothing. The
+  Convergence-Lift test gave the first real support for the two-system thesis
+  (Aarambh IC +0.084 when Nirnay confirms vs −0.261 when it contradicts, p 0.033),
+  not yet stable out of sample. Edge Ledger L-05 → PROVISIONAL, new L-12.
+- **NSE archives as an official market-data source** (`data/nse_archive.py`):
+  constituent list, daily bhavcopies (ISIN-linked across renames, splits/bonuses
+  back-adjusted with NSE's own adjusted previous close, cached per day) and index
+  closes. `AutoSources` (the app default) uses Yahoo first and NSE when Yahoo is
+  throttled; the CLI gains `--market auto|yahoo|nse`.
+- When ^NSEI is unavailable the return label is the sheet's own NIFTY column.
+
+### Changed — a finished product, not a diagnostics terminal
+- New **Overview** tab (default): a plain-language market read, the Agreement
+  Oscillator gauge with its measured status beside it, its history against the
+  Nifty, Aarambh and Nirnay cards, "How reliable is this?" and data notes.
+- New **Evidence** tab holds the technical measurement (with a glossary); the
+  Convergence and Diagnostics tabs are folded into it.
+- Product typography (Inter, monospace only for key numerals), sentence-case labels,
+  a compact sidebar (data source, actions, Model settings, About), a concise landing
+  page. No internal symbols (zA, κ, IC) on the Overview.
+
+---
+
 ## [2.0.2] — 2026-11-08 — *First real-data evidence*
 
 ### Added

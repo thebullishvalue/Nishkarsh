@@ -76,13 +76,74 @@ LANDING_CARDS = (
 )
 
 
+# ── product copy: Overview, landing, sidebar (plain language — no internal symbols) ──
+PRODUCT_TITLE = "Nishkarsh"
+PRODUCT_TAGLINE = "Two independent reads of the Nifty 50 — and how strongly they agree."
+LANDING_INTRO = (
+    "Nishkarsh reads the market two ways: a top-down forecast (Aarambh) and a bottom-up scan of the "
+    "Nifty's stocks (Nirnay). It shows where the two agree, and how far each read has earned your trust "
+    "on past data.")
+LANDING_STEPS = (
+    ("Choose your data", "Connect your Google Sheet, upload a CSV or Excel file, or try the built-in demo."),
+    ("Run the analysis", "Press Run analysis in the sidebar. Real data takes about a minute."),
+    ("Read the overview", "Today's market read, the Agreement Oscillator, and how reliable each part has been."),
+)
+LANDING_FOOTNOTE = "Nothing here is called a signal until the data prove it. Not investment advice."
+ABOUT_LINES = (
+    "Nishkarsh (निष्कर्ष, “conclusion”) reads the Nifty 50 in two independent ways.",
+    f"Aarambh is top-down: a model that forecasts the next {AARAMBH_FWD_HORIZON} trading days from the "
+    "series in your sheet.",
+    "Nirnay is bottom-up: it checks every Nifty stock for overbought and oversold conditions.",
+    "The Agreement Oscillator shows how strongly, and on which side, the two agree.",
+    "Every claim is graded on history the models never saw; the Evidence tab shows the figures.",
+    "Not investment advice.",
+)
+INTEL_HELP_PLAIN = (
+    "When on, days where Nirnay disagrees with Aarambh can reduce the conclusion's conviction — but only "
+    "if this run's data show that agreement improves accuracy. Otherwise on and off give the same result. "
+    "Nirnay can never add conviction or flip the direction.")
+
+# Agreement strength words for |oscillator| (a display mapping, stated wherever it is used).
+AGREEMENT_BANDS = ((0.6, "strong"), (0.3, "moderate"), (0.0, "weak"))
+AGREEMENT_BANDS_TEXT = "strong ≥ 0.6 · moderate ≥ 0.3 · weak below"
+OSC_NAME = "Agreement Oscillator"
+OSC_SCALE_TEXT = ("−1: both systems lean sell-side, fully aligned · 0: they disagree · "
+                  "+1: both lean buy-side, fully aligned")
+# status → (chip label, chip class, one plain sentence). Buy/sell words are reserved for VALIDATED.
+OSC_STATUS = {
+    "VALIDATED": ("Validated", "good",
+                  "Its readings have lined up with the Nifty's next {h} trading days on this data, clearing "
+                  "the bar that was set before it was tested."),
+    "UNPROVEN": ("Unproven", "caution",
+                 "A context gauge: it shows how much the two systems agree, not where the market goes next. "
+                 "Its track record is not yet strong enough to act on."),
+    "INSUFFICIENT_DATA": ("Not enough data", "muted",
+                          "There is not enough history with both systems running to measure this gauge yet."),
+}
+# conclusion trust tier → (plain label, chip class). Rendered, never re-graded.
+TRUST_PLAIN = {
+    "TRADEABLE_EDGE": ("Proven, survives costs", "good"),
+    "DIRECTIONAL_EDGE": ("Direction proven", "good"),
+    "NO_PROVEN_EDGE": ("Not proven yet", "caution"),
+    "INVERTED": ("Has pointed the wrong way", "bad"),
+    "INSUFFICIENT_DATA": ("Not enough history", "muted"),
+}
+TRUST_PLAIN_SENTENCE = {
+    "TRADEABLE_EDGE": "Aarambh's direction has been right more often than chance, and the edge survived trading costs.",
+    "DIRECTIONAL_EDGE": ("Aarambh's direction has been right more often than chance, but not by enough to trade "
+                         "after costs."),
+    "NO_PROVEN_EDGE": "So far Aarambh's direction has not been right often enough to rule out luck.",
+    "INVERTED": "Aarambh has pointed the wrong way more often than chance — its direction is not used.",
+    "INSUFFICIENT_DATA": "There is not enough history yet to grade Aarambh's direction.",
+}
+
 # ── per-mode tables ──────────────────────────────────────────────────────────
 _FORWARD = {
     "key": "forward",
-    "badge": f"FORWARD MODE · {AARAMBH_FWD_HORIZON}d forecast is the directional head",
+    "badge": f"Forward mode · the {AARAMBH_FWD_HORIZON}-day forecast is the directional head",
     "head_name": "forecast",
     "quality_desc": ("Magnitude fit of the out-of-sample forecast. A return forecast's R² sits near "
-                     "zero by nature; direction is graded in Diagnostics → Edge Ledger."),
+                     "zero by nature; direction is graded in Evidence → Edge ledger."),
     "r2_label": "OOS R² (MAGNITUDE)",
     "r2_sub": "near 0 is expected for a return forecast — not the verdict",
     "r2_tip": ("Share of the realized forward change's variance explained by the forecast on "
@@ -131,10 +192,10 @@ _FORWARD = {
 
 _LEVELS = {
     "key": "levels",
-    "badge": f"LEVELS MODE · {LEVELS_TAG}",
+    "badge": f"Levels mode · {LEVELS_TAG}",
     "head_name": "valuation head",
     "quality_desc": (f"Fit of the walk-forward fair-value regression — {LEVELS_TAG}. Level fit says "
-                     "nothing about forward direction; see Diagnostics → Edge Ledger."),
+                     "nothing about forward direction; see Evidence → Edge ledger."),
     "r2_label": "OOS R² (LEVEL FIT)",
     "r2_sub": "variance of the level explained out-of-sample — not a forecast grade",
     "r2_tip": ("Share of the target LEVEL's variance explained on out-of-sample rows. A high level R² "
@@ -179,7 +240,7 @@ _LEVELS = {
 }
 
 CONVERGENCE = {
-    "title": "Conclusion",
+    "title": "How the conclusion is built",
     "desc": (f"C = 100·tanh(zA/2)·κ · {SIGN_C}. Aarambh's causal z (zA) is the head; Nirnay's zN can only "
              f"shrink it (κ ≤ 1) on CONTRADICT days, and only after the lift test passes."),
     "c_axis": f"C ({SIGN_Z})",

@@ -3,7 +3,7 @@ Nishkarsh v2 — Aarambh tab: the walk-forward engine, mode-aware (A4-08, A6-08,
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
 FORWARD mode (product path): the out-of-sample forecast of the h-day forward change is the
-directional head; its edge is graded by the conclusion layer (Diagnostics → Edge Ledger).
+directional head; its edge is graded by the conclusion layer (Evidence → Edge ledger).
 LEVELS mode: a fair-value regression, labelled "valuation context — falsified as a forecaster".
 All wording comes from ``ui.copy.mode_copy``; every axis states its sign convention
 (engine conviction / AvgZ / Z_*: − = bullish; ForecastZ: + = expected rise).
@@ -63,7 +63,7 @@ def _edge_pointer(signal: dict, con: dict, mc: dict, forward: bool) -> None:
     body = "Conclusion layer: " + esc(trust.get("text") or "no edge graded in this run.")
     if not forward:
         body += "<br>Engine levels test: " + esc(signal.get("edge_assessment") or "—")
-    body += "<br>Full evidence: Diagnostics → Edge Ledger."
+    body += "<br>Full evidence: Evidence → Edge ledger."
     color = "success" if tier in CALL_TIERS else "danger" if tier == "INVERTED" else "neutral"
     render_interpretation_card(mc["edge_title"], body, color)
 
@@ -196,10 +196,10 @@ def _state_section(signal: dict, regime_stats: dict, mc: dict, forward: bool) ->
     render_section_header(mc["regime_title"], mc["regime_desc"], icon="crosshair", accent="emerald")
     c1, c2, c3 = st.columns(3)
     with c1:
-        render_metric_card(mc["breadth_bull"].upper(), fmt(signal.get("oversold_breadth"), ".0f", suffix="%"),
+        render_metric_card(mc["breadth_bull"], fmt(signal.get("oversold_breadth"), ".0f", suffix="%"),
                            "share of lookbacks in the bullish zone (descriptive)")
     with c2:
-        render_metric_card(mc["breadth_bear"].upper(), fmt(signal.get("overbought_breadth"), ".0f", suffix="%"),
+        render_metric_card(mc["breadth_bear"], fmt(signal.get("overbought_breadth"), ".0f", suffix="%"),
                            "share of lookbacks in the bearish zone (descriptive)")
     with c3:
         sub = "classification of today's extension"

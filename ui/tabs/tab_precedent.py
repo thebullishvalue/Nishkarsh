@@ -59,7 +59,7 @@ def _period_card(p: dict, target: str, holds: tuple[int, ...], forward: bool) ->
 <div class="position-card analog-card {tier_cls}">
   <div class="analog-card-head">
     <div class="analog-card-id">
-      <div class="analog-eyebrow">Analog · Historical Match</div>
+      <div class="analog-eyebrow">Historical match</div>
       <div class="analog-symbol">{esc(p.get('date', '—'))}</div>
     </div>
     <span class="position-card-badge {badge_cls}">{esc(_zone_word(z, forward))}</span>
@@ -115,7 +115,7 @@ def render_precedent_tab(ts, target: str, horizon: int, forward_mode: bool) -> N
             sig = p is not None and p < EDGE_ALPHA and u is not None and pos is not None
             cls = ("success" if pos > u else "danger") if sig else "neutral"
             with col:
-                render_metric_card(f"+{h}D · ANALOGS UP", f"{k}/{fmt(n, '.0f')}",
+                render_metric_card(f"After {h} days · analogs that rose", f"{k}/{fmt(n, '.0f')}",
                                    f"vs {fmt(u, '.0f', suffix='%')} unconditional · binomial p={fmt(p, '.2f')}"
                                    f" · median {fmt(s.get('median'), '+.2f', suffix='%')}"
                                    + (" · significant" if sig else " · not significant"), cls)
@@ -137,7 +137,7 @@ def render_precedent_tab(ts, target: str, horizon: int, forward_mode: bool) -> N
     section_gap()
     render_section_header(f"Extension Z vs Realized {int(horizon)}d Change of {target}",
                           f"One dot per non-overlapping {int(horizon)}d window · descriptive only — graded "
-                          "evidence lives in Diagnostics → Edge Ledger.", icon="chart", accent="rose")
+                          "evidence lives in Evidence → Edge ledger.", icon="chart", accent="rose")
     d = ts[["AvgZ", col]].iloc[:: int(horizon)].dropna()
     if len(d) < 5:
         st.caption("Too few windows to plot.")

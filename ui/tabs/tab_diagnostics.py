@@ -216,7 +216,7 @@ def _render_data_health(run_config: dict, run_report: dict) -> None:
         word = str(p.get("provenance") or "n/a")
         missing = p.get("missing") or []
         with col:
-            render_metric_card(f"{k.upper()}", word.upper(),
+            render_metric_card(str(k).capitalize(), word.capitalize(),
                                f"as of {p.get('as_of') or '—'} · {len(missing)} missing", _PROV_CLASS.get(word, "neutral"),
                                tooltip=str(p.get("note") or "") + (f" · missing: {', '.join(map(str, missing[:10]))}"
                                                                    if missing else ""))

@@ -62,28 +62,28 @@ def render_nirnay_tab(start_date=None) -> None:
         return
 
     n_live, n_uni = _last(df, "n_live"), _last(df, "n_universe")
-    live_txt = f"of {fmt(n_live, '.0f')} live names"
+    live_txt = f"of {fmt(n_live, '.0f')} stocks with live data"
     c = st.columns(6, gap="small")
     with c[0]:
-        render_metric_card("OVERSOLD", fmt(_last(df, "Oversold_Pct"), ".0f", suffix="%"),
-                           f"{live_txt} · beyond own OS_Cut", tooltip=NIRNAY["zone_desc"])
+        render_metric_card("Oversold", fmt(_last(df, "Oversold_Pct"), ".0f", suffix="%"),
+                           f"{live_txt}, past their own oversold cut", tooltip=NIRNAY["zone_desc"])
     with c[1]:
-        render_metric_card("OVERBOUGHT", fmt(_last(df, "Overbought_Pct"), ".0f", suffix="%"),
-                           f"{live_txt} · beyond own OB_Cut", tooltip=NIRNAY["zone_desc"])
+        render_metric_card("Overbought", fmt(_last(df, "Overbought_Pct"), ".0f", suffix="%"),
+                           f"{live_txt}, past their own overbought cut", tooltip=NIRNAY["zone_desc"])
     with c[2]:
-        render_metric_card("AVG UNIFIED OSC", fmt(_last(df, "Avg_Signal"), "+.2f"),
-                           "±10 scale · − = oversold (read bullish by the contrarian head)", tooltip=NIRNAY["avg_tip"])
+        render_metric_card("Average oscillator", fmt(_last(df, "Avg_Signal"), "+.2f"),
+                           "±10 scale · below 0 = oversold", tooltip=NIRNAY["avg_tip"])
     with c[3]:
-        render_metric_card("COVERAGE", f"{fmt(n_live, '.0f')} / {fmt(n_uni, '.0f')}",
-                           f"live / universe ({fmt(_last(df, 'coverage'), '.0%')})", tooltip=NIRNAY["coverage_desc"])
+        render_metric_card("Coverage", f"{fmt(n_live, '.0f')} / {fmt(n_uni, '.0f')}",
+                           f"stocks with live data ({fmt(_last(df, 'coverage'), '.0%')})", tooltip=NIRNAY["coverage_desc"])
     with c[4]:
-        render_metric_card("CUT CROSSINGS", f"{fmt(_last(df, 'Buy_Signals'), '.0f')} ↑ · {fmt(_last(df, 'Sell_Signals'), '.0f')} ↓",
-                           "per-stock crossings today (descriptive)", tooltip=NIRNAY["signals_desc"])
+        render_metric_card("Cut crossings today", f"{fmt(_last(df, 'Buy_Signals'), '.0f')} · {fmt(_last(df, 'Sell_Signals'), '.0f')}",
+                           "into oversold · into overbought (descriptive)", tooltip=NIRNAY["signals_desc"])
     with c[5]:
-        render_metric_card("HISTORY", f"{len(full)}", "trading days with live Nirnay data",
+        render_metric_card("History", f"{len(full):,}", "trading days with live data",
                            tooltip="Days with at least one live name; days with none are absent (NO_DATA).")
     render_interpretation_card(
-        "ADAPTIVE CUTS",
+        "Adaptive cuts",
         esc(f"Zone membership uses each stock's own adaptive cut: median live OS_Cut "
             f"{fmt(rep_n.get('os_cut_median_live'), '+.2f')} / OB_Cut {fmt(rep_n.get('ob_cut_median_live'), '+.2f')} "
             f"on the latest bar. Dispersion (cross-sectional std of the oscillator) today: "
