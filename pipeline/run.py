@@ -33,7 +33,7 @@ ProgressFn = Callable[..., None]
 PROVENANCE_KEYS = ("constituents", "macro", "ohlcv", "index", "sheet")
 SESSION_KEYS = ("engine", "aarambh_ts", "nirnay_daily", "nirnay_constituent_dfs", "anatomy_df",
                 "conclusion", "conclusion_frame", "conclusion_events", "precedent", "run_report",
-                "run_config")
+                "run_config", "label_levels")
 
 
 @dataclass
@@ -57,6 +57,7 @@ class PipelineResult:
     warnings: list = field(default_factory=list)
     run_report: dict = field(default_factory=dict)
     label_alignment: dict | None = None    # convergence.labels.label_alignment_check
+    label_levels: pd.Series | None = None  # the resolved return-label LEVELS (index price) — for display
 
     @property
     def synthetic(self) -> bool:
@@ -80,7 +81,8 @@ class PipelineResult:
                "nirnay_constituent_dfs": self.nirnay_constituent_dfs, "anatomy_df": self.anatomy_df,
                "conclusion": self.conclusion.to_dict(), "conclusion_frame": self.conclusion.frame,
                "conclusion_events": self.conclusion.events, "precedent": self.precedent,
-               "run_report": self.run_report, "run_config": self.run_config()}
+               "run_report": self.run_report, "run_config": self.run_config(),
+               "label_levels": self.label_levels}
         assert tuple(out) == SESSION_KEYS
         return out
 
@@ -363,7 +365,7 @@ def _run(sheet_df, cfg, sources, *, progress, log, force, sheet_info, today) -> 
     result = PipelineResult(config=cfg, prepared=prepared, engine=engine, aarambh_ts=aarambh_ts,
                             nirnay_daily=nirnay_daily, nirnay_constituent_dfs=dfs, nirnay_failures=failures,
                             anatomy_df=anatomy, conclusion=conclusion, precedent=precedent, macro=macro,
-                            label_alignment=label_alignment, provenance=prov, label_src=label_src, run_id=run_id, today=str(today_ts.date()),
+                            label_alignment=label_alignment, label_levels=levels, provenance=prov, label_src=label_src, run_id=run_id, today=str(today_ts.date()),
                             warnings=warnings)
     if result.synthetic:
         result.warnings.insert(0, "SYNTHETIC DEMO DATA — not market data; no conclusion here is about the real market.")
