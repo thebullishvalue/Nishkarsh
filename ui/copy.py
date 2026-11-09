@@ -1,11 +1,11 @@
 """
-Nishkarsh — user-facing copy, single-sourced. Nothing here computes anything.
+Nishkarsh — user-facing copy for the pages, single-sourced. Nothing here computes anything.
 
-Five pages answer five questions about ONE inference, the Nishkarsh Oscillator (NKO):
-Today (what does it read, and why), Drivers (what each system is seeing), Precedent (what
-happened after reads like this), Reliability (how far to trust it — with method, limits and
-glossary on the same page) and Data (is the data sound). Plain words on Today and Drivers; the
-technical terms live on Reliability next to their glossary.
+Seven pages (Overview · Aarambh · Nirnay · Convergence · Precedent · System · Data) read ONE
+inference, the Nishkarsh Oscillator (NKO). The read's own wording (lean words, pillar and input
+names, the levels-mode tag, the synthetic banner) is single-sourced in ``convergence.verdict``
+— the layer that builds the verdict — and re-exported here for the pages. Long "how to read"
+text belongs in metric-card TOOLTIPS and section descriptions, not on the face.
 
 Honesty: buy/sell/signal/call wording appears in a read's own words only when its measured
 status is VALIDATED (``ui.components.BUY_SELL_RE``). Levels mode carries ``LEVELS_TAG``.
@@ -24,8 +24,24 @@ from core.config import (
     EDGE_ALPHA,
     NIRNAY_POLARITY,
 )
+from convergence.verdict import (  # noqa: F401 — re-exported: the read's wording lives with the verdict
+    LEVELS_TAG,
+    NKO_COMPONENT_PLAIN,
+    NKO_TIER_WORD,
+    PILLAR_PHRASE,
+    PILLAR_SUBJECT,
+    SYNTH_BANNER,
+)
 
 # ── Nirnay polarity in words (core.config.NIRNAY_POLARITY — ONE switch) ──────
+__all__ = [
+    "NIRNAY_READ", "NIRNAY_READ_SENTENCE", "FORBIDDEN_FORWARD", "EDGE_WORDS", "NKO_BANDS_TEXT", "NKO_STATUS",
+    "NKO_PILLAR_PLAIN", "PRECEDENT_METHOD", "METHOD_LINES", "GLOSSARY", "DATA_COLS_FORWARD", "DATA_COLS_LEVELS",
+    "data_cols", "forbidden_hits",
+    # re-exported from convergence.verdict (the read's own wording)
+    "LEVELS_TAG", "NKO_COMPONENT_PLAIN", "NKO_TIER_WORD", "PILLAR_PHRASE", "PILLAR_SUBJECT", "SYNTH_BANNER",
+]
+
 _TREND = NIRNAY_POLARITY == "trend"
 NIRNAY_READ = "read as trend (strength = bullish)" if _TREND else "read contrarian (oversold = bullish)"
 NIRNAY_READ_SENTENCE = (
@@ -33,9 +49,6 @@ NIRNAY_READ_SENTENCE = (
     if _TREND else
     "Nirnay is read contrarian: oversold stocks count as bullish, overbought as bearish.")
 
-LEVELS_TAG = "valuation context — falsified as a forecaster"
-SYNTH_BANNER = "SYNTHETIC DEMO DATA — not market data; no conclusion here is about the real market."
-SYNTH_BAR = "Synthetic demo data — a seeded, simulated market. Nothing on this page is about the real market."
 
 # Words that describe a valuation LEVEL model; they are false about the forward forecast.
 FORBIDDEN_FORWARD = ("fair value", "fair-value", "residual", "cheap", "expensive",
@@ -43,27 +56,7 @@ FORBIDDEN_FORWARD = ("fair value", "fair-value", "residual", "cheap", "expensive
 # Edge words the UI must never emit on its own authority.
 EDGE_WORDS = ("calibrated", "confirms", "adds value", "durable", "validated")
 
-# ── masthead / landing / sidebar ─────────────────────────────────────────────
-PRODUCT_TITLE = "Nishkarsh"
-PRODUCT_TAGLINE = "Two independent reads of the Nifty 50, folded into one number."
-LANDING_INTRO = (
-    "Nishkarsh reads the market two ways: a top-down forecast (Aarambh) and a bottom-up scan of the "
-    "Nifty's stocks (Nirnay). Both reads, and how far they agree, are folded into one series: the "
-    "Nishkarsh Oscillator. Every page shows that one read — what it is today, why, what followed "
-    "similar reads, and how far it has earned your trust on past data.")
-LANDING_STEPS = (
-    ("Choose your data", "Connect your Google Sheet, upload a CSV or Excel file, or try the built-in demo."),
-    ("Run the analysis", "Press Run analysis in the sidebar. Real data takes about a minute."),
-    ("Read today", "Today's Nishkarsh read, what drives it, what followed similar reads and how reliable it is."),
-)
-LANDING_FOOTNOTE = "Nothing here is called a buy or sell signal until the data prove it. Not investment advice."
-INTEL_HELP_PLAIN = (
-    "When on, days where Nirnay disagrees with Aarambh can reduce the Aarambh forecast input's conviction — "
-    "but only if this run's data show that agreement improves accuracy. Otherwise on and off give the same "
-    "result. Nirnay can never add conviction or flip the direction.")
-
 # ── the Nishkarsh read ───────────────────────────────────────────────────────
-NKO_TIER_WORD = {"STRONG": "strongly", "MODERATE": "moderately", "WEAK": "mildly"}
 NKO_BANDS_TEXT = (f"±{CONV2_TIER_WEAK:g} no lean · ±{CONV2_TIER_MODERATE:g} moderate · "
                   f"±{CONV2_TIER_STRONG:g} strong")
 # status → (label, chip class, one plain sentence)
@@ -89,31 +82,6 @@ NKO_PILLAR_PLAIN = {
     "agreement": ("Agreement", "Do the two systems lean the same way",
                   "Whether the top-down and bottom-up reads point the same way, and how fully they agree."),
 }
-# component id → (plain label, what it reads). + = bullish for every component.
-NKO_COMPONENT_PLAIN = {
-    "forecast": ("Aarambh's forecast", "the forecast of the next trading days, standardized"),
-    "extension": ("Forecast extension", "how stretched the forecast is against its recent range"),
-    "zone_breadth_a": ("Lookback zone breadth", "lookbacks in the bullish zone minus the bearish zone"),
-    "crossings_a": ("Lookback cut crossings", "fresh bullish minus bearish crossings across lookbacks"),
-    "oscillator_n": ("Stock oscillator", "the stocks' average oscillator"),
-    "zone_breadth_n": ("Stock zone breadth", "% of stocks overbought minus % oversold" if _TREND
-                       else "% of stocks oversold minus % overbought"),
-    "regime_mix": ("Stock regimes", "% of stocks in a bull regime minus a bear regime" if _TREND
-                   else "% of stocks in a bear regime minus a bull regime"),
-    "hmm_state": ("Bull vs bear odds", "the stocks' average bull minus bear state probability" if _TREND
-                  else "the stocks' average bear minus bull state probability"),
-    "cut_crossings_n": ("Stock cut crossings", "fresh overbought-side minus oversold-side crossings per stock"
-                        if _TREND else "fresh oversold-side minus overbought-side crossings per stock"),
-    "signed_agreement": ("Signed agreement", "both systems' direction times how fully they agree"),
-}
-# How each pillar reads in the Today sentence, by sign.
-PILLAR_PHRASE = {
-    "top_down": ("Aarambh's top-down view leaning up", "Aarambh's top-down view leaning down"),
-    "bottom_up": ("broad strength in the Nifty's stocks", "broad weakness in the Nifty's stocks"),
-    "agreement": ("both systems leaning bullish together", "both systems leaning bearish together"),
-}
-PILLAR_SUBJECT = {"top_down": "Aarambh's top-down view", "bottom_up": "the stocks", "agreement": "their agreement"}
-
 # ── Precedent ────────────────────────────────────────────────────────────────
 PRECEDENT_METHOD = ("Matches today's read, its pillars and its 5- and 20-day change against past dates whose "
                     "outcomes were already known; one match per episode. A base rate counts as evidence only "

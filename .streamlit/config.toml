@@ -21,12 +21,49 @@ toolbarMode = "minimal"
 [runner]
 magicEnabled = false
 
+# ── Base Streamlit theme ─────────────────────────────────────────────────────
+#
+# ui/theme.css (via ui.theme.inject_css) is the source of truth for almost
+# everything visual and already overrides the widgets it names explicitly.
+# This block exists for the handful of NATIVE controls that read Streamlit's
+# own theme system directly rather than plain CSS (radio/checkbox dots,
+# toggle switches, links, code blocks) — without it those fall back to
+# Streamlit's stock red (#FF4B4B), which clashes with the accent-blue /
+# semantic-colour system everywhere else.
+#
+# BASE IS LIGHT, because Paper is the default appearance (see APPEARANCES in
+# app.py — first-in-tuple is the first-run default). A dark base under a Paper
+# default would put light text on Paper's near-white ground on FIRST LOAD,
+# which is the worst case to ship.
+#
+# Both variants are declared. [theme.light] and [theme.dark] mirror the two
+# token ramps in ui/theme.css exactly, so whichever one Streamlit resolves for
+# its native widgets is one of OUR two appearances rather than stock Streamlit
+# — a mismatch then means "wrong one of ours", never "unstyled".
+#
+# THE RESIDUAL LIMITATION, stated because it cannot be fixed here: this file is
+# STATIC. It cannot follow the in-app Paper/Slate toggle, which lives in
+# session state and swaps CSS tokens at render time. Anything Streamlit themes
+# natively therefore tracks Streamlit's own resolution, not the app's toggle —
+# which is why theme.css themes the natives it can (navigation links, buttons,
+# inputs, menus, tooltips) for BOTH appearances from the tokens.
 [theme]
-base = "dark"
-# Product typography: Inter for text, IBM Plex Mono for code/numerals; Obsidian palette + amber accent.
-font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap, sans-serif"
-codeFont = "'IBM Plex Mono':https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap, monospace"
-primaryColor = "#D4A853"
-backgroundColor = "#050810"
-secondaryBackgroundColor = "#111827"
-textColor = "#E8EDF5"
+base = "light"
+primaryColor = "#2B5FD9"
+backgroundColor = "#F4F6F8"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#141920"
+
+# Paper — mirrors the LIGHT_TOKENS ramp in ui/theme.py.
+[theme.light]
+primaryColor = "#2B5FD9"
+backgroundColor = "#F4F6F8"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#141920"
+
+# Slate — mirrors the canonical dark :root ramp in ui/theme.css.
+[theme.dark]
+primaryColor = "#4C7DF0"
+backgroundColor = "#0A0C10"
+secondaryBackgroundColor = "#0F1217"
+textColor = "#E6EAF1"

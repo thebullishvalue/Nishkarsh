@@ -164,6 +164,11 @@ def build_run_report(result) -> dict:
         "precedent": {"hero": prec.get("hero"), "summary": prec.get("summary") or {},
                       "n_analogs": len(prec.get("analogs") or [])},
         "warnings": list(result.warnings),
+        # The page shell's data (pipeline.shell): the tape, ONE freshness reading, the notices.
+        "tape": (getattr(result, "shell", None) or {}).get("tape") or [],
+        "freshness": (getattr(result, "shell", None) or {}).get("freshness") or {},
+        "quote": (getattr(result, "shell", None) or {}).get("quote") or {},
+        "notices": (getattr(result, "shell", None) or {}).get("notices") or [],
     }
     rep = json_safe(rep)
     json.dumps(rep, allow_nan=False)  # contract: strictly JSON-safe

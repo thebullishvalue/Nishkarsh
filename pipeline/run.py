@@ -58,6 +58,7 @@ class PipelineResult:
     run_report: dict = field(default_factory=dict)
     label_alignment: dict | None = None    # convergence.labels.label_alignment_check
     label_levels: pd.Series | None = None  # the resolved return-label LEVELS (index price) — for display
+    shell: dict = field(default_factory=dict)  # tape / freshness / notices (pipeline.shell) → run_report
 
     @property
     def synthetic(self) -> bool:
@@ -150,6 +151,48 @@ def compute_precedent(nko: pd.DataFrame, price_levels: pd.Series | None, cfg: Pi
                 "unconditional_positive_pct": row.get("unconditional_positive_pct"),
                 "binomial_p": row.get("binomial_p"), "basis": "Nishkarsh Oscillator state"}
     return {"analogs": list(analogs or []), "summary": {int(k): v for k, v in summary.items()}, "hero": hero}
+
+
+def _attach_shell(result: PipelineResult, today) -> None:
+    """The read verdict (into the conclusion payload) and the page shell's data (tape,
+    freshness, notices → run report). Built once here so every page reads one object."""
+    from convergence.conclusion import _json_safe
+    from convergence.verdict import build_read_verdict
+    from pipeline.shell import build_freshness, build_notices, build_quote, build_tape
+    con = result.conclusion
+    payload = con.to_dict()
+    nko = payload.get("nko") or {}
+    daily = result.nirnay_daily
+    breadth = None
+    if daily is not None and len(daily):
+        lr = daily.iloc[-1]
+        breadth = {"overbought_pct": lr.get("Overbought_Pct"), "oversold_pct": lr.get("Oversold_Pct"),
+                   "n_live": lr.get("n_live"), "n_universe": lr.get("n_universe"),
+                   "as_of": str(pd.Timestamp(daily.index[-1]).date())}
+    ar = None
+    fr = con.frame
+    if fr is not None and "agreement_ratio" in fr.columns and fr["agreement_ratio"].notna().any():
+        ar = float(fr["agreement_ratio"].dropna().iloc[-1])
+    try:
+        verdict = build_read_verdict(payload, (result.precedent or {}).get("hero"), synthetic=result.synthetic,
+                                     breadth=breadth, agreement_ratio=ar,
+                                     forward_mode=bool(result.config.forward_mode))
+        con.payload["verdict"] = _json_safe(verdict)
+    except Exception as e:  # noqa: BLE001 — reported, never silent
+        result.warnings.append(f"Read verdict failed: {e}")
+    as_of = (payload.get("latest") or {}).get("date") or payload.get("as_of")
+    freshness = build_freshness(as_of, today)
+    r_ohlcv = result.provenance.get("ohlcv")
+    tape = build_tape(getattr(r_ohlcv, "value", None))
+    if not tape:   # no constituent data: the sheet's own (macro / valuation) series
+        prep = result.prepared
+        tape = build_tape(None, getattr(prep, "sheet_panel", None),
+                          [c for c in getattr(getattr(prep, "sheet_panel", None), "columns", [])
+                           if c != result.config.target])
+    result.shell = {"tape": tape, "freshness": freshness, "quote": build_quote(result.label_levels),
+                    "notices": build_notices(warnings=result.warnings, synthetic=result.synthetic,
+                                             forward_mode=bool(result.config.forward_mode), nko=nko,
+                                             freshness=freshness)}
 
 
 # ── the pipeline ─────────────────────────────────────────────────────────────
@@ -380,6 +423,7 @@ def _run(sheet_df, cfg, sources, *, progress, log, force, sheet_info, today) -> 
                             warnings=warnings)
     if result.synthetic:
         result.warnings.insert(0, "SYNTHETIC DEMO DATA — not market data; no conclusion here is about the real market.")
+    _attach_shell(result, today)
     log.end_phase("PRECEDENT & REPORT")
     T["total"] = time.perf_counter() - t_all
     result.timings = {k: round(float(v), 3) for k, v in T.items()}

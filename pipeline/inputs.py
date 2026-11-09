@@ -176,7 +176,8 @@ def prepare_sheet(df: pd.DataFrame, cfg: PipelineConfig) -> PreparedInputs:
     # Power disclosure: a single late-starting predictor truncates EVERY row before its
     # first value (the walk-forward needs all predictors). Say what it costs, so the user
     # can weigh it against the statistical power it removes (first real-sheet run: INIRYY
-    # cost 5.4 years — the edge test fell from ~300 to ~160 windows).
+    # cost 5.4 years — the edge test fell from ~300 to ~160 windows). The model is not
+    # user-configurable, so the note states the fact only — it names no control.
     if bounding is not None:
         others = [v for c, v in late.items() if c != bounding]
         alt_start = max(others) if others else dates_all[0]
@@ -185,8 +186,8 @@ def prepare_sheet(df: pd.DataFrame, cfg: PipelineConfig) -> PreparedInputs:
             warnings.append(
                 f"Predictor {bounding} starts {late[bounding].date()} and truncates the usable history: "
                 f"without it the data would start {pd.Timestamp(alt_start).date()} (+{gained} rows, "
-                f"≈{gained / 252:.1f} years), giving the edge tests more non-overlapping windows. "
-                "Deselect it under Model settings → Predictors to trade it for history.")
+                f"≈{gained / 252:.1f} years), which would give the edge tests more non-overlapping "
+                "windows.")
     if len(data) < int(cfg.min_data_points):
         raise InputError(f"Need {cfg.min_data_points}+ complete rows for the walk-forward; have {len(data)} "
                          f"(effective start {eff_start.date()}"

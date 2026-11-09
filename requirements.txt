@@ -1,14 +1,34 @@
 # Nishkarsh — Unified Convergence Analysis System (@thebullishvalue)
 # Floors = oldest versions the code is known to need; caps = next breaking major/minor.
-# Verified together on Python 3.13: streamlit 1.66.1, pandas 3.0.5, numpy 2.5.3,
-# scikit-learn 1.9.1, statsmodels 0.15.0, scipy 1.18.1, numba 0.68.1, pyarrow 26.0.1,
-# yfinance 1.7.0, requests 2.34.2, threadpoolctl 3.7.0, plotly 7.1.0.
+# Verified together on Python 3.13: streamlit 1.52.2, starlette 0.52.1, pandas 2.3.3,
+# numpy 2.5.4, scikit-learn 1.9.1, statsmodels 0.15.0, scipy 1.18.1, numba 0.68.1,
+# pyarrow 26.0.1, yfinance 1.8.0, requests 2.34.2, threadpoolctl 3.8.0, plotly 7.1.0.
 
 # Core framework
-# streamlit >= 1.42: `width='stretch'` on st.button / st.plotly_chart / st.dataframe.
-streamlit>=1.42.0,<2
-# pandas 3: string dtype + copy-on-write semantics are what the code is tested against.
-pandas>=3.0,<4
+# streamlit — PINNED EXACTLY. This package is a UI contract, not a dependency with a floor.
+#
+#  1. THE UI IS BUILT ON STREAMLIT'S INTERNAL DOM. The design system (ui/theme.css, vendored
+#     from Tattva 2.8.0 "Graphite") hooks `data-testid` attributes, the placement of the
+#     `st-key-*` class and the exact wrapper nesting inside an element container — the panel
+#     header centring depends on dissolving `stMarkdown` wrappers with `display: contents`.
+#     None of that is public API. It was measured on 1.52.2: 1.52 inserts an anonymous
+#     `display: flex; flex-direction: row` div between `stMarkdown` and
+#     `stMarkdownContainer`, and every repair in theme.css lands somewhere different on any
+#     other frontend (a range once let a local 1.51 and a hosted 1.52 disagree: landing panels
+#     half-width side by side, rail labels overlapping their controls).
+#  2. THE SERVER STACK. 1.53 began the move off Tornado to Starlette/uvicorn, and an uncapped
+#     Starlette (1.4.0) broke `GZipResponder` — every request, health checks included, 500s.
+#     Below 1.53 the Tornado server never runs that path.
+#  3. Not 1.51: it requires pyarrow<22, and pyarrow publishes Python 3.14 wheels only from
+#     22.0.0. The deployable floor is 1.52; the UI is measured on 1.52.2.
+# Develop, test and screenshot on this exact version: `width="stretch"`, `st.navigation`,
+# `st.Page`, `st.segmented_control` and `st.container(key=)` are all relied on.
+streamlit==1.52.2
+# Belt and braces, inert under the pin above (Tornado never imports Starlette): caps Starlette
+# below the release that broke GZipResponder, for the day the streamlit pin is raised.
+starlette>=0.46.0,<1.0.0
+# streamlit 1.52.2 requires pandas<3; the code runs on 2.2+ (copy-on-write-safe idioms only).
+pandas>=2.2,<3
 numpy>=2.0,<3
 plotly>=5.18,<8
 # numba: JIT kernels in analytics/conformal.py and analytics/regime.py (tracks numpy closely).

@@ -49,7 +49,7 @@ from core.config import (
     EDGE_ALPHA,
 )
 
-__all__ = ["COMPONENTS", "PILLARS", "build_nishkarsh_oscillator", "nko_readout", "nko_tier"]
+__all__ = ["COMPONENTS", "PILLARS", "build_nishkarsh_oscillator", "edge_contract", "nko_readout", "nko_tier"]
 
 # (pillar, component id, human label, source)
 COMPONENTS = (
@@ -161,6 +161,36 @@ def _context(s: pd.Series) -> dict:
     return out
 
 
+def edge_contract(e: dict, signal: pd.Series, fwd: pd.Series, h: int) -> dict:
+    """An ``ic_evidence`` result in the ONE edge shape every page grades with (Tattva's
+    contract): ``{ic, se, n, p, horizon, blocks: [{start, end, ic}], positive_blocks,
+    scored_blocks}``.
+
+    ``blocks`` are the calendar years ``ic_evidence`` scored (its ``yearly`` dict — years with
+    enough labelled rows), each spanning its first and last labelled date. ``se`` is the
+    standard error of the IC on the IC scale: the Fisher-z variance ``ic_evidence`` tests with
+    (1.06/(n−3), single phase — conservative) mapped back by the delta method, (1 − IC²)·√v.
+    Nothing is re-estimated; this only re-shapes the evidence already measured."""
+    ic = e.get("ic")
+    n = int(e.get("n") or 0)
+    ic_ok = ic is not None and np.isfinite(ic)
+    se = float((1.0 - float(ic) ** 2) * np.sqrt(1.06 / (n - 3))) if ic_ok and n > 3 else None
+    df = pd.DataFrame({"s": signal, "r": fwd})
+    idx = pd.DatetimeIndex(df.index[df["s"].notna() & df["r"].notna()])
+    blocks = []
+    for y, v in sorted((e.get("yearly") or {}).items()):
+        if v is None or not np.isfinite(v):
+            continue
+        dates = idx[idx.year == int(y)]
+        start = str(dates.min().date()) if len(dates) else f"{int(y)}-01-01"
+        end = str(dates.max().date()) if len(dates) else f"{int(y)}-12-31"
+        blocks.append({"start": start, "end": end, "ic": float(v)})
+    return {"ic": float(ic) if ic_ok else None, "se": se, "n": n,
+            "p": (float(e["p"]) if e.get("p") is not None and np.isfinite(e["p"]) else None),
+            "horizon": int(h), "blocks": blocks,
+            "positive_blocks": int(sum(b["ic"] > 0 for b in blocks)), "scored_blocks": len(blocks)}
+
+
 def nko_readout(nko: pd.DataFrame, price_levels: pd.Series | None, h: int,
                 alpha: float = EDGE_ALPHA) -> dict:
     """Latest reading, decomposition, measured status and pillar evidence.
@@ -192,6 +222,7 @@ def nko_readout(nko: pd.DataFrame, price_levels: pd.Series | None, h: int,
     logp = align_log_price(price_levels, sub.index) if price_levels is not None and len(price_levels) and len(sub) else None
     if logp is None or sub.dropna().empty:
         return base | {"status": "INSUFFICIENT_DATA", "evidence": None, "pillar_ic": {},
+                       "edge": None, "pillar_edge": {},
                        "text": "Not enough two-system history to measure the oscillator."}
     fwd = logp.shift(-h) - logp
     e = ic_evidence(sub, fwd, h, signal_name="NKO", alpha=alpha)
@@ -204,10 +235,12 @@ def nko_readout(nko: pd.DataFrame, price_levels: pd.Series | None, h: int,
         status = "VALIDATED"
     else:
         status = "UNPROVEN"
-    pillar_ic = {}
+    pillar_ic, pillar_edge = {}, {}
     for p in PILLARS:
-        pe = ic_evidence(nko.loc[sub.index, f"P_{p}"], fwd, h, signal_name=p, alpha=alpha, bootstrap=False)
+        ps = nko.loc[sub.index, f"P_{p}"]
+        pe = ic_evidence(ps, fwd, h, signal_name=p, alpha=alpha, bootstrap=False)
         pillar_ic[p] = {"ic": pe.get("ic"), "n": pe.get("n"), "p": pe.get("p")}
+        pillar_edge[p] = edge_contract(pe, ps, fwd, h)
     num = (f"accuracy (rank IC) {_fmt(e.get('ic'), '+.3f')} over {int(e.get('n') or 0)} non-overlapping "
            f"{h}-day windows (p {_fmt(e.get('p'), '.2f')}; positive in "
            f"{int(round((yr_pos or 0) * len(yearly)))}/{len(yearly)} years)")
@@ -217,4 +250,5 @@ def nko_readout(nko: pd.DataFrame, price_levels: pd.Series | None, h: int,
             f"Not enough two-system history to measure it ({int(e.get('n') or 0)} windows).")
     ev = {k: e.get(k) for k in ("ic", "n", "p", "mde", "hac_t", "boot_ci", "yearly")}
     ev["yearly_positive_share"] = yr_pos
-    return base | {"status": status, "evidence": ev, "pillar_ic": pillar_ic, "text": text}
+    return base | {"status": status, "evidence": ev, "pillar_ic": pillar_ic, "text": text,
+                   "edge": edge_contract(e, sub, fwd, h), "pillar_edge": pillar_edge}
