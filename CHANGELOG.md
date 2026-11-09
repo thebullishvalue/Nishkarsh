@@ -13,6 +13,50 @@ Sections used: **Added · Changed · Deprecated · Removed · Fixed · Security 
 
 ---
 
+## [2.5.0] — 2026-11-09 — *The Graphite design system, ported exactly from Tattva 2.8.0*
+
+### Changed
+- **The whole UI/UX is Tattva 2.8.0's, adapted to Nishkarsh** (owner decision). Its stylesheet,
+  theme module and generic components are vendored verbatim (brand renames only); one stylesheet,
+  one token system. Paper (light, default) and Slate (dark) appearances as a token swap; Inter for
+  prose, JetBrains Mono with tabular numerals for every number; semantic colour (green bullish,
+  red bearish, amber caution only, cobalt the system's voice); flat hairline panels; one component
+  per job (section header, KPI strip, metric card, chart panel, table panel, edge panel, chip,
+  notice rail, empty state).
+- **Navigation is Tattva's**: `st.navigation` pages in the rail — Overview · Engines (Aarambh,
+  Nirnay, Convergence, Precedent) · System (System, Data) — replacing the five tabs of 2.4.0.
+- **One page shell everywhere**: a tape of the Nifty 50 constituents, the command bar (instrument,
+  level and change, the read, window, horizon, as-of, a freshness chip CURRENT / nD BEHIND /
+  STALE computed once) and the notice rail, which now houses every caveat and data note.
+- **The rail**: Instrument → Model (read-only readout) → Session → Appearance. The "Model settings"
+  expander is gone — the model is not user-configurable (Tattva rule); the pipeline keeps the
+  defaults those controls had.
+- **Every page leads with its answer and its own walk-forward grade.** Overview: six numbers and
+  the Inference Chain (the read, its trust chip, the limiting factor named, each pillar, the edge
+  and the precedent as rows). Aarambh, Nirnay and Convergence follow Tattva's engine-page grammar;
+  Precedent its base-rate cards, matches and analog cards; System its every-engine edge table,
+  plus the Edge Ledger, data-layer health and method & limits; Data is "The Record".
+- Directional wording stays Nishkarsh's: lean words only (Tattva's "Call" → "Read", "Average
+  Signal" → "Average Oscillator") unless the read is VALIDATED; base rates coloured only when
+  p < 0.05; precedent analog skill shown as "not yet graded".
+
+### Added
+- Pure view builders outside the UI: `convergence/verdict.py` (the read verdict),
+  `convergence/views.py`, `convergence/system_views.py` (every engine's edge in one contract),
+  `pipeline/shell.py` (tape, quote, freshness, notices, `redact`). Per-pillar walk-forward edge
+  with per-year blocks in the read's payload (`nko.edge`, `nko.pillar_edge`).
+
+### Fixed
+- Tattva 2.8.0 defects not carried over: Slate nav links nearly invisible, an unstyled metric-card
+  tone, dead selectors, an unused font import; tables rendered ~30px rows against a 27px budget and
+  clipped the last row — cell padding now derives from the row height.
+
+### Dependencies
+- `streamlit==1.52.2` pinned exactly, with `starlette>=0.46,<1.0` (the UI is built on Streamlit's
+  internal DOM, measured on this version); hence `pandas>=2.2,<3`. Full test suite passes on it.
+
+---
+
 ## [2.4.0] — 2026-11-09 — *Five pages, five questions*
 
 ### Changed

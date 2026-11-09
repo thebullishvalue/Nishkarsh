@@ -83,19 +83,37 @@ secret `[aarambh] google_sheets_url = "…"`.
 
 ## What you see
 
-One inference, five pages. Each page answers one question; nothing is repeated across pages and
-nothing is hidden in a drop-down — every note, limit and definition sits in the section it belongs to.
+Nishkarsh wears the **Graphite** design system of its sibling terminal Tattva (2.8.0), ported
+exactly: Paper (light, default) and Slate (dark) appearances, Inter for prose and JetBrains Mono for
+every number, colour that always carries a claim (green bullish, red bearish, amber caution only,
+cobalt the system's voice), flat hairline panels, and one component per job. Nothing is collapsed
+into a drop-down: caveats sit in the notice rail under the command bar, explanations in section
+descriptions and card tooltips.
 
-| Page | The question it answers | What is on it |
+**The shell, on every page:** a tape of the Nifty 50 constituents → the command bar (instrument,
+level and change; the read; window; horizon; as-of; freshness chip CURRENT / nD BEHIND / STALE) →
+the notice rail (data notes, synthetic or levels-mode caveats, single-system days) → the page.
+**The rail:** Instrument (data source, Run Analysis) → Model (a read-only readout: pillar weights,
+the read's walk-forward edge, periods positive, Nirnay's polarity) → Session (Refresh data, Start
+over) → Appearance. The model is not user-configurable, by design.
+
+Every page leads with its answer and its own walk-forward grade, then the evidence.
+
+| Page | What it answers | What is on it |
 |---|---|---|
-| **Today** (default) | *What does Nishkarsh read today, why, and how far can I trust it?* | The read in plain words with one sentence on what drives it; how much it moved over 5 sessions, how long it has been on this side, how strong it is against its own past; the gauge (the only place the big number appears); one line on its track record; the read over time against the Nifty; one chart of what drives today's read (three pillars and their inputs on one scale); one line on what followed similar readings. |
-| **Drivers** | *What is each system seeing?* | The three pillars in the same grammar — top-down (Aarambh's forecast of the Nifty), bottom-up (what the 50 stocks are doing, with a strip of every stock's oscillator and zone) and agreement (whether the two lean the same way). Each pillar over time, then its inputs as small charts. |
-| **Precedent** | *What happened after readings like this?* | Past moments whose read, pillars and 5/20-day change most resembled today's (causal, one per episode), what the Nifty did 3/5/10/20 sessions later against its usual up-share with a binomial p, and those dates marked on the Nifty with what followed each shaded. |
-| **Reliability** | *How much should I trust it?* | The measured status with its key numbers and yearly accuracy; the Edge Ledger for this run (every claim, its status and the number that decides it); the detailed tests (agreement lift, cost-aware backtest, Aarambh's accuracy stage by stage); the model facts; method, limits and a short glossary in plain text. |
-| **Data** | *Is the data sound?* | Every source with its provenance and as-of date, the run's data notes, and the merged series (searchable, CSV export). The data-status pill in the header points here. |
+| **Overview** (default) | *What does Nishkarsh read, and how far can I trust it?* | Six numbers (the read, the Nishkarsh Oscillator, its walk-forward edge, Nirnay's net breadth, the top-down pillar, engine agreement) and the **Inference Chain**: the read, its trust chip, the one-sentence why, the limiting factor named, then each pillar, the edge and the precedent as a row. |
+| **Aarambh** | *What does the top-down forecast say?* | The top-down pillar and its four inputs against the Nifty, model quality, its walk-forward edge, accuracy stage by stage and the cost-aware backtest. |
+| **Nirnay** | *What are the fifty stocks doing?* | Net breadth, overbought / oversold shares over time, its edge, which stocks carry the breadth, regime, the average oscillator against its adaptive cuts, any stock's own history. |
+| **Convergence** | *Do the two systems agree?* | The read and its pillars over time, what drives today's read, the agreement anatomy, the agreement-lift test, the agreement pillar's edge, divergences. |
+| **Precedent** | *What followed reads like today's?* | Median Nifty moves 3/5/10/20 sessions after the closest past states (coloured only when p < 0.05), where they happened on the Nifty, the analog matcher's skill (not yet graded), and each match as a card. |
+| **System** | *How good is each part, and what is the run made of?* | Every engine's walk-forward edge side by side, the Edge Ledger for this run, model facts, data-layer health per source, method and limits. |
+| **Data** | *What are the numbers?* | The record: every published series joined on date, searchable, windowed, CSV export at full precision. |
 
-Directional words (buy, sell, signal, call) appear only when the read's own pre-registered test
-has passed (`VALIDATED`); until then the read is described, not recommended.
+Directional words (buy, sell, signal, call, hold) appear only when the read's own pre-registered
+test has passed (`VALIDATED`); until then the read is described, not recommended.
+
+The UI is built on Streamlit's internal page structure, so Streamlit is pinned **exactly**
+(`streamlit==1.52.2`, as in Tattva) — develop and deploy on that version.
 
 ---
 
@@ -233,8 +251,9 @@ engines/            aarambh (purged walk-forward forecast) · nirnay (constituen
 convergence/        conclusion (the conclusion layer) · cross_validator (agreement anatomy) · labels
 data/               fetcher · cache · circuit_breaker · constituents · dates · macro_lag ·
                     sources · synthetic
-ui/                 theme · components (hero, formatting) · charts · copy (all wording) ·
-                    tabs/ (today · drivers · precedent · reliability · data)
+ui/                 theme.css + theme.py (Graphite design system) · palette · components ·
+                    copy · tabs/ (page_overview · aarambh · nirnay · convergence · precedent ·
+                    system · data)
 tests/              unit, statistical-regression and layering tests (pytest)
 docs/               EDGE_LEDGER · ARCHITECTURE · AUDIT · FINDINGS · PERFORMANCE · CUSTOM_PREDICTORS
 ```
