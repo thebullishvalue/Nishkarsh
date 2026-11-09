@@ -109,3 +109,13 @@ def test_polarity_switch_flips_every_bottom_up_input_and_nothing_else(monkeypatc
         elif pil == "top_down":
             np.testing.assert_allclose(flip[f"in_{cid}"], base[f"in_{cid}"], equal_nan=True)
     np.testing.assert_allclose(flip["P_bottom_up"], -base["P_bottom_up"], equal_nan=True)
+
+
+def test_readout_context_is_descriptive_and_correct():
+    from convergence.nishkarsh import _context
+    idx = pd.bdate_range("2024-01-01", periods=30)
+    s = pd.Series([0.0] * 20 + [20.0, 25, 30, 35, 40, 45, 50, 55, 60, 70], index=idx)
+    c = _context(s)
+    assert c["change_5d"] == 70 - 40 and c["change_20d"] == 70 - 0     # 5 and 20 sessions back
+    assert c["streak"] == {"side": "BULLISH", "sessions": 10, "since": str(idx[20].date())}
+    assert c["strength_percentile"] == 100.0

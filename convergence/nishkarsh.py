@@ -139,6 +139,28 @@ def nko_tier(v: float | None) -> str:
             else "WEAK" if a > CONV2_TIER_WEAK else "NO LEAN")
 
 
+def _context(s: pd.Series) -> dict:
+    """Descriptive context of today's reading against its own past (no inference):
+    change over 5 / 20 sessions, the streak on the current side (|NKO| > the WEAK band
+    counts as a side; inside it is "no lean"), and how strong today's reading is relative
+    to every earlier reading (share of past |NKO| below today's)."""
+    out = {"change_5d": None, "change_20d": None, "streak": None, "strength_percentile": None}
+    if s is None or len(s) < 2:
+        return out
+    v = s.to_numpy(dtype=float)
+    out["change_5d"] = float(v[-1] - v[-6]) if len(v) > 5 else None
+    out["change_20d"] = float(v[-1] - v[-21]) if len(v) > 20 else None
+    side = np.where(v > CONV2_TIER_WEAK, 1, np.where(v < -CONV2_TIER_WEAK, -1, 0))
+    k = 1
+    while k < len(side) and side[-1 - k] == side[-1]:
+        k += 1
+    out["streak"] = {"side": {1: "BULLISH", -1: "BEARISH", 0: "NO LEAN"}[int(side[-1])], "sessions": int(k),
+                     "since": str(pd.Timestamp(s.index[-k]).date())}
+    past = np.abs(v[:-1])
+    out["strength_percentile"] = float((past < abs(v[-1])).mean() * 100.0) if len(past) else None
+    return out
+
+
 def nko_readout(nko: pd.DataFrame, price_levels: pd.Series | None, h: int,
                 alpha: float = EDGE_ALPHA) -> dict:
     """Latest reading, decomposition, measured status and pillar evidence.
@@ -165,6 +187,7 @@ def nko_readout(nko: pd.DataFrame, price_levels: pd.Series | None, h: int,
             "two_system": bool(row["two_system"]) if row is not None else False,
             "pillars": pillars, "pillar_labels": PILLAR_LABELS, "components": comps,
             "drivers": sorted([c for c in comps if c["z"] is not None], key=lambda c: -abs(c["z"]))[:3]}
+    base |= _context(s)
     sub = nko[nko["two_system"]]["NKO"]
     logp = align_log_price(price_levels, sub.index) if price_levels is not None and len(price_levels) and len(sub) else None
     if logp is None or sub.dropna().empty:
