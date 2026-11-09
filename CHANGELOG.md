@@ -13,6 +13,28 @@ Sections used: **Added · Changed · Deprecated · Removed · Fixed · Security 
 
 ---
 
+## [2.3.0] — 2026-11-09 — *Nirnay read as trend (one polarity switch)*
+
+### Changed
+- **Nirnay polarity: contrarian → trend** (owner decision: align the bottom-up sign with the
+  top-down sign). One switch, `core.config.NIRNAY_POLARITY` (`NIRNAY_SIGN`), now drives every
+  Nirnay-derived quantity: the Nirnay head `zN`, the agreement anatomy's direction / breadth /
+  regime dimensions, consensus and agreement state, Convergence-Lift and κ, divergence typing,
+  the signed agreement oscillator and the Nishkarsh Oscillator's bottom-up pillar, plus the
+  UI wording. `"contrarian"` reproduces 2.2.0 exactly.
+- Re-measured on the same real data (`docs/research/NIRNAY_POLARITY_CHANGE.md`): Nishkarsh
+  Oscillator IC +0.034 → −0.019; signed agreement +0.091 → +0.035; the agreement lift inverts
+  (+0.345, p 0.033 → −0.345, p 0.97), so κ stays 1. All UNPROVEN. Today's read changes from
+  −48 (moderately bearish) to +62 (strongly bullish) on identical data. The council had advised
+  keeping contrarian and testing the polarity on independent 2010–2018 data; recorded.
+
+### Tests
+- The polarity switch negates exactly the bottom-up inputs and pillar (top-down untouched);
+  CONFIRM and CONTRADICT swap exactly; synthetic worlds plant their effects in the configured
+  polarity. 149 fast tests pass.
+
+---
+
 ## [2.2.0] — 2026-11-09 — *One inference: the Nishkarsh Oscillator*
 
 ### Added

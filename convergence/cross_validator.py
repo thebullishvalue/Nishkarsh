@@ -11,10 +11,10 @@ not identified by the data (audit A3-03, Edge Ledger L-06).
 
 Semantics (fixed, stated):
 
-* ONE Nirnay polarity in every dimension — CONTRARIAN: oversold breadth / a
-  bear-regime majority / a negative average oscillator read BULLISH (audit A2-02:
-  the v1 regime dimension read Nirnay trend-following while the direction
-  dimension read it contrarian, so the two disagreed on ~75% of days).
+* ONE Nirnay polarity in every dimension (audit A2-02: v1 mixed a trend-following
+  regime dimension with a contrarian direction dimension, so they disagreed on ~75%
+  of days). The polarity is ``core.config.NIRNAY_POLARITY`` — "trend" since 2.3.0:
+  overbought breadth / a bull-regime majority read BULLISH ("contrarian" reverses it).
 * Aarambh's sign convention is the engine's: ``ConvictionBounded`` < 0 = bullish.
 * Fixed base weights ``CONV_WEIGHT_*`` — no adaptive shift, no calibrated path.
 * Computed ONLY on dates where Nirnay has warm data (dates absent from the Nirnay
@@ -23,12 +23,14 @@ Semantics (fixed, stated):
 
 Dimensions (each in [0, 1], 1 = full agreement; NaN when an input is missing):
 
-1. ``dim_direction`` — sign(−ConvictionBounded) vs sign(Oversold_Pct − Overbought_Pct):
+1. ``dim_direction`` — sign(−ConvictionBounded) vs Nirnay's direction
+   (trend: sign(Overbought_Pct − Oversold_Pct); contrarian: the reverse):
    1 same non-zero sign, 0.5 either side flat, 0 opposite.
-2. ``dim_breadth``   — 1 − |Aarambh OversoldBreadth − Nirnay Oversold_Pct| / 100.
+2. ``dim_breadth``   — 1 − |Aarambh bullish-zone breadth − Nirnay bullish breadth| / 100
+   (Nirnay bullish breadth: Overbought_Pct under trend, Oversold_Pct under contrarian).
 3. ``dim_magnitude`` — 1 − | |ConvictionBounded|/100 − |Avg_Signal|/10 |  (unsigned).
-4. ``dim_regime``    — Aarambh OVERSOLD/OVERBOUGHT regime vs Nirnay bear/bull majority
-   (contrarian: bear-majority = bullish): 1 aligned, 0.8 both neutral
+4. ``dim_regime``    — Aarambh OVERSOLD/OVERBOUGHT regime vs Nirnay bull/bear majority
+   (trend: bull-majority = bullish; contrarian: the reverse): 1 aligned, 0.8 both neutral
    (Aarambh NEUTRAL & |bull − bear| < 20pp), 0.2 otherwise.
 
 ``agreement_ratio`` = CONV_WEIGHT_*-weighted mean of the finite dimensions.
@@ -40,6 +42,7 @@ import numpy as np
 import pandas as pd
 
 from core.config import (
+    NIRNAY_SIGN,
     CONV_WEIGHT_BREADTH,
     CONV_WEIGHT_DIRECTION,
     CONV_WEIGHT_MAGNITUDE,
@@ -125,21 +128,22 @@ def compute_agreement_anatomy(aarambh_ts: pd.DataFrame, nirnay_daily: pd.DataFra
     bear_n = _num(nn, "Regime_Bear_Pct")
     os_a = _num(a, "OversoldBreadth")
 
-    # 1. Direction (Aarambh: −conviction = bullish; Nirnay contrarian: OS > OB = bullish)
+    # 1. Direction (Aarambh: −conviction = bullish; Nirnay per NIRNAY_POLARITY)
     dir_a = np.sign(-conv)
-    dir_n = np.sign(os_n - ob_n)
+    dir_n = NIRNAY_SIGN * np.sign(ob_n - os_n)
     d_dir = pd.Series(np.where(dir_a * dir_n > 0, 1.0, np.where(dir_a * dir_n < 0, 0.0, 0.5)), index=a.index)
     d_dir[dir_n.isna()] = np.nan
 
-    # 2. Breadth (both are "% oversold" readings — same polarity)
-    d_breadth = (1.0 - (os_a - os_n).abs() / 100.0).clip(0.0, 1.0)
+    # 2. Breadth (Aarambh's bullish-zone share vs Nirnay's bullish-side share)
+    bull_side_n = ob_n if NIRNAY_SIGN > 0 else os_n
+    d_breadth = (1.0 - (os_a - bull_side_n).abs() / 100.0).clip(0.0, 1.0)
 
     # 3. Magnitude (unsigned strengths on their own scales)
     mag_a = (conv.abs() / 100.0).clip(upper=1.0)
     mag_n = (avg_n.abs() / 10.0).clip(upper=1.0)
     d_mag = (1.0 - (mag_a - mag_n).abs()).clip(0.0, 1.0)
 
-    # 4. Regime (contrarian Nirnay: a BEAR-regime majority reads bullish)
+    # 4. Regime (per NIRNAY_POLARITY: trend → a BULL-regime majority reads bullish)
     if "Regime" in a.columns:
         reg = a["Regime"].astype("string").fillna("N/A").str.upper()
         a_bull = reg.str.contains("OVERSOLD", regex=False).fillna(False).to_numpy(bool)
@@ -148,8 +152,8 @@ def compute_agreement_anatomy(aarambh_ts: pd.DataFrame, nirnay_daily: pd.DataFra
         a_known = a_bull | a_bear | a_neut
     else:
         a_bull = a_bear = a_neut = a_known = np.zeros(len(a), dtype=bool)
-    n_bullish = (bear_n > bull_n).to_numpy()
-    n_bearish = (bull_n > bear_n).to_numpy()
+    n_bullish = ((bull_n > bear_n) if NIRNAY_SIGN > 0 else (bear_n > bull_n)).to_numpy()
+    n_bearish = ((bear_n > bull_n) if NIRNAY_SIGN > 0 else (bull_n > bear_n)).to_numpy()
     n_flat = ((bull_n - bear_n).abs() < REGIME_NEUTRAL_SPREAD_PP).to_numpy()
     d_reg = np.full(len(a), REGIME_SCORE_OTHER)
     d_reg[(a_bull & n_bullish) | (a_bear & n_bearish)] = REGIME_SCORE_ALIGNED

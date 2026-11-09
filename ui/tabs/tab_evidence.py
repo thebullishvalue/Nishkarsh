@@ -20,7 +20,7 @@ from ui.components import (
     _d, _str, build_forecast_readout, chip_html, component_label, esc, fmt, num, render_forecast_card,
     render_metric_card, render_section_header, signed, z_side, zbar_html,
 )
-from ui.copy import NKO_DOCS, NKO_PILLAR_PLAIN, NKO_SCALE_TEXT, NKO_STATUS, OSC_SCALE_TEXT, OSC_STATUS, mode_copy
+from ui.copy import NIRNAY_READ, NKO_DOCS, NKO_PILLAR_PLAIN, NKO_SCALE_TEXT, NKO_STATUS, OSC_SCALE_TEXT, OSC_STATUS, mode_copy
 from ui.tabs import tab_convergence as conv
 from ui.tabs import tab_diagnostics as diag
 from ui.theme import chart_layout, style_axes
@@ -152,7 +152,7 @@ def _render_nko_evidence(con: dict) -> None:
         f'<td class="num {z_side(comps.get(cid, {}).get("z"))}">{esc(signed(comps.get(cid, {}).get("z")))}</td></tr>'
         for pil_, cid, lab, src in COMPONENTS)
     st.markdown('<div class="nk-section-head sm"><h3>The ten components</h3><p>Each input oriented so + = bullish '
-                '(Nirnay read contrarian) and causally z-scored against its own past; no weight or sign is fitted '
+                f'(Nirnay {NIRNAY_READ}) and causally z-scored against its own past; no weight or sign is fitted '
                 'to returns.</p></div>'
                 '<div class="nk-table-wrap"><table class="nk-table"><thead><tr><th>Pillar</th><th>Component</th>'
                 '<th>Source</th><th>Today</th><th class="num">z</th></tr></thead>'

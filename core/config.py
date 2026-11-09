@@ -13,7 +13,7 @@ Rules:
 
 # ─── Version / Product ───────────────────────────────────────────────────────
 
-VERSION = "2.2.0"
+VERSION = "2.3.0"
 PRODUCT_NAME = "NISHKARSH"
 COMPANY = "@thebullishvalue"
 
@@ -187,6 +187,22 @@ NIRNAY_HMM_STD_FLOOR = 0.10
 # First N genuine (non-NaN Close) bars of each constituent are warm-up: flagged
 # `Warmup`, excluded from daily breadth and from the convergence layer (A2-03/13).
 NIRNAY_WARMUP_BARS = 50
+
+# ─── Nirnay polarity — the ONE switch for how bottom-up readings map to direction ─
+# "trend":      strength reads bullish — a high constituent oscillator, overbought breadth,
+#               bull-regime / bull-HMM majorities and overbought-side cut crossings count as
+#               + (bullish), the same "market is strong" orientation as Aarambh's forecast.
+# "contrarian": the reverse (oversold / bear-regime = bullish) — Nirnay's original
+#               mean-reversion design, used through 2.2.0.
+# Every Nirnay-derived quantity reads this: the Nirnay head zN, agreement anatomy,
+# consensus / agreement state, Convergence-Lift and κ, divergence typing, the signed
+# agreement oscillator and the Nishkarsh Oscillator's bottom-up pillar.
+# OWNER DECISION (2026-11-09): "trend". Recorded evidence measured under "contrarian"
+# (docs/research/*_RESULTS.md) showed Aarambh's accuracy +0.08 when contrarian-Nirnay
+# confirmed vs −0.26 when it contradicted; under "trend" those two buckets swap.
+# Re-measured under "trend" in docs/research/NIRNAY_POLARITY_CHANGE.md.
+NIRNAY_POLARITY = "trend"
+NIRNAY_SIGN = 1.0 if NIRNAY_POLARITY == "trend" else -1.0
 
 # Nirnay signal thresholds (oscillator scale: -10 to +10).
 # NOTE: these are COLD-START PRIORS / flat-band fallbacks only. The live
@@ -467,6 +483,8 @@ def validate_config() -> None:
         errors.append("MIN_OOS_ROWS and HISTORY_YEARS must be ≥ 1")
     if MACRO_FACTOR_COMPONENTS < 2 or MACRO_FACTOR_MIN_COLUMNS < MACRO_FACTOR_COMPONENTS:
         errors.append("MACRO_FACTOR_COMPONENTS must be ≥ 2 and ≤ MACRO_FACTOR_MIN_COLUMNS")
+    if NIRNAY_POLARITY not in ("trend", "contrarian"):
+        errors.append(f"NIRNAY_POLARITY={NIRNAY_POLARITY!r} must be 'trend' or 'contrarian'")
     if CALIBRATION_RETURN_LABEL not in ("nsei", "target", "basket"):
         errors.append(f"CALIBRATION_RETURN_LABEL={CALIBRATION_RETURN_LABEL!r} invalid")
     if errors:

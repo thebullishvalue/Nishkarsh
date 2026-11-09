@@ -149,13 +149,16 @@ def _ar1(n, phi, rng):
 def conclusion_world(seed=0, n=4900, n_nir=1750, invalid=150, k_a=0.045, k_lift=0.0, sigma=0.01, noise_a=0.3,
                      nirnay_tail_gap=0, nirnay_holes=0):
     """(aarambh_ts, nirnay_daily, price_levels). f AR(.97) latent forecast, g AR(.90) Nirnay state,
-    r_t = σ(k_a f_t + k_lift(2·agree_t − 1) f_t + ε_t), agree = sign(f) == sign(−g)."""
+    r_t = σ(k_a f_t + k_lift(2·agree_t − 1) f_t + ε_t), agree = sign(f) == sign(NIRNAY_SIGN·g):
+    the planted lift is defined in the configured Nirnay polarity, so the world tests the
+    mechanism whichever polarity is active (core.config.NIRNAY_POLARITY)."""
     from analytics.causal_stats import causal_z
+    from core.config import NIRNAY_SIGN
     rng = np.random.default_rng(seed)
     f = _ar1(n, .97, rng)
     g = _ar1(n, .90, rng)
     eps = rng.standard_normal(n)
-    agree = (np.sign(f) == np.sign(-g)).astype(float)
+    agree = (np.sign(f) == np.sign(NIRNAY_SIGN * g)).astype(float)
     r = sigma * (k_a * f + k_lift * (2 * agree - 1) * f + eps)
     logp = np.concatenate([[0.0], np.cumsum(r)])[:n]
     dates = pd.bdate_range(end="2026-10-30", periods=n)

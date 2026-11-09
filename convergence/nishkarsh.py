@@ -10,9 +10,10 @@ infer from it; everything else is its decomposition.
 Construction (fixed a priori — NO weight or sign is fitted to returns):
 
   1. Every input is oriented by its documented meaning so that + = bullish. Aarambh is read
-     as published (its forecast and extension). Nirnay is read CONTRARIAN throughout
-     (oversold / bear-regime / bear-HMM = bullish), the product's single Nirnay polarity
-     since the 2.0 audit (finding A2-02).
+     as published (its forecast and extension). Nirnay follows the ONE configured polarity
+     (``core.config.NIRNAY_POLARITY``; "trend" since 2.3.0 — strong oscillator / overbought
+     breadth / bull regime / bull HMM / overbought-side crossings = bullish; "contrarian"
+     reverses every Nirnay input).
   2. Each oriented input is causally z-scored (``analytics.causal_stats.causal_z``:
      strictly-prior mean/std, ≥ 126 observations, clip ±4).
   3. Three PILLARS, each the equal-weight mean of its inputs' z-scores, re-standardized
@@ -39,6 +40,7 @@ import pandas as pd
 
 from analytics.causal_stats import causal_z
 from core.config import (
+    NIRNAY_SIGN,
     CONV2_TIER_MODERATE,
     CONV2_TIER_STRONG,
     CONV2_TIER_WEAK,
@@ -55,11 +57,11 @@ COMPONENTS = (
     ("top_down", "extension", "Forecast extension", "−AvgZ: conformal z across lookbacks"),
     ("top_down", "zone_breadth_a", "Lookback zone breadth", "OversoldBreadth − OverboughtBreadth"),
     ("top_down", "crossings_a", "Lookback cut crossings", "BuySignalBreadth − SellSignalBreadth"),
-    ("bottom_up", "oscillator_n", "Constituent oscillator", "−Avg_Signal (contrarian)"),
-    ("bottom_up", "zone_breadth_n", "Constituent zone breadth", "Oversold_Pct − Overbought_Pct"),
-    ("bottom_up", "regime_mix", "Regime composition", "Regime_Bear_Pct − Regime_Bull_Pct (contrarian)"),
-    ("bottom_up", "hmm_state", "HMM state", "avg_hmm_bear − avg_hmm_bull (contrarian)"),
-    ("bottom_up", "cut_crossings_n", "Constituent cut crossings", "(Buy_Signals − Sell_Signals) / n_live"),
+    ("bottom_up", "oscillator_n", "Constituent oscillator", "±Avg_Signal (NIRNAY_POLARITY)"),
+    ("bottom_up", "zone_breadth_n", "Constituent zone breadth", "±(Overbought_Pct − Oversold_Pct)"),
+    ("bottom_up", "regime_mix", "Regime composition", "±(Regime_Bull_Pct − Regime_Bear_Pct)"),
+    ("bottom_up", "hmm_state", "HMM state", "±(avg_hmm_bull − avg_hmm_bear)"),
+    ("bottom_up", "cut_crossings_n", "Constituent cut crossings", "±(Sell_Signals − Buy_Signals) / n_live"),
     ("agreement", "signed_agreement", "Signed agreement", "consensus × agreement ratio (anatomy)"),
 )
 PILLARS = ("top_down", "bottom_up", "agreement")
@@ -90,12 +92,15 @@ def oriented_inputs(frame: pd.DataFrame, aarambh_ts: pd.DataFrame | None,
     out["extension"] = -a("AvgZ")
     out["zone_breadth_a"] = a("OversoldBreadth") - a("OverboughtBreadth")
     out["crossings_a"] = a("BuySignalBreadth") - a("SellSignalBreadth")
-    out["oscillator_n"] = -n("Avg_Signal")
-    out["zone_breadth_n"] = n("Oversold_Pct") - n("Overbought_Pct")
-    out["regime_mix"] = n("Regime_Bear_Pct") - n("Regime_Bull_Pct")
-    out["hmm_state"] = n("avg_hmm_bear") - n("avg_hmm_bull")
+    # Nirnay inputs: written in the TREND orientation and multiplied by NIRNAY_SIGN
+    # (+1 trend, −1 contrarian) — one switch flips every bottom-up input together.
+    S = NIRNAY_SIGN
+    out["oscillator_n"] = S * n("Avg_Signal")
+    out["zone_breadth_n"] = S * (n("Overbought_Pct") - n("Oversold_Pct"))
+    out["regime_mix"] = S * (n("Regime_Bull_Pct") - n("Regime_Bear_Pct"))
+    out["hmm_state"] = S * (n("avg_hmm_bull") - n("avg_hmm_bear"))
     live = n("n_live").where(lambda s: s > 0)
-    out["cut_crossings_n"] = (n("Buy_Signals") - n("Sell_Signals")) / live
+    out["cut_crossings_n"] = S * (n("Sell_Signals") - n("Buy_Signals")) / live    # Sell = overbought-side
     out["signed_agreement"] = pd.to_numeric(frame.get("SAO"), errors="coerce") if "SAO" in frame.columns \
         else pd.Series(np.nan, index=idx)
     return out

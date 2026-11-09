@@ -8,7 +8,8 @@ recomputed from the data in hand, so runs are idempotent.
   zA_t  = causal_z(head)_t        head = Aarambh Forecast (forward mode) or
                                   −ConvictionRaw (levels mode), on Valid rows only,
                                   over the ENTIRE Aarambh history. + = bullish.
-  zN_t  = causal_z(−Avg_Signal)_t over Nirnay's own (warm) history; NaN where Nirnay
+  zN_t  = causal_z(NIRNAY_SIGN·Avg_Signal)_t over Nirnay's own (warm) history (polarity:
+        core.config.NIRNAY_POLARITY); NaN where Nirnay
                                   has no data for the date (NEVER forward-filled).
   state ∈ {CONFIRM, CONTRADICT, NEUTRAL, NO_DATA}   (fixed deadband CONV2_TAU, not fitted)
   C_t   = 100·tanh(zA_t/2)·m_t,   m_t = κ_t on CONTRADICT days, else 1.  + = BULLISH.
@@ -43,6 +44,7 @@ from analytics.causal_stats import (
     stationary_block_bootstrap_ic,
 )
 from core.config import (
+    NIRNAY_SIGN,
     AARAMBH_FWD_MOM_K,
     BACKTEST_COST_BPS,
     BACKTEST_REFERENCE_BPS,
@@ -117,8 +119,9 @@ def direction_head(aarambh_ts: pd.DataFrame, forward_mode: bool) -> pd.Series:
 
 
 def nirnay_head(nirnay_daily: pd.DataFrame | None) -> pd.Series:
-    """Nirnay's directional head ``−Avg_Signal`` on its own warm dates (+ = bullish,
-    contrarian: an oversold average oscillator reads bullish). Normalized dates."""
+    """Nirnay's directional head ``NIRNAY_SIGN · Avg_Signal`` on its own warm dates
+    (+ = bullish). Under the configured ``NIRNAY_POLARITY`` ("trend" since 2.3.0) a strong
+    average oscillator reads bullish; "contrarian" reverses it. Normalized dates."""
     if nirnay_daily is None or len(nirnay_daily) == 0 or "Avg_Signal" not in nirnay_daily.columns:
         return pd.Series(dtype="float64")
     n = nirnay_daily.copy()
@@ -127,7 +130,7 @@ def nirnay_head(nirnay_daily: pd.DataFrame | None) -> pd.Series:
     n = n[~n.index.duplicated(keep="last")].sort_index()
     if "n_live" in n.columns:
         n = n[pd.to_numeric(n["n_live"], errors="coerce").fillna(0) > 0]
-    v = -pd.to_numeric(n["Avg_Signal"], errors="coerce").astype("float64")
+    v = NIRNAY_SIGN * pd.to_numeric(n["Avg_Signal"], errors="coerce").astype("float64")
     return v[np.isfinite(v.to_numpy())]
 
 

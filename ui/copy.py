@@ -16,6 +16,7 @@ from __future__ import annotations
 import re
 
 from core.config import (
+    NIRNAY_POLARITY,
     AARAMBH_FWD_HORIZON,
     AARAMBH_FWD_MOM_K,
     BACKTEST_REFERENCE_BPS,
@@ -26,6 +27,11 @@ from core.config import (
     EDGE_ALPHA,
     EDGE_TRADEABLE_T,
 )
+
+# ── Nirnay polarity in words (core.config.NIRNAY_POLARITY — ONE switch) ──────
+_TREND = NIRNAY_POLARITY == "trend"
+NIRNAY_READ = "read as trend (strength = bullish)" if _TREND else "read contrarian (oversold = bullish)"
+NIRNAY_READ_SHORT = "trend: strength = +" if _TREND else "contrarian: oversold = +"
 
 # ── sign conventions ─────────────────────────────────────────────────────────
 SIGN_C = "C in ±100 · + = bullish"
@@ -64,7 +70,7 @@ LANDING_CARDS = (
     ("nirnay", "NIRNAY",
      "Per-constituent MSF + MMR oscillator with online HMM, GARCH and CUSUM regime read-outs, "
      "aggregated each day over the names with live, warmed-up data.",
-     (("Head", "−mean oscillator (contrarian: oversold reads bullish)"),
+     (("Head", f"mean oscillator, {NIRNAY_READ}"),
       ("Role", "context only until the lift test passes"),
       ("Coverage", "every % is of live names that day"))),
     ("convergence", "CONCLUSION",
@@ -130,11 +136,15 @@ NKO_COMPONENT_PLAIN = {
     "extension": ("Forecast extension", "how stretched the forecast is across lookbacks (−AvgZ)"),
     "zone_breadth_a": ("Lookback zone breadth", "lookbacks in the bullish zone minus the bearish zone"),
     "crossings_a": ("Lookback cut crossings", "bullish minus bearish cut crossings across lookbacks"),
-    "oscillator_n": ("Stock oscillator", "the stocks' mean oscillator, read contrarian (oversold = +)"),
-    "zone_breadth_n": ("Stock zone breadth", "% of stocks oversold minus % overbought"),
-    "regime_mix": ("Regime composition", "% of stocks in a bear regime minus a bull regime, read contrarian"),
-    "hmm_state": ("HMM state", "mean bear minus bull HMM probability, read contrarian"),
-    "cut_crossings_n": ("Stock cut crossings", "bullish minus bearish cut crossings, per live stock"),
+    "oscillator_n": ("Stock oscillator", f"the stocks' mean oscillator ({NIRNAY_READ_SHORT})"),
+    "zone_breadth_n": ("Stock zone breadth", "% of stocks overbought minus % oversold" if _TREND
+                       else "% of stocks oversold minus % overbought"),
+    "regime_mix": ("Regime composition", "% of stocks in a bull regime minus a bear regime" if _TREND
+                   else "% of stocks in a bear regime minus a bull regime, read contrarian"),
+    "hmm_state": ("HMM state", "mean bull minus bear HMM probability" if _TREND
+                  else "mean bear minus bull HMM probability, read contrarian"),
+    "cut_crossings_n": ("Stock cut crossings", "overbought-side minus oversold-side cut crossings, per live stock"
+                        if _TREND else "oversold-side minus overbought-side cut crossings, per live stock"),
     "signed_agreement": ("Signed agreement", "consensus × agreement ratio (the agreement anatomy)"),
 }
 NKO_DOCS = ("docs/research/NISHKARSH_OSCILLATOR_PREREG.md", "docs/research/NISHKARSH_OSCILLATOR_RESULTS.md")
@@ -265,7 +275,7 @@ CONVERGENCE = {
 
 NIRNAY = {
     "avg_tip": ("Mean Unified oscillator over the names with live data that day (±10 scale). The "
-                "Nirnay head reads it contrarian: zN = causal z of −Avg_Signal (+ = bullish)."),
+                f"Nirnay head is {NIRNAY_READ}: zN = causal z of ±Avg_Signal (+ = bullish)."),
     "hmm_desc": ("Mean of the per-stock online-HMM probabilities across live names — a cross-sectional "
                  "average, not an index-level regime model. Gaps = no live data."),
     "zone_desc": ("Share of LIVE names whose oscillator is beyond its own adaptive cut (OS_Cut / OB_Cut). "

@@ -11,7 +11,7 @@ p-values — what is and is not established.
 
 | | |
 |---|---|
-| **Version** | 2.2.0 — *One inference: the Nishkarsh Oscillator* |
+| **Version** | 2.3.0 — *Nirnay read as trend (one polarity switch)* |
 | **Stack** | Python 3.13 · Streamlit · scikit-learn · statsmodels · numba · Plotly |
 | **Universe** | Nifty 50 (live list from niftyindices.com; dated fallback list) |
 | **License** | See `LICENSE.md` |
@@ -143,9 +143,12 @@ last 20 trading days). Descriptive only — no edge is claimed for them.
 ## The Nishkarsh Oscillator — one inference
 
 Everything the system computes is folded into **one causal series in −100…+100**
-(+ = bullish), which the hero, the history chart and Precedent all infer from:
+(+ = bullish), which the hero, the history chart and Precedent all infer from. Nirnay's
+bottom-up readings follow one switch, `core.config.NIRNAY_POLARITY` ("trend" since 2.3.0, an
+owner decision; the evidence under both polarities is in
+[`docs/research/NIRNAY_POLARITY_CHANGE.md`](docs/research/NIRNAY_POLARITY_CHANGE.md)):
 
-| Pillar | Inputs (oriented so + = bullish; Nirnay read contrarian) |
+| Pillar | Inputs (oriented so + = bullish; Nirnay polarity: **trend** — strength reads bullish, `NIRNAY_POLARITY`) |
 |---|---|
 | **Top-down** (Aarambh) | the forecast (the conclusion over time) · forecast extension · lookback zone breadth · lookback cut crossings |
 | **Bottom-up** (Nirnay) | constituent oscillator · zone breadth · regime composition · HMM state · cut crossings |
@@ -268,7 +271,7 @@ count — the failure that voided 1.6.0).
 ## Testing
 
 ```bash
-pytest -m "not slow" -q     # 147 tests, ~1.5 min
+pytest -m "not slow" -q     # 149 tests, ~1.5 min
 pytest -m slow -q           # Monte-Carlo size/power, end-to-end determinism, Streamlit AppTest
 ```
 
@@ -346,4 +349,4 @@ non-optimisations: [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
 
 ---
 
-© 2026 Nishkarsh · [@thebullishvalue](https://twitter.com/thebullishvalue) · v2.2.0
+© 2026 Nishkarsh · [@thebullishvalue](https://twitter.com/thebullishvalue) · v2.3.0

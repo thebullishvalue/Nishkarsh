@@ -6,6 +6,7 @@ import pandas as pd
 
 from analytics.analogs import find_state_analogs, nko_state_frame, summarize_forward
 from convergence.nishkarsh import COMPONENTS, build_nishkarsh_oscillator, nko_readout
+from core.config import NIRNAY_SIGN
 
 N = 1400
 IDX = pd.bdate_range("2018-01-01", periods=N)
@@ -22,11 +23,14 @@ def _inputs(seed=0, bull=None, nirnay=True):
                       "BuySignalBreadth": 5 + noise() + b, "SellSignalBreadth": 5 + noise() - b}, index=IDX)
     nd = None
     if nirnay:
-        nd = pd.DataFrame({"Avg_Signal": noise() - b, "Oversold_Pct": 30 + 5 * noise() + 5 * b,
-                           "Overbought_Pct": 30 + 5 * noise() - 5 * b, "Regime_Bull_Pct": 40 + 5 * noise() - 5 * b,
-                           "Regime_Bear_Pct": 30 + 5 * noise() + 5 * b, "avg_hmm_bull": .4 + .05 * noise() - .05 * b,
-                           "avg_hmm_bear": .3 + .05 * noise() + .05 * b, "Buy_Signals": 5 + noise() + b,
-                           "Sell_Signals": 5 + noise() - b, "n_live": 50.0}, index=IDX)
+        # Nirnay columns written so that "bullish" (b > 0) means bullish UNDER THE CONFIGURED
+        # polarity: trend → strength rises with b; contrarian → it falls (S = NIRNAY_SIGN).
+        S = NIRNAY_SIGN
+        nd = pd.DataFrame({"Avg_Signal": noise() + S * b, "Oversold_Pct": 30 + 5 * noise() - 5 * S * b,
+                           "Overbought_Pct": 30 + 5 * noise() + 5 * S * b, "Regime_Bull_Pct": 40 + 5 * noise() + 5 * S * b,
+                           "Regime_Bear_Pct": 30 + 5 * noise() - 5 * S * b, "avg_hmm_bull": .4 + .05 * noise() + .05 * S * b,
+                           "avg_hmm_bear": .3 + .05 * noise() - .05 * S * b, "Buy_Signals": 5 + noise() - S * b,
+                           "Sell_Signals": 5 + noise() + S * b, "n_live": 50.0}, index=IDX)
         frame["SAO"] = np.clip(0.3 * noise() + 0.6 * b, -1, 1)
     return frame, a, nd
 
@@ -89,3 +93,19 @@ def test_precedent_matches_on_nko_state_causally():
     assert (np.diff(np.sort(pos)) >= 20).all()                         # distinct episodes (Theiler)
     s = summarize_forward(analogs, holds, uncond)
     assert {"median", "positive_pct", "n", "unconditional_positive_pct", "binomial_p"} <= set(s[10])
+
+
+def test_polarity_switch_flips_every_bottom_up_input_and_nothing_else(monkeypatch):
+    """ONE switch (NIRNAY_POLARITY): flipping it negates every Nirnay input and the
+    bottom-up pillar exactly, and leaves the top-down inputs untouched."""
+    import convergence.nishkarsh as NK
+    f, a, n = _inputs(seed=8)
+    base = build_nishkarsh_oscillator(f, a, n)
+    monkeypatch.setattr(NK, "NIRNAY_SIGN", -NK.NIRNAY_SIGN)
+    flip = build_nishkarsh_oscillator(f, a, n)
+    for pil, cid, _, _ in COMPONENTS:
+        if pil == "bottom_up":
+            np.testing.assert_allclose(flip[f"in_{cid}"], -base[f"in_{cid}"], equal_nan=True)
+        elif pil == "top_down":
+            np.testing.assert_allclose(flip[f"in_{cid}"], base[f"in_{cid}"], equal_nan=True)
+    np.testing.assert_allclose(flip["P_bottom_up"], -base["P_bottom_up"], equal_nan=True)

@@ -18,6 +18,10 @@ Status vocabulary:
 > owner's sheet (2026-11-08, L-03/L-04) and a full two-system run with all 50 constituents
 > from NSE's official archives (2026-11-09, L-05/L-12).
 
+> **2.3.0 — Nirnay polarity changed to "trend" (owner decision).** Rows L-05, L-12 and L-13 were measured under
+> the contrarian polarity; under trend (same data) the lift inverts (−0.345, p 0.97), the agreement oscillator falls to
+> IC +0.035 and the Nishkarsh Oscillator to −0.019 — all UNPROVEN. See `docs/research/NIRNAY_POLARITY_CHANGE.md`.
+
 ## Ledger (as of 2.0.0)
 
 | ID | Claim | Status | Evidence so far | Run-time instrument |

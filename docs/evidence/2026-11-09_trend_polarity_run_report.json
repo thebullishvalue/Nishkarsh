@@ -1,0 +1,757 @@
+{
+  "schema": "nishkarsh.run_report/1",
+  "run_id": "20261109_083115_c629469d",
+  "generated_at": "2026-11-09T08:31:44+00:00",
+  "provenance": {
+    "version": "2.2.0",
+    "python": "3.13.18",
+    "platform": "Linux-6.18.44-fc-v310-x86_64-with-glibc2.39",
+    "packages": {
+      "numpy": "2.5.3",
+      "pandas": "3.0.5",
+      "scipy": "1.18.1",
+      "scikit-learn": "1.9.1",
+      "statsmodels": "0.15.0",
+      "numba": "0.68.1",
+      "threadpoolctl": "3.7.0",
+      "pyarrow": "26.0.1",
+      "streamlit": "1.66.1",
+      "yfinance": "1.7.0"
+    },
+    "git_sha": "bae3a6a7db40368294fad5db0d96f093b57d148e"
+  },
+  "config": {
+    "target": "NIFTY50_PE",
+    "features": [
+      "AD_RATIO",
+      "COUNT",
+      "IN02Y",
+      "IN10Y",
+      "IN30Y",
+      "INIRYY",
+      "NIFTY50_DY",
+      "NIFTY50_PB",
+      "REL_AD_RATIO",
+      "REL_BREADTH",
+      "REPO",
+      "US02Y",
+      "US10Y",
+      "US30Y"
+    ],
+    "date_col": "DATE",
+    "kappa_enabled": true,
+    "forward_mode": true,
+    "horizon": 10,
+    "mom_k": 20,
+    "return_label": "nsei",
+    "min_train": 1500,
+    "max_train": 2000,
+    "min_data_points": 1500,
+    "min_oos_rows": 252,
+    "history_years": 7,
+    "history_start": "2019-01-01",
+    "index_symbol": "^NSEI",
+    "universe": "NIFTY 50",
+    "macro_lag_non_ist": true,
+    "non_ist_sheet_columns": [
+      "US02Y",
+      "US10Y",
+      "US30Y"
+    ],
+    "custom_predictors": true,
+    "pca_passthrough": [
+      "IN10Y",
+      "IN02Y",
+      "IN30Y"
+    ],
+    "macro_factor_components": 8,
+    "macro_factor_min_columns": 12,
+    "aarambh_pca_predictors": false,
+    "aarambh_pca_n_components": 9,
+    "nirnay_msf_length": 20,
+    "nirnay_roc_len": 14,
+    "nirnay_regime_sensitivity": 1.5,
+    "nirnay_base_weight": 0.6,
+    "nirnay_mmr_num_vars": 5,
+    "precedent_horizons": [
+      3,
+      5,
+      10,
+      20
+    ]
+  },
+  "fingerprint": "9464729f35be3ccecad2983ac11f6b9c93ce7d3f78c84990679154c367ca1d94",
+  "inputs": {
+    "rows_raw": 5039,
+    "rows_used": 3281,
+    "sheet_span": [
+      "2006-06-08",
+      "2026-11-06"
+    ],
+    "aarambh_span": [
+      "2013-07-10",
+      "2026-11-06"
+    ],
+    "effective_start": "2013-06-12",
+    "bounding_predictor": "INIRYY",
+    "features": [
+      "AD_RATIO",
+      "COUNT",
+      "IN02Y",
+      "IN10Y",
+      "IN30Y",
+      "INIRYY",
+      "NIFTY50_DY",
+      "NIFTY50_PB",
+      "REL_AD_RATIO",
+      "REL_BREADTH",
+      "REPO",
+      "US02Y",
+      "US10Y",
+      "US30Y"
+    ],
+    "dropped_features": [],
+    "lagged_columns": [
+      "US02Y",
+      "US10Y",
+      "US30Y"
+    ],
+    "label_complete_rows": 3271,
+    "content_hash": "4ea93b28f74ea2b0dd89c43a08a2fd789ff64f69c923fcfa3798a412a59a2560"
+  },
+  "data": {
+    "constituents": {
+      "provenance": "live",
+      "as_of": "2026-11-09",
+      "missing": [],
+      "note": "NSE archives (ind_nifty50list.csv)"
+    },
+    "macro": {
+      "provenance": "empty",
+      "as_of": null,
+      "missing": [],
+      "note": "NSE archives publish no global macro panel"
+    },
+    "ohlcv": {
+      "provenance": "live",
+      "as_of": "2026-11-06",
+      "missing": [],
+      "note": "NSE bhavcopy \u00b7 50 ISIN-linked histories \u00b7 91 split/bonus adjustments"
+    },
+    "index": {
+      "provenance": "live",
+      "as_of": "2026-11-06",
+      "missing": [],
+      "note": "sheet column NIFTY (IST index level) \u2014 ^NSEI unavailable"
+    },
+    "sheet": {
+      "provenance": "live",
+      "as_of": null,
+      "missing": [],
+      "note": "CSV sheet.csv"
+    },
+    "synthetic": false,
+    "today": "2026-11-09",
+    "macro_panel": {
+      "yf_columns": 0,
+      "sheet_columns": [
+        "IN10Y",
+        "IN02Y",
+        "IN30Y",
+        "US10Y",
+        "US30Y",
+        "US02Y"
+      ],
+      "raw_columns": 28,
+      "custom_features": 22,
+      "custom_leakage_excluded_from_aarambh": [
+        "DY_SPREAD",
+        "EQ_RISK_PREMIUM",
+        "IMPLIED_ROE"
+      ],
+      "dropped_duplicate_rates": [],
+      "lagged_non_ist": 3,
+      "factors": true,
+      "mmr_columns": 11,
+      "passthrough": [
+        "IN10Y",
+        "IN02Y",
+        "IN30Y"
+      ],
+      "rows": 1945,
+      "span": [
+        "2019-01-01",
+        "2026-11-06"
+      ]
+    }
+  },
+  "timings": {
+    "inputs": 0.096,
+    "data": 10.973,
+    "aarambh": 13.32,
+    "nirnay": 3.596,
+    "conclusion": 0.773,
+    "precedent": 0.011,
+    "total": 28.77
+  },
+  "aarambh": {
+    "rows": 3281,
+    "valid": 1771,
+    "first_valid": "2019-09-13",
+    "feature_names": [
+      "AD_RATIO",
+      "COUNT",
+      "IN02Y",
+      "IN10Y",
+      "IN30Y",
+      "INIRYY",
+      "NIFTY50_DY",
+      "NIFTY50_PB",
+      "REL_AD_RATIO",
+      "REL_BREADTH",
+      "REPO",
+      "US02Y",
+      "US10Y",
+      "US30Y"
+    ],
+    "wf_meta": {
+      "min_train": 1500,
+      "max_train": 2000,
+      "purge": 10,
+      "refit": 5,
+      "first_forecast_row": 1510,
+      "n_oos": 1771,
+      "chunks_total": 355,
+      "chunks_skipped_starved": 0,
+      "chunks_fallback": 0
+    },
+    "model_stats": {
+      "r2_oos": -0.09470785002477,
+      "r2_vs_rw": -0.0992349960157084,
+      "rmse_oos": 0.046816329213853,
+      "mae_oos": 0.03198072244160941,
+      "n_obs": 1761,
+      "n_features": 14,
+      "avg_model_spread": 0.0067516602582117086,
+      "model_coverage": 1.0,
+      "n_fallback_chunks": 0,
+      "n_starved_chunks": 0
+    },
+    "signal": {
+      "signal": "HOLD",
+      "strength": "NEUTRAL",
+      "conviction_score": 0.44160675130131694,
+      "forecast": -0.0006901263629001102,
+      "forecast_z": -0.008832192440440199,
+      "edge_assessment": "DEFERRED \u2014 directional edge is graded by the conclusion layer (Edge Ledger)",
+      "edge_source": "conclusion",
+      "tradeable": false,
+      "has_forward_edge": false,
+      "inverted": false,
+      "hurst": 0.316865738155866,
+      "ou_half_life": 10.443236673101659,
+      "half_life_meaningful": true,
+      "oversold_breadth": 60.0,
+      "overbought_breadth": 0.0,
+      "regime": "NEUTRAL",
+      "forward_signal": true,
+      "forecast_skill_vs_rw": -0.0992349960157084
+    },
+    "changepoints_heuristic": 3
+  },
+  "nirnay": {
+    "stocks_requested": 50,
+    "stocks_analyzed": 50,
+    "failed": {},
+    "trading_days": 1888,
+    "span": [
+      "2019-03-13",
+      "2026-11-06"
+    ],
+    "overlap_valid_dates": 1764,
+    "aarambh_valid_dates": 1771,
+    "latest": {
+      "date": "2026-11-06",
+      "n_universe": 50.0,
+      "n_live": 50.0,
+      "coverage": 1.0,
+      "Oversold_Pct": 4.0,
+      "Overbought_Pct": 70.0,
+      "Avg_Signal": 2.781058005595023,
+      "Regime_Bull_Pct": 68.0,
+      "Regime_Bear_Pct": 2.0,
+      "Regime_Neutral_Pct": 30.0,
+      "Regime_Transition_Pct": 0.0,
+      "Dispersion": 2.07364965026941,
+      "Buy_Signals": 0.0,
+      "Sell_Signals": 25.0,
+      "Change_Points": 0.0
+    },
+    "os_cut_median_live": -1.7380154842011137,
+    "ob_cut_median_live": 2.126379639160585,
+    "mmr_quality": {
+      "label": "\u221askill, 20d level-fit vs RW (MSE)",
+      "mean": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "regime_latest": {
+      "BULL": 30,
+      "NEUTRAL": 15,
+      "WEAK_BULL": 4,
+      "WEAK_BEAR": 1
+    },
+    "vol_regime_latest": {
+      "NORMAL": 26,
+      "HIGH": 21,
+      "EXTREME": 3
+    }
+  },
+  "label_src": "NIFTY 50 index (sheet NIFTY column) fwd return",
+  "label_alignment": {
+    "available": true,
+    "best_lag": 0,
+    "corr_by_lag": {
+      "-2": -0.0014573600415299583,
+      "-1": 0.018286494786216363,
+      "0": 0.8619734513615923,
+      "1": -0.03400746570408123,
+      "2": 0.02682466861830471
+    },
+    "aligned": true,
+    "n": 3281
+  },
+  "conclusion": {
+    "schema": "nishkarsh.conclusion/1",
+    "as_of": "2026-11-06",
+    "horizon": 10,
+    "label_src": "NIFTY 50 index (sheet NIFTY column) fwd return",
+    "forward_mode": true,
+    "kappa_enabled": true,
+    "single_system": false,
+    "latest": {
+      "date": "2026-11-06",
+      "C": -0.44160675130131694,
+      "C_aarambh": -0.44160675130131694,
+      "zA": -0.008832192440440199,
+      "zN": 1.6187056904111343,
+      "state": "CONTRADICT",
+      "kappa": 1.0,
+      "tier": "NO LEAN",
+      "direction": "NEUTRAL"
+    },
+    "edge": {
+      "signal": "aarambh_head",
+      "ic": 0.03664777356083656,
+      "ic_phase0": -0.008020350142151729,
+      "n": 164,
+      "t": 0.4518581727250611,
+      "p": 0.32568557931351305,
+      "mde": 0.19906125818930892,
+      "hac_t": 0.65590127133571,
+      "boot_ci": [
+        -0.07852022614609502,
+        0.15519205564354352
+      ],
+      "significant": false,
+      "phase_min": -0.010760001632364343,
+      "phase_max": 0.08165827057043576,
+      "yearly": {
+        "2020": 0.0754600040892704,
+        "2021": 0.038448950562600406,
+        "2022": -0.0842720496718492,
+        "2023": 0.011826078336616978,
+        "2024": 0.3141466281451374,
+        "2025": -0.276827050136028,
+        "2026": -0.5010365259131478
+      },
+      "baseline_momentum_ic": 0.029646527623484083,
+      "available": true
+    },
+    "edge_C": {
+      "signal": "C",
+      "ic": -0.02214652200732973,
+      "ic_phase0": -0.0040344956880389955,
+      "n": 126,
+      "t": -0.23860315010733024,
+      "p": 0.5942933388789169,
+      "mde": 0.22681186721201652,
+      "hac_t": -0.29918371685985873,
+      "boot_ci": [
+        -0.15994445115285388,
+        0.11416971848314228
+      ],
+      "significant": false,
+      "phase_min": -0.10002249718785151,
+      "phase_max": 0.040509984639016894,
+      "yearly": {
+        "2021": 0.0013153087321885275,
+        "2022": -0.0842720496718492,
+        "2023": 0.011826078336616978,
+        "2024": 0.3141466281451374,
+        "2025": -0.276827050136028,
+        "2026": -0.5010365259131478
+      },
+      "baseline_momentum_ic": -0.0330193983816539,
+      "available": true
+    },
+    "lift": {
+      "available": true,
+      "ic_confirm": -0.2607478711588301,
+      "ic_contradict": 0.0841799709724238,
+      "n_confirm": 74,
+      "n_contradict": 52,
+      "lift": -0.3449278421312539,
+      "z": -1.83717214330478,
+      "p_one_sided": 0.966907756678007,
+      "lift_phase_min": -0.3449278421312539,
+      "lift_phase_max": 0.20045254986135622,
+      "kappa": 1.0,
+      "passed": false,
+      "mde": 0.4754451416907916
+    },
+    "oos": {
+      "ic_C": -0.0040344956880389955,
+      "ic_A": -0.0040344956880389955,
+      "n": 126,
+      "adds_value": false
+    },
+    "backtest": {
+      "mode": "tranche",
+      "reference_bps": 5.0,
+      "by_cost": {
+        "0.0": {
+          "gross_sharpe": -0.25575748125952324,
+          "net_sharpe": -0.25575748125952324,
+          "t": -0.8311453622739292,
+          "ann_return": -0.018499771640338322,
+          "turnover_per_year": 6.198535196388029,
+          "breakeven_bps": -29.845392587459035,
+          "n": 1644
+        },
+        "2.0": {
+          "gross_sharpe": -0.25575748125952324,
+          "net_sharpe": -0.2728889257433058,
+          "t": -0.8863941377260128,
+          "ann_return": -0.019739478679615917,
+          "turnover_per_year": 6.198535196388029,
+          "breakeven_bps": -29.845392587459035,
+          "n": 1644
+        },
+        "5.0": {
+          "gross_sharpe": -0.25575748125952324,
+          "net_sharpe": -0.29858381423097585,
+          "t": -0.9691480641616663,
+          "ann_return": -0.021599039238532344,
+          "turnover_per_year": 6.198535196388029,
+          "breakeven_bps": -29.845392587459035,
+          "n": 1644
+        },
+        "10.0": {
+          "gross_sharpe": -0.25575748125952324,
+          "net_sharpe": -0.34140214051656703,
+          "t": -1.1067431360355504,
+          "ann_return": -0.024698306836726348,
+          "turnover_per_year": 6.198535196388029,
+          "breakeven_bps": -29.845392587459035,
+          "n": 1644
+        }
+      },
+      "nonoverlap_reference": {
+        "gross_sharpe": -0.4716625421405683,
+        "net_sharpe": -0.5222765680199136,
+        "t": -1.3323618695258859,
+        "ann_return": -0.03243342215657646,
+        "turnover_per_year": 6.34119648538077,
+        "breakeven_bps": -46.147164784043014,
+        "n": 164
+      }
+    },
+    "chain": [
+      {
+        "stage": "forecast",
+        "ic": -0.009304476759212657,
+        "n": 164
+      },
+      {
+        "stage": "engine_conviction",
+        "ic": -0.008020350142151729,
+        "n": 164
+      },
+      {
+        "stage": "C",
+        "ic": -0.008020350142151729,
+        "n": 164
+      }
+    ],
+    "trust": {
+      "tier": "NO_PROVEN_EDGE",
+      "text": "NO PROVEN EDGE \u2014 Aarambh head IC +0.037 (t 0.5, n 164, p 0.326); direction is unvalidated (this sample can only detect IC \u2265 0.20 reliably)."
+    },
+    "nirnay": {
+      "state": "CONTRADICT",
+      "text": "Nirnay disagrees \u2014 context only: agreement has not been shown to improve Aarambh's accuracy (lift -0.345, p 0.97; detectable lift \u2265 0.48). Conviction is Aarambh's."
+    },
+    "agreement": {
+      "today_state": "CONTRADICT",
+      "same_sign_rate_60d": 0.55
+    },
+    "divergence_recent": {
+      "AARAMBH_LEADS": 2,
+      "NIRNAY_LEADS": 1,
+      "CONTRADICTION": 7,
+      "window_days": 20
+    },
+    "oscillator": {
+      "value": 0.0,
+      "as_of": "2026-11-06",
+      "side": "SPLIT",
+      "strength": 0.0,
+      "status": "UNPROVEN",
+      "evidence": {
+        "ic": 0.03462110454337699,
+        "n": 163,
+        "p": 0.3352282480183142,
+        "mde": 0.1996657400678907,
+        "hac_t": 0.6787566318244826,
+        "boot_ci": [
+          -0.06719297514663097,
+          0.12464594749013254
+        ],
+        "yearly": {
+          "2020": -0.013572323958043976,
+          "2021": -0.09709549750661625,
+          "2022": 0.13425950954758475,
+          "2023": -0.013443009278790548,
+          "2024": 0.03728494747013442,
+          "2025": -0.23036188804043295,
+          "2026": -0.09485759550365733
+        },
+        "yearly_positive_share": 0.2857142857142857
+      },
+      "text": "Not yet a validated buy/sell signal \u2014 IC +0.035 over 163 non-overlapping 10-day windows (p 0.34; positive in 2/7 years); this sample can only confirm an IC of 0.20 or more."
+    },
+    "nko": {
+      "value": 61.762648713567344,
+      "as_of": "2026-11-06",
+      "tier": "STRONG",
+      "direction": "BULLISH",
+      "two_system": true,
+      "pillars": {
+        "top_down": 0.7706366232139115,
+        "bottom_up": 2.1444189763736206,
+        "agreement": 0.19701480412799519
+      },
+      "pillar_labels": {
+        "top_down": "Top-down (Aarambh)",
+        "bottom_up": "Bottom-up (Nirnay)",
+        "agreement": "Agreement"
+      },
+      "components": [
+        {
+          "id": "forecast",
+          "pillar": "top_down",
+          "label": "Aarambh forecast",
+          "source": "conclusion frame zA (the conclusion over time)",
+          "z": 0.1919693482059437
+        },
+        {
+          "id": "extension",
+          "pillar": "top_down",
+          "label": "Forecast extension",
+          "source": "\u2212AvgZ: conformal z across lookbacks",
+          "z": 0.9611202363697335
+        },
+        {
+          "id": "zone_breadth_a",
+          "pillar": "top_down",
+          "label": "Lookback zone breadth",
+          "source": "OversoldBreadth \u2212 OverboughtBreadth",
+          "z": 1.0526717043649791
+        },
+        {
+          "id": "crossings_a",
+          "pillar": "top_down",
+          "label": "Lookback cut crossings",
+          "source": "BuySignalBreadth \u2212 SellSignalBreadth",
+          "z": 0.006964870407520788
+        },
+        {
+          "id": "oscillator_n",
+          "pillar": "bottom_up",
+          "label": "Constituent oscillator",
+          "source": "\u00b1Avg_Signal (NIRNAY_POLARITY)",
+          "z": 1.6129327677244456
+        },
+        {
+          "id": "zone_breadth_n",
+          "pillar": "bottom_up",
+          "label": "Constituent zone breadth",
+          "source": "\u00b1(Overbought_Pct \u2212 Oversold_Pct)",
+          "z": 1.8428939658564059
+        },
+        {
+          "id": "regime_mix",
+          "pillar": "bottom_up",
+          "label": "Regime composition",
+          "source": "\u00b1(Regime_Bull_Pct \u2212 Regime_Bear_Pct)",
+          "z": 1.879712116064581
+        },
+        {
+          "id": "hmm_state",
+          "pillar": "bottom_up",
+          "label": "HMM state",
+          "source": "\u00b1(avg_hmm_bull \u2212 avg_hmm_bear)",
+          "z": 1.8650643149937254
+        },
+        {
+          "id": "cut_crossings_n",
+          "pillar": "bottom_up",
+          "label": "Constituent cut crossings",
+          "source": "\u00b1(Sell_Signals \u2212 Buy_Signals) / n_live",
+          "z": 2.3108364916370645
+        },
+        {
+          "id": "signed_agreement",
+          "pillar": "agreement",
+          "label": "Signed agreement",
+          "source": "consensus \u00d7 agreement ratio (anatomy)",
+          "z": 0.07851332927194929
+        }
+      ],
+      "drivers": [
+        {
+          "id": "cut_crossings_n",
+          "pillar": "bottom_up",
+          "label": "Constituent cut crossings",
+          "source": "\u00b1(Sell_Signals \u2212 Buy_Signals) / n_live",
+          "z": 2.3108364916370645
+        },
+        {
+          "id": "regime_mix",
+          "pillar": "bottom_up",
+          "label": "Regime composition",
+          "source": "\u00b1(Regime_Bull_Pct \u2212 Regime_Bear_Pct)",
+          "z": 1.879712116064581
+        },
+        {
+          "id": "hmm_state",
+          "pillar": "bottom_up",
+          "label": "HMM state",
+          "source": "\u00b1(avg_hmm_bull \u2212 avg_hmm_bear)",
+          "z": 1.8650643149937254
+        }
+      ],
+      "status": "UNPROVEN",
+      "evidence": {
+        "ic": -0.019210699355463264,
+        "n": 138,
+        "p": 0.5858278705406591,
+        "mde": 0.21683086994576375,
+        "hac_t": -0.35633124111394743,
+        "boot_ci": [
+          -0.130853627267188,
+          0.08227633718303339
+        ],
+        "yearly": {
+          "2021": 0.14811914222202135,
+          "2022": 0.11500383144173927,
+          "2023": -0.03240523896261601,
+          "2024": 0.022173987547838007,
+          "2025": -0.3225279333344872,
+          "2026": -0.1502649611694838
+        },
+        "yearly_positive_share": 0.5
+      },
+      "pillar_ic": {
+        "top_down": {
+          "ic": -0.033777748648804375,
+          "n": 138,
+          "p": 0.6485237099834684
+        },
+        "bottom_up": {
+          "ic": -0.0292371800097585,
+          "n": 138,
+          "p": 0.6293170394035748
+        },
+        "agreement": {
+          "ic": 0.02563586407555495,
+          "n": 138,
+          "p": 0.3861482139707484
+        }
+      },
+      "text": "Not yet a validated buy/sell signal \u2014 accuracy (rank IC) -0.019 over 138 non-overlapping 10-day windows (p 0.59; positive in 3/6 years); this sample can only confirm an IC of 0.22 or more."
+    }
+  },
+  "anatomy": {
+    "rows": 1640,
+    "span": [
+      "2020-03-17",
+      "2026-11-06"
+    ],
+    "latest": {
+      "dim_direction": 0.0,
+      "dim_breadth": 0.9,
+      "dim_magnitude": 0.7263102669535109,
+      "dim_regime": 0.2,
+      "agreement_ratio": 0.4465775667383778
+    },
+    "mean": {
+      "dim_direction": 0.5173780487804878,
+      "dim_breadth": 0.7118749469223095,
+      "dim_magnitude": 0.810413429950991,
+      "dim_regime": 0.5863414634146341,
+      "agreement_ratio": 0.6530538015353984
+    },
+    "note": "Agreement anatomy (descriptive, not used in the conclusion)."
+  },
+  "precedent": {
+    "hero": {
+      "horizon": 10,
+      "median": -1.4326557705733156,
+      "positive_pct": 40.0,
+      "n": 10,
+      "dir": -1,
+      "unconditional_positive_pct": 56.412157153447,
+      "binomial_p": 0.3485216307235749,
+      "basis": "Nishkarsh Oscillator state"
+    },
+    "summary": {
+      "3": {
+        "median": -0.6931567784198067,
+        "positive_pct": 30.0,
+        "n": 10,
+        "unconditional_positive_pct": 54.336545589325425,
+        "binomial_p": 0.2022934024830647
+      },
+      "5": {
+        "median": -0.9551461473275513,
+        "positive_pct": 30.0,
+        "n": 10,
+        "unconditional_positive_pct": 55.37435137138621,
+        "binomial_p": 0.12227071239408653
+      },
+      "10": {
+        "median": -1.4326557705733156,
+        "positive_pct": 40.0,
+        "n": 10,
+        "unconditional_positive_pct": 56.412157153447,
+        "binomial_p": 0.3485216307235749
+      },
+      "20": {
+        "median": -1.0538995546172325,
+        "positive_pct": 30.0,
+        "n": 10,
+        "unconditional_positive_pct": 59.599703484062275,
+        "binomial_p": 0.10178564056145502
+      }
+    },
+    "n_analogs": 10
+  },
+  "warnings": [
+    "1 date cell(s) out of chronological sequence excluded (likely typos \u2014 fix them in the sheet): row 4274 '28/08/2023'\u21922023-08-28",
+    "Predictor INIRYY starts 2013-06-12 and truncates the usable history: without it the data would start 2008-01-03 (+1343 rows, \u22485.3 years), giving the edge tests more non-overlapping windows. Deselect it under Predictor Columns to trade it for history.",
+    "^NSEI unavailable \u2014 the return label is the sheet's NIFTY column.",
+    "macro: provenance EMPTY \u2014 NSE archives publish no global macro panel"
+  ]
+}

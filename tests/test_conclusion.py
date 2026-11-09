@@ -348,3 +348,17 @@ def test_lift_power_100_reps():
     assert g.lift_pass.mean() >= 0.12
     assert g.power_str.all()
     assert not g.viol.any()
+
+
+def test_nirnay_polarity_switch_swaps_confirm_and_contradict(monkeypatch):
+    """Under the opposite NIRNAY_POLARITY the Nirnay head is exactly negated, so every
+    CONFIRM day becomes CONTRADICT and vice versa (|zN| and NEUTRAL/NO_DATA unchanged)."""
+    import convergence.conclusion as CC
+    ats, nd, px = conclusion_world(seed=4, k_lift=0.0)
+    a = run_conclusion(ats, nd, px, forward_mode=True, h=H).frame
+    monkeypatch.setattr(CC, "NIRNAY_SIGN", -CC.NIRNAY_SIGN)
+    b = run_conclusion(ats, nd, px, forward_mode=True, h=H).frame
+    np.testing.assert_allclose(b["zN"], -a["zN"], equal_nan=True)
+    swap = {CONFIRM: CONTRADICT, CONTRADICT: CONFIRM}
+    exp = a["state"].map(lambda s_: swap.get(s_, s_))
+    assert (b["state"].fillna("na") == exp.fillna("na")).all()
