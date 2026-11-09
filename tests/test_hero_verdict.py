@@ -1,5 +1,4 @@
-"""Hero contract (C-UI / C-V2 / NKO) — grid + property tests for the Overview hero and the Aarambh
-forecast-input read-out.
+"""Hero contract (C-UI / NKO) — grid + property tests for the Today hero.
 
 The HERO (``ui.components.build_hero_verdict``) infers from the Nishkarsh Oscillator ONLY
 (``conclusion["nko"]`` + ``precedent["hero"]``):
@@ -7,27 +6,16 @@ The HERO (``ui.components.build_hero_verdict``) infers from the Nishkarsh Oscill
   N1  no "nan" / "inf" token in any text it writes; missing numbers render "—"
   N2  buy/sell/signal/call wording (BUY_SELL_RE) and a directional ``call`` ONLY when nko status is VALIDATED
   N3  NO LEAN / missing value → never a call; out-of-range values are rejected
-  N4  the status is always named (chip label) and ``nko["text"]`` is carried verbatim
-  N5  a single-system date (two_system False) says "single-system"
-  N6  PRECEDENT votes only when binomial p < EDGE_ALPHA, and its text carries k/n + unconditional + p
-  N7  forward mode: no levels-model words; levels mode: the falsified-as-a-forecaster tag
+  N4  the track record is always named (word + status label); ``nko["text"]`` (which says "buy/sell") is
+      never printed by the hero
+  N5  a single-system date (two_system False) says "top-down only"
+  N6  PRECEDENT votes only when binomial p < EDGE_ALPHA, and its text carries k, n, the usual rate and p
+  N7  forward mode: no levels-model words; levels mode: the falsified-as-a-forecaster tag on the title
   N8  SYNTHETIC banner iff run_config provenance / warnings say SYNTHETIC
   N9  its own words never claim edge (confirms / calibrated / adds value / validated) unless VALIDATED
-  N10 render_hero / render_pillar_banner never raise and escape injected markup
-The Aarambh FORECAST INPUT (``build_forecast_readout``, shown in Evidence as one component) keeps
-the v2 rules (successor of council/a4/hero_harness.py):
-  H0  never raises; always returns the documented keys
-  H1  no "nan" / "inf" token in any rendered text; missing numbers render "—"
-  H2  a coloured direction (signal_class buy/sell) ONLY when trust ∈ {DIRECTIONAL_EDGE, TRADEABLE_EDGE}
-  H3  INVERTED → never coloured; NO LEAN / missing C → never coloured
-  H4  forward mode: no levels-model words (fair value, residual, cheap/expensive, primary trade signal, …)
-  H5  levels mode: "valuation context — falsified as a forecaster" in the mode label AND the headline
-  H6  the NIRNAY row is conclusion["nirnay"]["text"] verbatim; the trust chip text is conclusion["trust"]["text"]
-  H8  SYNTHETIC banner iff run_config provenance / warnings say SYNTHETIC
-  H9  its own words never claim edge, and never say buy/sell/signal/call
-  H10 render_forecast_card never raises and escapes injected markup
-Inputs are produced COHERENTLY with the real producers (tier_of, direction_of, trust_readout,
-nirnay_readout, _json_safe, convergence.nishkarsh.nko_tier) and then poisoned. Deterministic.
+  N10 render_hero never raises and escapes injected markup
+Inputs are produced COHERENTLY with the real producers (trust_readout, nirnay_readout, _json_safe,
+convergence.nishkarsh.nko_tier) and then poisoned. Deterministic.
 """
 from __future__ import annotations
 
@@ -50,10 +38,7 @@ from convergence.conclusion import (  # noqa: E402
 )
 from core.config import EDGE_ALPHA  # noqa: E402
 from convergence.nishkarsh import COMPONENTS, nko_tier  # noqa: E402
-from ui.components import (  # noqa: E402
-    BUY_SELL_RE, CALL_TIERS, build_forecast_readout, build_hero_verdict, hero_texts, render_forecast_card, render_hero,
-    render_pillar_banner,
-)
+from ui.components import BUY_SELL_RE, build_hero_verdict, hero_texts, render_hero  # noqa: E402
 from ui.copy import EDGE_WORDS, LEVELS_TAG, forbidden_hits  # noqa: E402
 
 NAN = float("nan")
@@ -62,12 +47,9 @@ TRUST_TIERS = ("INVERTED", "NO_PROVEN_EDGE", "DIRECTIONAL_EDGE", "TRADEABLE_EDGE
 STATES = ("CONFIRM", "CONTRADICT", "NEUTRAL", "NO_DATA", None)
 C_VALUES = (88.0, -72.0, 45.0, -31.0, 12.0, -9.0, 0.0, None, NAN)
 _BAD = re.compile(r"(?<![a-z])(nan|inf)(?![a-z])", re.I)
-KEYS = ("signal", "signal_class", "call", "direction", "tier", "score", "score_text", "headline",
-        "mode_label", "trust", "evidence", "as_of", "synthetic", "banner", "horizon", "forward_mode")
-HERO_KEYS = ("headline", "tag", "side", "value", "value_text", "tier", "direction", "call", "validated",
-             "gauge_label", "two_system", "single_system", "drivers_text", "agreement_text", "precedent",
-             "status", "status_label", "status_class", "status_text", "measured_text", "numbers", "as_of",
-             "horizon", "forward_mode", "mode_label", "levels_note", "synthetic", "banner")
+HERO_KEYS = ("eyebrow", "headline", "side", "value", "value_text", "tier", "direction", "call", "validated",
+             "gauge_label", "two_system", "single_system", "explain", "chips", "track", "status", "status_label",
+             "precedent", "as_of", "as_of_note", "horizon", "forward_mode", "levels_note", "synthetic", "banner")
 
 
 # ── coherent producers ───────────────────────────────────────────────────────
@@ -135,132 +117,6 @@ LIVE_RC = {"target": "NIFTY50_PE", "forward_mode": True,
            "provenance": {"sheet": {"provenance": "live", "note": "sheet ok"}, "macro": None}, "warnings": []}
 
 
-def _texts(v: dict) -> list[str]:
-    out = [v["signal"], v["score_text"], v["headline"], v["mode_label"], v["as_of"], v["trust"]["text"],
-           v["trust"]["label"], v.get("sign_note", "")]
-    out += [r["text"] for r in v["evidence"]] + [f'{r["tag"]} {r["word"]}' for r in v["evidence"]]
-    if v["banner"]:
-        out.append(v["banner"])
-    return [str(t) for t in out]
-
-
-def _own_texts(v: dict) -> list[str]:
-    """Texts the hero itself writes (not the upstream trust / Nirnay strings)."""
-    return [v["signal"], v["headline"], v["mode_label"]] + [r["text"] for r in v["evidence"]
-                                                            if r["tag"] != "NIRNAY"]
-
-
-def _grid():
-    for tier, C, state, fwd, lk, syn in product(TRUST_TIERS, C_VALUES, STATES, (True, False),
-                                                ("na", "fail", "pass"), (True, False)):
-        yield tier, C, state, fwd, lk, syn
-
-
-def _check(con, rc, *, forward, nir_text=None, trust_text=None):
-    v = build_forecast_readout(con, {"conviction_score": NAN}, rc)
-    for k in KEYS:
-        assert k in v, k
-    for t in _texts(v):
-        assert not _BAD.search(t), (t, con)
-    t_tier = v["trust"]["tier"]
-    if v["signal_class"] in ("buy", "sell") or v["call"]:
-        assert t_tier in CALL_TIERS, v
-        assert v["tier"] != "NO LEAN" and v["score"] is not None
-    if t_tier == "INVERTED":
-        assert v["signal_class"] == "hold" and not v["call"]
-    if forward:
-        for t in _texts(v):
-            assert not forbidden_hits(t, True), (forbidden_hits(t, True), t)
-    else:
-        assert LEVELS_TAG in v["mode_label"] and LEVELS_TAG in v["headline"]
-    if nir_text is not None:
-        assert [r for r in v["evidence"] if r["tag"] == "NIRNAY"][0]["text"] == nir_text
-    if trust_text is not None:
-        assert v["trust"]["text"] == trust_text
-    for t in _own_texts(v):
-        for w in EDGE_WORDS:
-            assert not re.search(r"\b" + w + r"\b", t, re.I), (w, t)
-        assert not BUY_SELL_RE.search(t), t
-    assert v["as_of"]
-    return v
-
-
-def test_grid_contract():
-    n = 0
-    for tier, C, state, fwd, lk, syn in _grid():
-        con = make_conclusion(tier, C, state, fwd, lift_kind=lk, single=(state is None and lk == "na"))
-        rc = dict(SYN_RC if syn else LIVE_RC, forward_mode=fwd)
-        v = _check(con, rc, forward=fwd, nir_text=con["nirnay"]["text"], trust_text=con["trust"]["text"])
-        assert v["synthetic"] is syn and (v["banner"] is not None) is syn
-        n += 1
-    assert n > 2500
-
-
-def test_call_requires_proven_tier_exhaustive():
-    """Every directional C under every trust tier: coloured iff DIRECTIONAL/TRADEABLE."""
-    for tier, C, fwd in product(TRUST_TIERS, (88.0, -72.0, 45.0, -31.0, 12.0, -12.0), (True, False)):
-        v = build_forecast_readout(make_conclusion(tier, C, "NEUTRAL", fwd), None, LIVE_RC)
-        assert v["call"] is (tier in CALL_TIERS)
-        assert v["signal_class"] == (("buy" if C > 0 else "sell") if tier in CALL_TIERS else "hold")
-
-
-def test_missing_and_poisoned_inputs():
-    rnd = random.Random(SEED)
-    poison = (None, NAN, float("inf"), "n/a", "", [], {}, True, -0.0, "<script>x</script>")
-    base = make_conclusion("DIRECTIONAL_EDGE", 45.0, "CONTRADICT", True, lift_kind="pass")
-    blobs = [None, {}, [], "garbage", 3.0, {"latest": None}, {"latest": {}, "trust": None, "nirnay": None}]
-    for _ in range(4000):
-        con = {k: (dict(v) if isinstance(v, dict) else v) for k, v in base.items()}
-        for _ in range(rnd.randint(1, 6)):
-            k = rnd.choice(list(con))
-            if isinstance(con[k], dict) and con[k] and rnd.random() < 0.7:
-                kk = rnd.choice(list(con[k]))
-                con[k][kk] = rnd.choice(poison)
-            elif rnd.random() < 0.5:
-                con.pop(k, None)
-            else:
-                con[k] = rnd.choice(poison)
-        blobs.append(con)
-    rcs = [None, {}, "x", LIVE_RC, SYN_RC, {"provenance": "bad", "warnings": None},
-           {"provenance": {"a": "str"}, "warnings": ["SYNTHETIC demo"]}]
-    for i, con in enumerate(blobs):
-        v = build_forecast_readout(con, rnd.choice([None, {}, {"conviction_score": "x"}, "bad"]), rcs[i % len(rcs)])
-        for k in KEYS:
-            assert k in v
-        for t in _texts(v):
-            if "script" in t:      # upstream text echoed verbatim; escaped at render (H10)
-                continue
-            assert not _BAD.search(t), (t, con)
-        if v["call"] or v["signal_class"] != "hold":
-            assert v["trust"]["tier"] in CALL_TIERS
-        fm = con.get("forward_mode") if isinstance(con, dict) else None
-        if fm is False:
-            assert LEVELS_TAG in v["mode_label"]
-
-
-def test_render_escapes_and_never_raises(monkeypatch):
-    out = []
-    monkeypatch.setattr(comp.st, "markdown", lambda body, **kw: out.append(body))
-    con = make_conclusion("TRADEABLE_EDGE", 72.0, "CONFIRM", True, lift_kind="pass", adds_value=True)
-    con["trust"]["text"] = '<iframe srcdoc="<script>alert(1)</script>"></iframe>'
-    con["nirnay"]["text"] = "<script>alert(2)</script>"
-    rc = dict(SYN_RC, target="<img src=x onerror=alert(3)>")
-    render_forecast_card(build_forecast_readout(con, None, rc))
-    for bad in (None, {}, {"evidence": [None, {"tag": "<b>"}], "trust": None}, {"signal_class": "<x>"}):
-        render_forecast_card(bad)
-    html = "\n".join(out)
-    assert "<script" not in html and "<iframe" not in html and "<img" not in html
-    assert "&lt;script&gt;" in html and "SYNTHETIC" in html
-
-
-def test_forecast_input_real_shape_example():
-    """A to_dict()-shaped payload from the synthetic demo run (NO PROVEN EDGE, CONTRADICT)."""
-    con = make_conclusion("NO_PROVEN_EDGE", -47.8, "CONTRADICT", True, lift_kind="fail")
-    v = build_forecast_readout(con, {"conviction_score": 47.8}, SYN_RC)
-    assert v["signal"] == "LEAN BEARISH (MODERATE) · unvalidated" and v["signal_class"] == "hold" and not v["call"]
-    assert v["score_text"] == "C -47.8" and v["trust"]["tier"] == "NO_PROVEN_EDGE"
-    assert v["headline"].endswith("context only.") and v["banner"]
-    assert [r["tag"] for r in v["evidence"]] == ["MODEL", "NIRNAY", "RISK"]
 
 
 # ── N: the hero infers from the Nishkarsh Oscillator only ─────────────────────
@@ -276,11 +132,17 @@ PILLAR_SETS = ({"top_down": 0.77, "bottom_up": -2.14, "agreement": -0.87},
 REAL_Z = {"forecast": 0.4, "extension": 0.2, "zone_breadth_a": 0.9, "crossings_a": 0.5, "oscillator_n": -0.6,
           "zone_breadth_n": -0.8, "regime_mix": -1.9, "hmm_state": -1.5, "cut_crossings_n": -2.3,
           "signed_agreement": -0.87}
+CONTEXTS = ({"change_5d": -12.4, "change_20d": 30.0, "strength_percentile": 85.2,
+             "streak": {"side": "BEARISH", "sessions": 12, "since": "2025-04-14"}},
+            {"change_5d": None, "change_20d": None, "strength_percentile": None, "streak": None},
+            {"change_5d": NAN, "strength_percentile": "x", "streak": {"side": "NO LEAN", "sessions": 1,
+                                                                      "since": "garbage"}})
 STATUSES = ("VALIDATED", "UNPROVEN", "INSUFFICIENT_DATA")
 _STATUS_LABELS = {"VALIDATED": "Validated", "UNPROVEN": "Unproven", "INSUFFICIENT_DATA": "Not enough data"}
+_TRACK_WORDS = {"VALIDATED": "validated", "UNPROVEN": "unproven", "INSUFFICIENT_DATA": "not enough data"}
 
 
-def make_nko(status, value, two, pillars, z=REAL_Z) -> dict:
+def make_nko(status, value, two, pillars, z=REAL_Z, context=CONTEXTS[0]) -> dict:
     """An ``nko_readout``-shaped dict (components / drivers built the way the producer builds them)."""
     comps = [{"id": cid, "pillar": pil, "label": lab, "source": src, "z": z.get(cid)} for pil, cid, lab, src in COMPONENTS]
     drivers = sorted([c for c in comps if comp.num(c["z"]) is not None], key=lambda c: -abs(c["z"]))[:3]
@@ -288,12 +150,12 @@ def make_nko(status, value, two, pillars, z=REAL_Z) -> dict:
     return {"value": value, "as_of": "2025-05-01", "tier": nko_tier(v), "two_system": two, "pillars": pillars,
             "components": comps, "drivers": drivers, "status": status,
             "evidence": None if status == "INSUFFICIENT_DATA" else NKO_EVIDENCE, "pillar_ic": {},
-            "text": NKO_TEXT}
+            "text": NKO_TEXT, **context}
 
 
-def _hero(status, value, two=True, pillars=PILLAR_SETS[0], prec=None, rc=LIVE_RC, forward=True):
+def _hero(status, value, two=True, pillars=PILLAR_SETS[0], prec=None, rc=LIVE_RC, forward=True, context=CONTEXTS[0]):
     con = make_conclusion("NO_PROVEN_EDGE", -47.8, "CONTRADICT", forward)
-    con["nko"] = make_nko(status, value, two, pillars)
+    con["nko"] = make_nko(status, value, two, pillars, context=context)
     return build_hero_verdict(con, prec, dict(rc, forward_mode=forward))
 
 
@@ -303,6 +165,7 @@ def _check_hero(v, status, *, two, prec, forward, synth):
     texts = hero_texts(v)
     for t in texts:
         assert not _BAD.search(t), t
+        assert "None" not in t, t
     # N2/N3: wording and the call are reserved for a VALIDATED read
     if status != "VALIDATED":
         assert not v["call"] and not v["validated"]
@@ -316,25 +179,26 @@ def _check_hero(v, status, *, two, prec, forward, synth):
         assert -100 <= v["value"] <= 100
     if v["tier"] in ("STRONG", "MODERATE", "WEAK"):
         assert v["headline"].startswith("Nishkarsh reads ") and v["direction"].lower() in v["headline"]
-    # N4: the status is always named; the measured sentence is carried verbatim
-    assert v["status"] == status and v["status_label"] == _STATUS_LABELS[status] and v["status_text"]
-    assert v["measured_text"] == NKO_TEXT
+    # N4: the track record is always named; the upstream sentence (with its buy/sell words) is never printed
+    assert v["status"] == status and v["status_label"] == _STATUS_LABELS[status]
+    assert v["track"]["word"] == _TRACK_WORDS[status] and v["track"]["text"].endswith("Details on Reliability.")
+    assert all(NKO_TEXT not in t for t in texts)
     # N5: single-system said
-    if not two:
-        assert v["single_system"] and v["agreement_text"].startswith("Single-system")
+    if not two and v["value"] is not None:
+        assert v["single_system"] and "top-down only" in v["headline"]
     # N6: precedent votes only when significant
     pr = v["precedent"]
     p = comp.num((prec if isinstance(prec, dict) else {}).get("binomial_p"))
     if pr["votes"]:
         assert p is not None and p < EDGE_ALPHA
     if isinstance(prec, dict) and comp.num(prec.get("n")) and comp.num(prec.get("positive_pct")) is not None:
-        assert "/" in pr["text"] and "unconditional" in pr["text"] and "p=" in pr["text"]
+        assert "rose" in pr["text"] and "usually" in pr["text"] and "(p " in pr["text"]
     # N7: mode words
     if forward:
         for t in texts:
             assert not forbidden_hits(t, True), t
     else:
-        assert LEVELS_TAG in v["mode_label"] and v["levels_note"] == LEVELS_TAG
+        assert LEVELS_TAG in v["eyebrow"] and v["levels_note"] == LEVELS_TAG
     # N8 / N9
     assert v["synthetic"] is synth and (v["banner"] is not None) is synth
     for t in texts:
@@ -349,7 +213,7 @@ def test_hero_nko_honesty_grid():
     for status, value, two, pil, prec, fwd, syn in product(STATUSES, NKO_VALUES, (True, False), PILLAR_SETS,
                                                             PRECEDENTS, (True, False), (True, False)):
         rc = SYN_RC if syn else LIVE_RC
-        v = _hero(status, value, two, pil, prec, rc, fwd)
+        v = _hero(status, value, two, pil, prec, rc, fwd, context=CONTEXTS[n % len(CONTEXTS)])
         _check_hero(v, status, two=two, prec=prec, forward=fwd, synth=syn)
         n += 1
     assert n > 8000
@@ -362,27 +226,35 @@ def test_hero_call_only_when_validated_exhaustive():
         assert v["call"] is (status == "VALIDATED" and directional)
         assert v["side"] == (("bull" if value > 0 else "bear") if directional else "flat")
         if status == "VALIDATED" and directional:
-            assert "call" in v["tag"]                      # the wording is unlocked only here
+            assert "call" in v["track"]["text"]            # the wording is unlocked only here
 
 
 def test_hero_real_reading_example():
-    """Today's real reading (2026-11-09): NKO −48, MODERATE, BEARISH; the systems disagree; UNPROVEN."""
+    """A real reading (NKO −48, MODERATE, BEARISH; the systems disagree; UNPROVEN)."""
     prec = {"horizon": 10, "median": -0.8, "positive_pct": 40.0, "n": 10, "dir": -1,
             "unconditional_positive_pct": 56.0, "binomial_p": 0.34, "basis": "Nishkarsh Oscillator state"}
     v = _hero("UNPROVEN", -48.0, prec=prec)
     assert v["headline"] == "Nishkarsh reads moderately bearish" and v["value_text"] == "−48"
     assert v["tier"] == "MODERATE" and v["direction"] == "BEARISH" and not v["call"]
-    assert v["drivers_text"] == ("Driven most by stock cut crossings (−2.3), regime composition (−1.9) and HMM "
-                                 "state (−1.5) — all on the bearish side.")
-    assert v["agreement_text"].startswith("The two systems disagree — top-down leans bullish (+0.77), bottom-up "
-                                          "leans bearish (−2.14)")
-    assert v["precedent"]["text"].startswith("4/10 past moments like today rose over the next 10 trading days, "
-                                             "vs 56% unconditional (binomial p=0.34)")
+    assert v["explain"] == ("Driven by broad weakness in the Nifty's stocks (bottom-up −2.1), led by stock cut "
+                            "crossings (−2.3); Aarambh's forecast disagrees mildly (+0.8).")
+    assert [c["value"] for c in v["chips"]] == ["−12 pts", "12 sessions · since 14 Apr", "85% of past readings"]
+    assert v["chips"][1]["label"] == "On this side for"
+    assert v["precedent"]["text"] == ("In 10 past moments like today, the Nifty rose 4 times over the next 10 sessions "
+                                      "(usually 56%) — median −0.8%; not significant (p 0.34).")
     assert not v["precedent"]["votes"] and v["status_label"] == "Unproven"
+    assert v["track"]["text"].startswith("on 138 past 10-day periods this read has not yet shown it anticipates the "
+                                         "Nifty (accuracy +0.03).")
     sig = _hero("UNPROVEN", -48.0, prec=PRECEDENTS[3])
     assert sig["precedent"]["votes"] and sig["precedent"]["state"] == "confirm"
     single = _hero("UNPROVEN", 22.0, two=False, pillars=PILLAR_SETS[2])
-    assert "single-system" in single["tag"] and single["agreement_text"].startswith("Single-system read")
+    assert single["headline"] == "Nishkarsh reads mildly bullish (top-down only today)"
+    assert single["explain"].startswith("Top-down only today")
+    agree = _hero("UNPROVEN", 70.0, pillars=PILLAR_SETS[1])
+    assert agree["explain"].startswith("Driven by Aarambh's top-down forecast leaning up (top-down +1.2)")
+    assert agree["explain"].endswith("the stocks agree mildly (+0.9).")
+    flat = _hero("UNPROVEN", 4.0)
+    assert flat["headline"] == "Nishkarsh has no lean today" and flat["explain"].startswith("The pillars roughly cancel")
 
 
 def test_hero_missing_and_poisoned():
@@ -390,7 +262,7 @@ def test_hero_missing_and_poisoned():
     poison = (None, NAN, float("inf"), "n/a", "", [], {}, True, "<script>x</script>", 1e9)
     for _ in range(3000):
         k = make_nko(rnd.choice(STATUSES + ("BOGUS",)), rnd.choice(NKO_VALUES), rnd.choice((True, False, None)),
-                     rnd.choice(PILLAR_SETS))
+                     rnd.choice(PILLAR_SETS), context=rnd.choice(CONTEXTS))
         for _ in range(rnd.randint(1, 5)):
             key = rnd.choice(list(k))
             k[key] = rnd.choice(poison)
@@ -418,16 +290,14 @@ def test_hero_render_escapes_and_never_raises(monkeypatch):
     con["nko"]["text"] = "<script>alert(1)</script>"
     con["nko"]["evidence"] = dict(NKO_EVIDENCE, yearly={"<script>": 0.1})
     con["nko"]["drivers"] = [{"id": "<img src=x onerror=alert(2)>", "label": "<b>x</b>", "z": -2.0}]
+    con["nko"]["components"][0]["label"] = "<b>x</b>"
+    con["nko"]["components"][0]["id"] = "<img src=x onerror=alert(3)>"
     render_hero(build_hero_verdict(con, PRECEDENTS[3], SYN_RC))
-    for bad in (None, {}, {"numbers": [None, {"label": "<b>x</b>"}], "side": "<x>", "precedent": "x"}):
+    for bad in (None, {}, {"chips": [None, {"label": "<b>x</b>", "class": "<x>"}], "side": "<x>", "track": "x"}):
         render_hero(bad)
-    for pil in ("top_down", "bottom_up", "agreement", "<x>"):
-        render_pillar_banner(con, pil)
-        render_pillar_banner(None, pil)
     html = "\n".join(out)
     assert "<script" not in html and "<img" not in html and "<b>x" not in html
-    assert "Unproven" in html and "How it was measured" in html
-    assert "Feeds the <b>Top-down</b> pillar of the Nishkarsh read — today +0.77" in html
+    assert "Track record: <b>" not in html and "Track record: unproven" in html
 
 
 if __name__ == "__main__":

@@ -21,7 +21,6 @@ os.environ.setdefault("NUMBA_CACHE_DIR", os.path.join(os.path.expanduser("~"), "
 
 import sys  # noqa: E402
 import warnings  # noqa: E402
-from datetime import datetime, timedelta, timezone  # noqa: E402
 from pathlib import Path  # noqa: E402
 
 import pandas as pd  # noqa: E402
@@ -42,21 +41,19 @@ from core.config import (  # noqa: E402
 from pipeline.config import PipelineConfig  # noqa: E402
 from pipeline.inputs import InputError, sheet_content_hash  # noqa: E402
 from pipeline.run import SESSION_KEYS, run_pipeline  # noqa: E402
-from ui.components import esc, pretty_date  # noqa: E402
+from ui.components import data_notes, esc, pretty_date, render_error  # noqa: E402
 from ui.copy import (  # noqa: E402
-    ABOUT_LINES, INTEL_HELP_PLAIN, LANDING_FOOTNOTE, LANDING_INTRO, LANDING_STEPS, PRODUCT_TAGLINE, PRODUCT_TITLE,
+    INTEL_HELP_PLAIN, LANDING_FOOTNOTE, LANDING_INTRO, LANDING_STEPS, PRODUCT_TAGLINE, PRODUCT_TITLE, SYNTH_BAR,
 )
-from ui.tabs.tab_aarambh import render_aarambh_tab  # noqa: E402
 from ui.tabs.tab_data import render_data_tab  # noqa: E402
-from ui.tabs.tab_evidence import render_evidence_tab  # noqa: E402
-from ui.tabs.tab_nirnay import render_nirnay_tab  # noqa: E402
-from ui.tabs.tab_overview import render_overview_tab  # noqa: E402
+from ui.tabs.tab_drivers import render_drivers_tab  # noqa: E402
 from ui.tabs.tab_precedent import render_precedent_tab  # noqa: E402
+from ui.tabs.tab_reliability import render_reliability_tab  # noqa: E402
+from ui.tabs.tab_today import render_today_tab  # noqa: E402
 from ui.theme import inject_css, progress_bar  # noqa: E402
 
 SOURCES = ("Google Sheets", "Upload", "Synthetic demo")
-TAB_NAMES = ("Overview", "Aarambh", "Nirnay", "Precedent", "Evidence", "Data")
-SYNTH_LABEL = "SYNTHETIC DEMO DATA"
+TAB_NAMES = ("Today", "Drivers", "Precedent", "Reliability", "Data")
 SYNTH_SEED = 7
 _RESULTS_CACHE_MAX = 3
 # Every key derived from a loaded sheet / run. Reset clears ALL of them (A5-02).
@@ -100,29 +97,31 @@ def _render_landing_page() -> None:
         unsafe_allow_html=True)
 
 
-def _render_footer() -> None:
-    ist_now = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
-    st.markdown(f'<div class="nk-footer">{esc(PRODUCT_TITLE)} v{esc(VERSION)} · {esc(COMPANY)} · '
-                f'{ist_now:%d %b %Y, %H:%M} IST · Not investment advice.</div>', unsafe_allow_html=True)
+def _render_footer(as_of: str = "") -> None:
+    tail = f" · as of {as_of}" if as_of and as_of != "—" else ""
+    st.markdown(f'<div class="nk-footer">Not investment advice · {esc(PRODUCT_TITLE)} v{esc(VERSION)}{esc(tail)} · '
+                f'{esc(COMPANY)}</div>', unsafe_allow_html=True)
 
 
-def _render_synthetic_banner() -> None:
-    st.markdown(f'<div class="nk-banner synth"><b>{esc(SYNTH_LABEL)}</b> — a seeded, simulated market (seed '
-                f'{SYNTH_SEED}). Nothing on this page is about the real market.</div>', unsafe_allow_html=True)
+def _render_synthetic_bar() -> None:
+    st.markdown(f'<div class="nk-synth-bar">{esc(SYNTH_BAR)}</div>', unsafe_allow_html=True)
 
 
 def _render_topbar(rc: dict, con: dict) -> str:
-    """Brand + run context on the left, the page-wide date range on the right. Returns the range."""
+    """Brand + as-of on the left, the data status pill and the page-wide date range on the right."""
     ss = st.session_state
     frames = list(TIMEFRAME_TRADING_DAYS) + ["ALL"]
     if ss.get("tf_selected") not in frames:
         ss["tf_selected"] = "6M"
-    left, right = st.columns([3, 1.25], vertical_alignment="bottom")
+    left, mid, right = st.columns([2.5, 1.05, 1.3], vertical_alignment="center")
     as_of = pretty_date(con.get("as_of") or rc.get("as_of"))
     left.markdown(
         f'<div class="nk-topbar"><div class="nk-wordmark">{esc(PRODUCT_TITLE)}<span>निष्कर्ष</span></div>'
-        f'<div class="nk-context">Nifty 50 market read · as of {esc(as_of)} · model target '
-        f'{esc(rc.get("target") or "—")}</div></div>', unsafe_allow_html=True)
+        f'<div class="nk-context">Nifty 50 · as of {esc(as_of)}</div></div>', unsafe_allow_html=True)
+    n = len(data_notes(rc))
+    pill = ('<div class="nk-pill ok"><span class="nk-dot"></span>Data current</div>' if not n else
+            f'<div class="nk-pill warn"><span class="nk-dot"></span>{n} data note{"s" if n != 1 else ""} · see Data</div>')
+    mid.markdown(pill, unsafe_allow_html=True)
     with right:
         st.segmented_control("Date range", frames, key="tf_selected", required=True, label_visibility="collapsed",
                              format_func=lambda f: "All" if f == "ALL" else f, width="stretch")
@@ -204,10 +203,6 @@ def main() -> None:
                 _clear_derived()
                 st.rerun()
     settings_box = st.sidebar.container()
-    with st.sidebar:
-        with st.expander("About Nishkarsh", expanded=False):
-            st.markdown("".join(f'<p class="nk-about">{esc(line)}</p>' for line in ABOUT_LINES),
-                        unsafe_allow_html=True)
 
     df = ss.get("data") if ss.get("run_analysis") else None
     synthetic = ss.get("_sources_kind") == "Synthetic demo"
@@ -301,39 +296,34 @@ def _render_results(ss, synthetic: bool) -> None:
     engine, aarambh_ts, con = ss["engine"], ss["aarambh_ts"], ss.get("conclusion") or {}
     target = rc["target"]
     forward = bool(rc.get("forward_mode", con.get("forward_mode", True)))
-    if synthetic:
-        _render_synthetic_banner()
     tf = _render_topbar(rc, con)
+    if synthetic:
+        _render_synthetic_bar()
 
-    signal, model_stats, regime_stats = engine.get_current_signal(), engine.get_model_stats(), engine.get_regime_stats()
     ts = aarambh_ts.reset_index(drop=True)
     ts_f = ts if tf == "ALL" else ts.iloc[max(0, len(ts) - int(TIMEFRAME_TRADING_DAYS[tf])):]
-    # One date window for every tab (TIMEFRAME_TRADING_DAYS rows of the Aarambh frame).
+    # One date window for every page (TIMEFRAME_TRADING_DAYS rows of the Aarambh frame).
     start = None if tf == "ALL" or not len(ts_f) else pd.Timestamp(ts_f["Date"].iloc[0])
     horizon = int(con.get("horizon") or AARAMBH_FWD_HORIZON)
 
     def _safe(name, fn):
         try:
             fn()
-        except Exception as e:  # noqa: BLE001 — a tab failure must not take the page down
-            st.markdown(f'<div class="warning-box"><div><div class="title">Error in {esc(name)}</div>'
-                        f'<div class="content">{esc(e)}</div></div></div>', unsafe_allow_html=True)
+        except Exception as e:  # noqa: BLE001 — a page failure must not take the app down
+            render_error(name, e)
 
     tabs = st.tabs(list(TAB_NAMES))
     with tabs[0]:
-        _safe("Overview", lambda: render_overview_tab(start, tf))
+        _safe("Today", lambda: render_today_tab(start, tf))
     with tabs[1]:
-        _safe("Aarambh", lambda: render_aarambh_tab(engine, ts_f, ts, signal, model_stats, regime_stats, target,
-                                                    forward, con))
+        _safe("Drivers", lambda: render_drivers_tab(start, tf))
     with tabs[2]:
-        _safe("Nirnay", lambda: render_nirnay_tab(start))
-    with tabs[3]:
         _safe("Precedent", lambda: render_precedent_tab(horizon))
+    with tabs[3]:
+        _safe("Reliability", lambda: render_reliability_tab(engine.get_current_signal() if not forward else None))
     with tabs[4]:
-        _safe("Evidence", lambda: render_evidence_tab(engine, signal, start))
-    with tabs[5]:
         _safe("Data", lambda: render_data_tab(ts_f, ts, target, forward))
-    _render_footer()
+    _render_footer(pretty_date(con.get("as_of") or rc.get("as_of")))
 
 
 if __name__ == "__main__":
