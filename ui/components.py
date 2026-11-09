@@ -1163,7 +1163,7 @@ def render_edge_panel(edge: dict | None, key: str, *, what: str, show_chart: boo
          "color_class": ("success" if n_scored and pos > n_scored * 0.6
                          else "warning" if n_scored and pos >= n_scored * 0.5 else "danger")},
         {"label": "Windows Scored", "value": f"{int(num(edge.get('n')) or 0):,}",
-         "subtext": f"one per {edge.get('horizon', '?')} sessions, none overlapping",
+         "subtext": f"one per {edge.get('horizon', '?')} sessions, no two overlapping",
          "color_class": "neutral"},
     ], max_cols=3, key=f"edge-{key}")
     if show_chart and blocks:
