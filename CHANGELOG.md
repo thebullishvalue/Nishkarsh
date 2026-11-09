@@ -13,6 +13,24 @@ Sections used: **Added · Changed · Deprecated · Removed · Fixed · Security 
 
 ---
 
+## [2.5.1] — 2026-11-09 — *Real sources only; Convergence leads the engines*
+
+### Changed
+- **Navigation**: Convergence is the first engine page — Overview · Engines (Convergence, Aarambh,
+  Nirnay, Precedent) · System (System, Data). It is where the two systems meet and the read itself
+  is drawn, so it leads its sources.
+
+### Removed
+- **The "Synthetic demo" data source in the rail** (owner decision). The rail offers Google Sheets
+  and Upload only. The deterministic synthetic world stays for the test suite and the headless CLI
+  (`python -m pipeline synth`); the app accepts an injected offline source only through session
+  state (`_sources_override`), which the app test uses.
+
+### Docs
+- README: version line, the pinned Streamlit, the fixed model defaults, and the trend-read `zN`.
+
+---
+
 ## [2.5.0] — 2026-11-09 — *The Graphite design system, ported exactly from Tattva 2.8.0*
 
 ### Changed

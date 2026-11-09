@@ -11,8 +11,8 @@ p-values — what is and is not established.
 
 | | |
 |---|---|
-| **Version** | 2.3.0 — *Nirnay read as trend (one polarity switch)* |
-| **Stack** | Python 3.13 · Streamlit · scikit-learn · statsmodels · numba · Plotly |
+| **Version** | 2.5.1 — *Real sources only; Convergence leads the engines* |
+| **Stack** | Python 3.13 · Streamlit 1.52.2 (pinned) · scikit-learn · statsmodels · numba · Plotly |
 | **Universe** | Nifty 50 (live list from niftyindices.com; dated fallback list) |
 | **License** | See `LICENSE.md` |
 
@@ -43,7 +43,7 @@ p-values — what is and is not established.
 | **Direction** | Top-down | Bottom-up |
 | **Question** | *Where is the index likely to go over the next 10 sessions?* | *What are the 50 constituents doing?* |
 | **Method** | Purged walk-forward ensemble (Ridge · Huber · ElasticNet · PCA-OLS, equal weight) forecasting forward 10-day Δlog(PE) from 20-day predictor momentum | Per-stock MSF + MMR oscillator with an online regime ensemble (adaptive Kalman · 3-state HMM · GARCH · CUSUM), aggregated to daily breadth over live, warm constituents |
-| **Output** | `Forecast`, its causal z-score `zA` | Daily breadth; `zN` = causal z of −mean oscillator |
+| **Output** | `Forecast`, its causal z-score `zA` | Daily breadth; `zN` = causal z of the mean oscillator, read as trend (`NIRNAY_SIGN`) |
 
 A second model that agrees is a stronger bet *only if* agreement actually predicts
 better outcomes. Nishkarsh tests exactly that on every run (the **Convergence-Lift
@@ -69,11 +69,9 @@ In the sidebar choose a data source:
   `.streamlit/secrets.toml.example`) or `AARAMBH_GOOGLE_SHEETS_URL`; a configured URL
   is never sent to the browser. Without one you can paste a URL.
 - **Upload** — a CSV/Excel export of the sheet (ISO or day-first dates both work).
-- **Synthetic demo** — a deterministic offline world; every surface is labelled
-  SYNTHETIC. Useful to explore the app without data or network.
 
-Select the target (default `NIFTY50_PE`), the date column and the predictors, then
-**Run Analysis**. The sheet needs at least `MIN_TRAIN_SIZE + horizon + MIN_OOS_ROWS`
+Then **Run Analysis**. The model is not user-configurable: the target (`NIFTY50_PE`), the date
+column and the predictors are fixed defaults. The sheet needs at least `MIN_TRAIN_SIZE + horizon + MIN_OOS_ROWS`
 = 1500 + 10 + 252 usable rows of daily history (after the 20-row momentum warm-up).
 
 **Streamlit Cloud:** push the repo, connect it at share.streamlit.io, and add the
@@ -92,8 +90,8 @@ descriptions and card tooltips.
 
 **The shell, on every page:** a tape of the Nifty 50 constituents → the command bar (instrument,
 level and change; the read; window; horizon; as-of; freshness chip CURRENT / nD BEHIND / STALE) →
-the notice rail (data notes, synthetic or levels-mode caveats, single-system days) → the page.
-**The rail:** Instrument (data source, Run Analysis) → Model (a read-only readout: pillar weights,
+the notice rail (data notes, levels-mode caveats, single-system days) → the page.
+**The rail:** Instrument (Google Sheets or an uploaded file, Run Analysis) → Model (a read-only readout: pillar weights,
 the read's walk-forward edge, periods positive, Nirnay's polarity) → Session (Refresh data, Start
 over) → Appearance. The model is not user-configurable, by design.
 
@@ -102,9 +100,9 @@ Every page leads with its answer and its own walk-forward grade, then the eviden
 | Page | What it answers | What is on it |
 |---|---|---|
 | **Overview** (default) | *What does Nishkarsh read, and how far can I trust it?* | Six numbers (the read, the Nishkarsh Oscillator, its walk-forward edge, Nirnay's net breadth, the top-down pillar, engine agreement) and the **Inference Chain**: the read, its trust chip, the one-sentence why, the limiting factor named, then each pillar, the edge and the precedent as a row. |
+| **Convergence** | *Do the two systems agree?* | The read and its pillars over time, what drives today's read, the agreement anatomy, the agreement-lift test, the agreement pillar's edge, divergences. |
 | **Aarambh** | *What does the top-down forecast say?* | The top-down pillar and its four inputs against the Nifty, model quality, its walk-forward edge, accuracy stage by stage and the cost-aware backtest. |
 | **Nirnay** | *What are the fifty stocks doing?* | Net breadth, overbought / oversold shares over time, its edge, which stocks carry the breadth, regime, the average oscillator against its adaptive cuts, any stock's own history. |
-| **Convergence** | *Do the two systems agree?* | The read and its pillars over time, what drives today's read, the agreement anatomy, the agreement-lift test, the agreement pillar's edge, divergences. |
 | **Precedent** | *What followed reads like today's?* | Median Nifty moves 3/5/10/20 sessions after the closest past states (coloured only when p < 0.05), where they happened on the Nifty, the analog matcher's skill (not yet graded), and each match as a card. |
 | **System** | *How good is each part, and what is the run made of?* | Every engine's walk-forward edge side by side, the Edge Ledger for this run, model facts, data-layer health per source, method and limits. |
 | **Data** | *What are the numbers?* | The record: every published series joined on date, searchable, windowed, CSV export at full precision. |
@@ -121,7 +119,7 @@ The UI is built on Streamlit's internal page structure, so Streamlit is pinned *
 
 ```
 zA_t   = causal z-score of Aarambh's forecast        (strictly prior mean/std, ≥ 126 obs, clip ±4)
-zN_t   = causal z-score of −Avg_Signal (Nirnay)       (NaN on days without warm Nirnay data)
+zN_t   = causal z-score of NIRNAY_SIGN·Avg_Signal      (trend: +; NaN without warm Nirnay data)
 state  = NO_DATA | CONFIRM | CONTRADICT | NEUTRAL     (|zN| ≥ τ = 0.25 to confirm/contradict)
 C_t    = 100 · tanh(zA_t / 2) · m_t                   m_t = κ_t on CONTRADICT days, else 1
 tiers  = |C| ≥ 60 STRONG · ≥ 30 MODERATE · > 10 WEAK · else NO LEAN      (+ = bullish)

@@ -67,25 +67,24 @@ from ui.tabs.page_precedent import render_precedent_page  # noqa: E402
 from ui.tabs.page_system import render_system_page  # noqa: E402
 from ui.theme import inject_css, progress_bar  # noqa: E402
 
-SOURCES = ("Google Sheets", "Upload", "Synthetic demo")
-SYNTH_SEED = 7
+SOURCES = ("Google Sheets", "Upload")
 INSTRUMENT = "NIFTY 50"
 _RESULTS_CACHE_MAX = 3
 # Every key derived from a loaded sheet / run. Start over clears ALL of them (A5-02).
 _DERIVED_KEYS = SESSION_KEYS + ("data", "run_analysis", "results_cache", "_result_key", "_sheet_info",
-                                "_sources_kind", "_synthetic_sources", "_force_next", "_today",
+                                "_sources_kind", "_sources_override", "_force_next", "_today",
                                 "precedent_summary", "_prec_key", "tf_selected", "_resolved")
 
-#: The pages, in the order the inference reads them: the read (Overview), its top-down claim
-#: (Aarambh), its bottom-up confirmation (Nirnay), their agreement (Convergence), the base rate
-#: (Precedent) — then the system's own grading and the record. (section, title, icon,
+#: The pages: the read (Overview); the engines led by Convergence — where the two systems meet and
+#: the read itself is drawn — then its top-down source (Aarambh), its bottom-up source (Nirnay)
+#: and the base rate (Precedent); then the system's own grading and the record. (section, title, icon,
 #: url_path, render function, windowed). Windowed pages carry the chart window in their
 #: primary panel and show "Window" in the command bar.
 PAGES = (
     ("", "Overview", ":material/dashboard:", "overview", render_overview_page, False),
+    ("Engines", "Convergence", ":material/merge_type:", "convergence", render_convergence_page, True),
     ("Engines", "Aarambh", ":material/monitoring:", "aarambh", render_aarambh_page, True),
     ("Engines", "Nirnay", ":material/hub:", "nirnay", render_nirnay_page, True),
-    ("Engines", "Convergence", ":material/merge_type:", "convergence", render_convergence_page, True),
     ("Engines", "Precedent", ":material/history:", "precedent", render_precedent_page, False),
     ("System", "System", ":material/monitor_heart:", "system", render_system_page, False),
     ("System", "Data", ":material/table_chart:", "data", render_data_page, True),
@@ -101,7 +100,7 @@ _FAVICON = ("data:image/svg+xml;utf8,"
 
 def _clear_derived(keep_data: bool = False) -> None:
     for k in _DERIVED_KEYS:
-        if keep_data and k in ("data", "run_analysis", "_sheet_info", "_sources_kind", "_synthetic_sources", "_today"):
+        if keep_data and k in ("data", "run_analysis", "_sheet_info", "_sources_kind", "_sources_override", "_today"):
             continue
         st.session_state.pop(k, None)
 
@@ -381,21 +380,8 @@ def main() -> None:
                               _sheet_info=FetchResult(None, r.provenance, r.as_of, list(r.missing), r.note))
                 if not has_data:
                     st.rerun()
-        else:
-            render_control_hint("Seeded simulated market · not market data")
-            if not has_data and st.button("Run Analysis", type="primary", width="stretch"):
-                progress_bar(progress_container, 2, "Building Synthetic Market", f"seed {SYNTH_SEED}")
-                from data.sources import FetchResult
-                from data.synthetic import synthetic_world
-                df, src = synthetic_world(SYNTH_SEED)
-                info = src.sheet()
-                ss.update(data=df, run_analysis=True, _sources_kind=source, _synthetic_sources=src,
-                          _today=str(pd.Timestamp(df["DATE"].iloc[-1]).date()),
-                          _sheet_info=FetchResult(None, info.provenance, info.as_of, [], info.note))
-                st.rerun()
 
     df = ss.get("data") if ss.get("run_analysis") else None
-    synthetic = ss.get("_sources_kind") == "Synthetic demo"
 
     # ─── Cold start ───────────────────────────────────────────────────────
     if df is None:
@@ -421,9 +407,8 @@ def main() -> None:
         _render_model_readout()
         st.markdown('<div class="sidebar-title">Session</div>', unsafe_allow_html=True)
         do_refresh = st.button(
-            "Refresh data", type="secondary", width="stretch", disabled=synthetic,
-            help=("A seeded simulated market has nothing to refresh." if synthetic else
-                  "Fetch the sheet and market data live now (bypassing caches), then recompute."))
+            "Refresh data", type="secondary", width="stretch",
+            help="Fetch the sheet and market data live now (bypassing caches), then recompute.")
         do_restart = st.button(
             "Start over", type="secondary", width="stretch",
             help="Clear this session's data and results and return to the start screen.")
@@ -455,14 +440,11 @@ def main() -> None:
             cache[result_key] = {k: ss[k] for k in SESSION_KEYS}
             ss["_result_key"] = result_key
         else:
-            if synthetic:
-                sources = ss.get("_synthetic_sources")
-                if sources is None:
-                    from data.synthetic import synthetic_world
-                    sources = synthetic_world(SYNTH_SEED)[1]
-                    ss["_synthetic_sources"] = sources
-            else:
-                from data.nse_archive import AutoSources   # Yahoo first, NSE archives on failure
+            # Market data: Yahoo first, NSE archives on failure. `_sources_override` is the offline
+            # injection point for tests and headless use only — the rail offers no such source.
+            sources = ss.get("_sources_override")
+            if sources is None:
+                from data.nse_archive import AutoSources
                 sources = AutoSources()
             done = [0]
 

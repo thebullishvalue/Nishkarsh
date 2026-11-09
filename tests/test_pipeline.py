@@ -117,8 +117,8 @@ def test_end_to_end_deterministic_and_order_invariant():
 
 
 @pytest.mark.slow
-def test_streamlit_app_synthetic_demo_renders():
-    """The app on the synthetic demo: cold start (masthead + landing), one run, then EVERY registered
+def test_streamlit_app_renders_every_page():
+    """The app on an injected offline run: cold start (masthead + landing), one run, then EVERY registered
     page rendered through st.navigation without an exception — the page shell on each (tape →
     command bar → notice rail), no NaN/None text, no buy/sell/signal/call wording unless the read
     is VALIDATED, and none of the retired disclosure widgets (rule 133)."""
@@ -147,16 +147,25 @@ def test_streamlit_app_synthetic_demo_renders():
         assert not at.exception, [e.message for e in at.exception]
         cold = " ".join(m.value for m in at.markdown)
         assert "premium-header" in cold and "lede-claim" in cold and "outcome-grid" in cold
-        radios = [r for r in at.radio if any("Synthetic" in str(o) for o in r.options)]
-        assert radios and radios[0].label == "Data source", "Synthetic demo data source missing"
-        radios[0].set_value(next(o for o in radios[0].options if "Synthetic" in str(o))).run()
-        run_btn = [b for b in at.button if "Run" in str(b.label)]
-        assert run_btn, "Run Analysis button missing"
-        run_btn[0].click().run()
+        # the rail offers the real sources only — no synthetic selector
+        radios = [r for r in at.radio if r.label == "Data source"]
+        assert radios and list(radios[0].options) == ["Google Sheets", "Upload"], "data sources"
+        assert [b for b in at.button if "Run" in str(b.label)], "Run Analysis button missing"
+        # one offline run: the deterministic synthetic world injected as a loaded sheet + sources
+        from data.sources import FetchResult
+        df, src = synthetic_world(7)
+        info = src.sheet()
+        at.session_state["data"] = df
+        at.session_state["run_analysis"] = True
+        at.session_state["_sources_kind"] = "Google Sheets"
+        at.session_state["_sources_override"] = src
+        at.session_state["_today"] = str(pd.Timestamp(df["DATE"].iloc[-1]).date())
+        at.session_state["_sheet_info"] = FetchResult(None, info.provenance, info.as_of, [], info.note)
+        at.run()
         assert not at.exception, [e.message for e in at.exception]
 
         # navigation: exactly the seven pages, Overview default, in the inference's order
-        assert [p[1] for p in app_module.PAGES] == ["Overview", "Aarambh", "Nirnay", "Convergence", "Precedent",
+        assert [p[1] for p in app_module.PAGES] == ["Overview", "Convergence", "Aarambh", "Nirnay", "Precedent",
                                                      "System", "Data"]
         assert [p[0] for p in app_module.PAGES] == ["", "Engines", "Engines", "Engines", "Engines", "System",
                                                      "System"]

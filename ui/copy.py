@@ -1,7 +1,7 @@
 """
 Nishkarsh — user-facing copy for the pages, single-sourced. Nothing here computes anything.
 
-Seven pages (Overview · Aarambh · Nirnay · Convergence · Precedent · System · Data) read ONE
+Seven pages (Overview · Convergence · Aarambh · Nirnay · Precedent · System · Data) read ONE
 inference, the Nishkarsh Oscillator (NKO). The read's own wording (lean words, pillar and input
 names, the levels-mode tag, the synthetic banner) is single-sourced in ``convergence.verdict``
 — the layer that builds the verdict — and re-exported here for the pages. Long "how to read"
