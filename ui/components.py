@@ -1359,6 +1359,7 @@ def render_data_table(
 
     n_rows = len(view)
     _HEADER_H = 30                      # sticky header row, matches the CSS above
+    _pad_v = max(0.0, (row_height - 17.5) / 2)   # 16.5px line box + 1px row rule
     content_h = _HEADER_H + n_rows * row_height + 4
     iframe_h = min(content_h, max_height)
 
@@ -1404,7 +1405,11 @@ def render_data_table(
                 transition:background 120ms cubic-bezier(0.2,0,0,1); }}
     tbody tr:last-child {{ border-bottom:none; }}
     tbody tr:hover {{ background:{t['accent_hover']}; }}
-    tbody td {{ padding:0.4rem 0.75rem; color:{t['ink_primary']}; font-size:0.6875rem;
+    /* Vertical padding is derived from row_height so a row really is
+       row_height tall (11px x 1.5 line + 1px rule + 2 x pad) — a fixed 0.4rem
+       pad rendered ~30px rows against a 27px budget and clipped the last row
+       of every short table. */
+    tbody td {{ padding:{_pad_v}px 0.75rem; color:{t['ink_primary']}; font-size:0.6875rem;
                 line-height:1.5; vertical-align:middle; white-space:nowrap; }}
     tbody td.num {{ text-align:right; }}
     tbody td.lbl {{ font-weight:600; color:{t['ink_primary']}; }}

@@ -2507,3 +2507,66 @@
     .hero-signal, .metric-card .value, .metric-card h2,
     .command-bar .cb-instrument .sym, .command-bar .cb-quote .px { color: #000; }
 }
+
+/* ── B9c additions ─────────────────────────────────────────────────────────
+   System page. The Ledger is a list of claims, each with a status chip whose
+   tone carries the claim — chips cannot live inside the iframe table, so the
+   rows are page DOM, set in the table's own grammar (10px tracked header on
+   surface-2, 11px mono rows, hairline rules, 8/12 cell padding) so it reads
+   as the same object as the edge table above it. Method & Limits reuses the
+   panel k/v row (`.lookback-row`) with a prose value: label left, sentence
+   left-aligned beside it, instead of a right-aligned single-line value. */
+.ledger { display: flex; flex-direction: column; align-self: stretch; width: 100%; }
+.ledger-row {
+    display: grid;
+    grid-template-columns: 3.25rem minmax(0, 1.7fr) 8.5rem minmax(0, 1fr);
+    column-gap: var(--s4); align-items: start;
+    padding: var(--s2) var(--s3);
+    border-bottom: 1px solid var(--line-faint);
+    font-family: var(--mono); font-size: var(--fs-xs); line-height: 1.5;
+    font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1, "zero" 1;
+    color: var(--ink);
+}
+.ledger-row:last-child { border-bottom: none; }
+.ledger-row.ledger-head {
+    background: var(--surface-2); border-bottom: 1px solid var(--line);
+    font-size: var(--fs-2xs); font-weight: 600; color: var(--ink-tertiary);
+    text-transform: uppercase; letter-spacing: 0.12em; white-space: nowrap;
+}
+.ledger-row .lg-id { font-weight: 600; color: var(--ink-tertiary); }
+.ledger-row .lg-claim { font-weight: 600; color: var(--ink); }
+.ledger-row .lg-mean {
+    display: block; margin-top: 2px;
+    font-family: var(--sans); font-size: var(--fs-sm); font-weight: 400;
+    line-height: 1.5; color: var(--ink-tertiary);
+}
+.ledger-row .lg-status { display: flex; align-items: center; min-height: 1.5em; }
+.ledger-row .lg-num { color: var(--ink); }
+.ledger p, .method-specs p {
+    margin: 0 !important; font: inherit !important; color: inherit !important;
+    line-height: inherit !important;
+}
+.panel-specs .lookback-row.prose {
+    display: grid; grid-template-columns: minmax(8rem, 13rem) minmax(0, 1fr);
+    gap: var(--s4); align-items: baseline; padding: var(--s3) 0;
+}
+.panel-specs .lookback-row.prose .val {
+    text-align: left; font-family: var(--sans); font-size: var(--fs-md);
+    font-weight: 400; line-height: 1.6; color: var(--ink-secondary);
+}
+.method-specs { padding-top: var(--s1); }
+@media (max-width: 640px) {
+    .ledger-row { grid-template-columns: 2.75rem minmax(0, 1fr); row-gap: var(--s1); }
+    .ledger-row.ledger-head span:nth-child(n+3) { display: none; }
+    .ledger-row .lg-status, .ledger-row .lg-num { grid-column: 2; }
+    .panel-specs .lookback-row.prose { grid-template-columns: minmax(0, 1fr); gap: var(--s1); }
+}
+/* B9c — the Ledger and Method rows are markdown inside a panel. Streamlit
+   gives every markdown container a -1rem bottom margin, so each markdown
+   block in a panel reports 16px less than it draws: the panel sized itself
+   to the short sum and clipped the last ledger row under its footer.
+   Scoped to these two panels; chart and table panels keep Tattva's box. */
+[class*="st-key-panel-"]:has(.ledger) [data-testid="stMarkdownContainer"],
+[class*="st-key-panel-"]:has(.method-specs) [data-testid="stMarkdownContainer"] {
+    margin-bottom: 0 !important;
+}

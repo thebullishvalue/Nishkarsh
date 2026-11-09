@@ -47,9 +47,6 @@ DEEP_Z = 2.0
 #: How the run's target column reads in a sentence.
 _TARGET_WORDS = {"NIFTY50_PE": "the Nifty's P/E", "NIFTY50_PB": "the Nifty's P/B",
                  "NIFTY50_DY": "the Nifty's dividend yield"}
-#: Rendered row height of the table primitive (27px nominal + cell padding/rule) — sizes the
-#: iframe of a short table so its last row is not clipped.
-_ROW_H = 30
 #: The forecast's stages (``conclusion["chain"]``), in plain words.
 _STAGE = {"forecast": "Aarambh forecast", "valuation_head": "Valuation head", "engine_conviction": "Engine conviction",
           "C": "Conclusion C", "kappa_shrunk": "After κ shrink"}
@@ -433,13 +430,13 @@ def render_aarambh_page() -> None:
     if not stages.empty:
         render_sub_header("Stage by Stage")
         render_table_panel(stages, "aarambh-stages", units=f"non-overlapping {h}d IC", windowed=False,
-                           col_precision={"IC": 3}, sign_color_cols={"IC"}, max_height=240, row_height=_ROW_H,
+                           col_precision={"IC": 3}, sign_color_cols={"IC"}, max_height=240,
                            footer=esc("Accuracy at each stage of the forecast, on the same windows."))
     bt = backtest_table(con.get("backtest"))
     if not bt.empty:
         render_sub_header("Cost-Aware Backtest")
         render_table_panel(bt, "aarambh-backtest", units="position = C / 100 · staggered tranches", windowed=False,
-                           sign_color_cols={"Net Sharpe", "Return / yr %"}, max_height=280, row_height=_ROW_H,
+                           sign_color_cols={"Net Sharpe", "Return / yr %"}, max_height=280,
                            col_labels={"Return / yr %": "Return / yr %", "HAC t": "HAC t"},
                            footer=esc(f"A long/short book sized by the conclusion C, held {h} sessions in "
                                       "staggered tranches; costs are per unit of turnover."))
