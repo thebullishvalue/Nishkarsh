@@ -118,40 +118,89 @@ def test_end_to_end_deterministic_and_order_invariant():
 
 @pytest.mark.slow
 def test_streamlit_app_synthetic_demo_renders():
-    from streamlit.testing.v1 import AppTest
-    at = AppTest.from_file("../app.py", default_timeout=300)
-    at.run()
-    radios = [r for r in at.radio if any("Synthetic" in str(o) for o in r.options)]
-    assert radios, "Synthetic demo data source missing"
-    radios[0].set_value(next(o for o in radios[0].options if "Synthetic" in str(o))).run()
-    run_btn = [b for b in at.button if "Run" in str(b.label)]
-    assert run_btn, "Run Analysis button missing"
-    run_btn[0].click().run()
-    assert not at.exception, [e.message for e in at.exception]
-    assert [t.label for t in at.tabs] == ["Today", "Drivers", "Precedent", "Reliability", "Data"]
-    for t in at.tabs:                         # every page renders without an error box or NaN / None text
-        md = " ".join(m.value for m in t.markdown)
-        assert not t.error and "Could not draw" not in md, (t.label, [e.value for e in t.error])
-        low = md.lower()
-        assert "+nan" not in low and ">nan<" not in low and ">none<" not in low and " nan " not in low, t.label
-    # no buy/sell/signal/call wording on ANY page unless the read itself is VALIDATED
+    """The app on the synthetic demo: cold start (masthead + landing), one run, then EVERY registered
+    page rendered through st.navigation without an exception — the page shell on each (tape →
+    command bar → notice rail), no NaN/None text, no buy/sell/signal/call wording unless the read
+    is VALIDATED, and none of the retired disclosure widgets (rule 133)."""
     import re
+
+    from streamlit.testing.v1 import AppTest
+    from streamlit.testing.v1 import element_tree as et
+    from streamlit.util import calc_md5
+
+    import app as app_module
     from ui.components import BUY_SELL_RE
-    status = ((at.session_state["conclusion"] or {}).get("nko") or {}).get("status")
-    if status != "VALIDATED":
-        for t in at.tabs:
-            text = re.sub(r"<style.*?</style>|<[^>]+>", " ", " ".join(m.value for m in t.markdown), flags=re.S)
-            hit = BUY_SELL_RE.search(text)
-            assert not hit, (t.label, text[max(0, hit.start() - 60):hit.end() + 60])
-    today = " ".join(m.value for m in at.tabs[0].markdown)
-    assert "Today’s Nishkarsh read" in today or "Today&#x27;s Nishkarsh read" in today
-    assert "Track record:" in today and "What drives today" in today and "moments like today" in today
-    assert "moments like today" in " ".join(m.value for m in at.tabs[2].markdown)
-    rel = " ".join(m.value for m in at.tabs[3].markdown)
-    assert "The ledger" in rel and "Method and limits" in rel and "Glossary" in rel
-    # disclosures live in their sections: the only expander left is the sidebar's Model settings
-    assert [e.label for e in at.expander] == ["Model settings"]
-    assert "Synthetic demo data" in " ".join(m.value for m in at.markdown)
+
+    # AppTest 1.52.2 reads every button group's value as a LIST; a single-select
+    # st.segmented_control (Appearance, chart window) holds a scalar, which AppTest iterates
+    # character by character on the next run. Test-harness shim only — the app is unchanged.
+    def _indices(self):
+        v = self.value
+        vals = v if isinstance(v, (list, tuple)) else ([] if v is None else [v])
+        return [self.options.index(self.format_func(x)) for x in vals]
+
+    _orig = et.ButtonGroup.indices
+    et.ButtonGroup.indices = property(_indices)
+    try:
+        at = AppTest.from_file("../app.py", default_timeout=300)
+        at.run()
+        assert not at.exception, [e.message for e in at.exception]
+        cold = " ".join(m.value for m in at.markdown)
+        assert "premium-header" in cold and "lede-claim" in cold and "outcome-grid" in cold
+        radios = [r for r in at.radio if any("Synthetic" in str(o) for o in r.options)]
+        assert radios and radios[0].label == "Data source", "Synthetic demo data source missing"
+        radios[0].set_value(next(o for o in radios[0].options if "Synthetic" in str(o))).run()
+        run_btn = [b for b in at.button if "Run" in str(b.label)]
+        assert run_btn, "Run Analysis button missing"
+        run_btn[0].click().run()
+        assert not at.exception, [e.message for e in at.exception]
+
+        # navigation: exactly the seven pages, Overview default, in the inference's order
+        assert [p[1] for p in app_module.PAGES] == ["Overview", "Aarambh", "Nirnay", "Convergence", "Precedent",
+                                                     "System", "Data"]
+        assert [p[0] for p in app_module.PAGES] == ["", "Engines", "Engines", "Engines", "Engines", "System",
+                                                     "System"]
+        status = ((at.session_state["conclusion"] or {}).get("nko") or {}).get("status")
+        firsts = {"overview": "Inference Chain", "aarambh": "Aarambh — The Top-Down Forecast",
+                  "nirnay": "Nirnay — What the Fifty Stocks Are Doing",
+                  "convergence": "Convergence — Do the Systems Agree?",
+                  "precedent": "Precedent — What Followed Reads Like Today", "system": "Walk-Forward Edge",
+                  "data": "The Record"}
+        for section, title, icon, url, _fn, windowed in app_module.PAGES:
+            if url != "overview":
+                at._page_hash = calc_md5(url)
+            at.run()
+            assert not at.exception, (title, [e.message for e in at.exception])
+            md = " ".join(m.value for m in at.markdown)
+            assert "could not be drawn" not in md, title
+            assert "command-bar" in md and "ticker" in md and "notice-rail" in md, title
+            assert md.index("ticker") < md.index("command-bar") < md.index("notice-rail"), title
+            assert firsts[url] in html_unescape(md), title
+            assert ('<span class="k">Window</span>' in md) is windowed, title
+            text = re.sub(r"<style.*?</style>|<[^>]+>", " ", md, flags=re.S)
+            low = f" {text.lower()} "
+            assert "+nan" not in low and " nan " not in low and " none " not in low, title
+            if status != "VALIDATED":
+                hit = BUY_SELL_RE.search(text)
+                assert not hit, (title, text[max(0, hit.start() - 60):hit.end() + 60])
+            # rule 133: no expanders, in-page tabs, captions, info/warning boxes, metrics or dataframes
+            assert not (at.expander or at.tabs or at.caption or at.info or at.warning or at.metric
+                        or at.dataframe), title
+            assert "Synthetic demo data" in md, title
+        at._page_hash = ""
+        at.run()
+        overview_md = " ".join(m.value for m in at.markdown)
+        assert "hero-card" in overview_md and "Limited by" in overview_md
+        for label in ("Read", "Nishkarsh Oscillator", "Walk-Forward Edge", "Nirnay Net Breadth", "Top-Down Pillar",
+                      "Engine Agreement"):
+            assert f">{label}<" in overview_md, label
+    finally:
+        et.ButtonGroup.indices = _orig
+
+
+def html_unescape(s: str) -> str:
+    import html
+    return html.unescape(s)
 
 
 def test_real_sheet_date_typo_runs_and_is_reported():

@@ -29,7 +29,7 @@ from ui.copy import data_cols
 #: The conclusion frame's published series → their record names.
 _CONCLUSION = (("NKO", "NKO"), ("P_top_down", "Top-down"), ("P_bottom_up", "Bottom-up"),
                ("P_agreement", "Agreement"), ("two_system", "Two systems"), ("C", "C"), ("zA", "zA"),
-               ("zN", "zN"), ("state", "State"), ("kappa", "κ"), ("agreement_ratio", "Agreement ratio"),
+               ("zN", "zN"), ("state", "State"), ("kappa", "Kappa"), ("agreement_ratio", "Agreement ratio"),
                ("SAO", "Signed agreement"))
 #: Nirnay's daily aggregate → record names (in % of live stocks, as the Nirnay page prints them).
 _NIRNAY = (("Overbought_Pct", "Overbought %"), ("Oversold_Pct", "Oversold %"),
@@ -37,7 +37,7 @@ _NIRNAY = (("Overbought_Pct", "Overbought %"), ("Oversold_Pct", "Oversold %"),
 #: Bullish-positive signed columns, tinted by sign on screen.
 SIGN_COLS = {"NKO", "Top-down", "Bottom-up", "Agreement", "C", "zA", "zN"}
 #: Header overrides the table's prettifier would otherwise re-case.
-COL_LABELS = {"zA": "zA", "zN": "zN", "κ": "κ"}
+COL_LABELS = {"zA": "zA", "zN": "zN"}
 CAP = 300
 
 

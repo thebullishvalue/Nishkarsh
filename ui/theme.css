@@ -851,6 +851,11 @@
     transition: color var(--motion-fast) var(--ease-standard);
 }
 .metric-card .metric-tooltip:hover { color: var(--ink-tertiary); }
+/* The "?" sits in the label's row: reserve its width so a long label ("Nishkarsh
+   Oscillator") wraps before it instead of running under it, and open the text
+   leftward from the corner so the last card's tooltip stays inside the page. */
+.metric-card:has(.metric-tooltip) .label { padding-right: var(--s5); }
+.metric-card .metric-tooltip-text { left: auto; right: 0; }
 .metric-tooltip { position: relative; display: inline-flex; }
 .metric-tooltip-text {
     position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 60;
@@ -1533,9 +1538,12 @@
 }
 [data-testid="stRadio"] label[data-baseweb="radio"] > div:first-child {
     background: var(--surface-1) !important;
-    border: 1px solid var(--line-strong) !important;
+    border: 1px solid var(--ink-quaternary) !important;
     box-shadow: none !important;
     width: 14px !important; height: 14px !important;
+}
+[data-testid="stRadio"] label[data-baseweb="radio"] > div:first-child > div {
+    background: var(--surface-1) !important;
 }
 [data-testid="stRadio"] label[data-baseweb="radio"]:has(input:checked) > div:first-child {
     background: var(--accent) !important; border-color: var(--accent) !important;
@@ -1863,6 +1871,20 @@
     font-family: var(--mono) !important; font-size: var(--fs-xs) !important;
     color: var(--ink) !important;
     transition: border-color var(--fast) var(--ease) !important;
+}
+/* BaseWeb's wrapper draws its OWN border and fill around the input, from
+   Streamlit's static (light-based) theme — under Slate that was a bright
+   near-white ring around a graphite well, and the placeholder was dark ink
+   on it, all but invisible (Tattva 2.8.0 shipped both). The wrapper becomes
+   transparent and borderless so the input's own token border is the only
+   one, and the placeholder takes the quaternary ink in both appearances. */
+.stTextInput [data-baseweb="input"], .stNumberInput [data-baseweb="input"],
+.stTextInput [data-baseweb="base-input"], .stNumberInput [data-baseweb="base-input"] {
+    background: transparent !important;
+    border-color: transparent !important;
+}
+.stTextInput input::placeholder, .stNumberInput input::placeholder {
+    color: var(--ink-quaternary) !important; opacity: 1;
 }
 .stSelectbox [data-baseweb="select"] > div:hover,
 .stTextInput input:hover, .stNumberInput input:hover {

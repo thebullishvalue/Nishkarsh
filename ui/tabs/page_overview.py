@@ -2,7 +2,9 @@
 Nishkarsh — Overview: the read, then why (Tattva's Overview grammar).
 
 ANSWER → ANCHOR → SIGNAL → TRUST → STATE → DETAIL, compressed onto one screen: six numbers
-across the top answer "what does it read and how far can I trust it"; the Inference Chain
+across the top answer "what does it read and how far can I trust it" (no tooltips, as on
+Tattva's Overview — the section description and the card below carry the explanation); the
+Inference Chain
 under them answers "why", for the reader who wants it. Both are built from ONE object, the
 read verdict (``conclusion["verdict"]``, built once per run by
 ``convergence.verdict.build_read_verdict``), so the strip, the card and every page's command
@@ -17,28 +19,6 @@ from ui.components import (
     _d, _str, fmt, num, render_empty_state, render_hero_card, render_kpi_strip, render_section_header, signed,
     tone_of,
 )
-
-#: Long "how to read" text lives in the cards' tooltips, not on their face.
-TOOLTIPS = {
-    "read": ("The lean word follows the tier of the Nishkarsh Oscillator: STRONGLY at ±60, plain at ±30, "
-             "LEANS beyond ±10; inside ±10 there is no lean. A lean describes what the systems see; it "
-             "is not a forecast until the read's walk-forward record validates it."),
-    "nko": ("One causal number in −100…+100 (+ = bullish): ten inputs, each standardized against its own "
-            "past only, averaged into three pillars (top-down, bottom-up, agreement), then into one. "
-            "No weight or sign is fitted to returns. The percentile compares today's strength with every "
-            "earlier reading."),
-    "edge": ("Rank correlation (IC) of the read with the Nifty's next move, scored on non-overlapping "
-             "windows at the read's horizon. 0 = no skill; the SE says how much of the number is "
-             "sampling noise."),
-    "breadth": ("Share of the Nifty's stocks on the bullish side of their own oscillator cuts minus the "
-                "share on the bearish side, in percentage points. Nirnay's polarity decides which side is "
-                "bullish (trend: overbought = strength)."),
-    "top_down": ("Aarambh's walk-forward forecast of the next sessions, with its extension and lookback "
-                 "breadth, standardized against its own past (σ, + = bullish)."),
-    "agreement": ("How fully Aarambh and Nirnay agree across direction, breadth, magnitude and regime "
-                  "(0–100%). Agreement amplifies the read; disagreement mutes it."),
-}
-
 
 def _title(word: str) -> str:
     """'STRONGLY BULLISH' → 'Strongly Bullish' (the card value; CSS does not case values)."""
@@ -70,23 +50,20 @@ def kpi_items(v: dict) -> list[dict]:
     ar = num(k.get("agreement_ratio"))
     return [
         {"label": "Read", "value": _title(v.get("signal") or "NO READ"), "subtext": read_sub,
-         "color_class": "success" if side == "bull" else "danger" if side == "bear" else "neutral",
-         "tooltip": TOOLTIPS["read"]},
+         "color_class": "success" if side == "bull" else "danger" if side == "bear" else "neutral"},
         {"label": "Nishkarsh Oscillator", "value": vt,
          "subtext": (f"stronger than {pct:.0f}% of past readings" if pct is not None
                      else "no history to compare yet"),
-         "color_class": "accent", "tooltip": TOOLTIPS["nko"]},
+         "color_class": "accent"},
         {"label": "Walk-Forward Edge", "value": signed(ic, "+.3f"),
          "subtext": f"{chip} · ± {se:.3f}" if se is not None else chip,
-         "color_class": "info", "tooltip": TOOLTIPS["edge"]},
+         "color_class": "info"},
         {"label": "Nirnay Net Breadth", "value": f"{signed(net, '+.0f')} pts" if net is not None else "—",
-         "subtext": breadth_sub, "color_class": tone_of(net, 10.0), "tooltip": TOOLTIPS["breadth"]},
+         "subtext": breadth_sub, "color_class": tone_of(net, 10.0)},
         {"label": "Top-Down Pillar", "value": f"{signed(td, '+.2f')}σ" if td is not None else "—",
-         "subtext": "Aarambh's forecast, standardized", "color_class": tone_of(td, 0.5),
-         "tooltip": TOOLTIPS["top_down"]},
+         "subtext": "Aarambh's forecast, standardized", "color_class": tone_of(td, 0.5)},
         {"label": "Engine Agreement", "value": fmt(ar, ".0%") if ar is not None else "—",
-         "subtext": "Aarambh × Nirnay, four dimensions", "color_class": "neutral",
-         "tooltip": TOOLTIPS["agreement"]},
+         "subtext": "Aarambh × Nirnay, four dimensions", "color_class": "neutral"},
     ]
 
 

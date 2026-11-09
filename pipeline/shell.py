@@ -163,8 +163,8 @@ def build_notices(*, warnings, synthetic: bool, forward_mode: bool, nko: dict | 
     out: list[dict] = []
     if synthetic:
         out.append({"kind": "warning", "title": "Synthetic demo data",
-                    "body": "Synthetic demo data — not the market. A seeded, simulated world; no reading here "
-                            "is about the real Nifty."})
+                    "body": "Not the market — a seeded, simulated world; no reading here is about the real "
+                            "Nifty."})
     if not forward_mode:
         out.append({"kind": "info", "title": "Valuation context",
                     "body": "Aarambh runs in levels mode — valuation context, falsified as a forecaster; "
