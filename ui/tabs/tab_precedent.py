@@ -14,7 +14,7 @@ import pandas as pd
 import streamlit as st
 
 from core.config import EDGE_ALPHA
-from ui.charts import CONFIG, nko_figure
+from ui.charts import CONFIG, nko_figure, precedent_figure
 from ui.components import (
     PILLARS, _d, _list, _str, esc, fmt, index_name, nko_side, num, precedent_line, pretty_date, section_head, signed,
     z_side,
@@ -99,6 +99,18 @@ def render_precedent_tab(horizon: int = 10) -> None:
         fr = frame[frame.index >= first] if first is not None else frame
         lv = ss.get("label_levels")
         price = lv[lv.index >= first] if isinstance(lv, pd.Series) and first is not None else None
+        if price is not None and len(price.dropna()):
+            matches = [(pd.Timestamp(str(a.get("date"))), str(i), num(_fwd(a, horizon)))
+                       for i, a in enumerate(analogs, start=1)]
+            st.markdown(section_head("Where they happened", f"The {index_name(con)} with each match numbered by "
+                                     f"closeness; the shading is the next {int(horizon)} sessions — green where it "
+                                     "rose, red where it fell. The white diamond is today.", level="sm"),
+                        unsafe_allow_html=True)
+            st.plotly_chart(precedent_figure(price, index_name(con), matches, horizon, today=k.get("as_of")
+                                             and pd.Timestamp(str(k.get("as_of")))),
+                            width="stretch", key="prec_chart", config=CONFIG)
+            st.markdown(f'<p class="nk-method"><b>Method.</b> {esc(PRECEDENT_METHOD)}</p>', unsafe_allow_html=True)
+            return
         marks = []
         for i, a in enumerate(analogs, start=1):
             d, v = pd.Timestamp(str(a.get("date"))), num(a.get("nko"))

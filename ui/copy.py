@@ -108,11 +108,11 @@ NKO_COMPONENT_PLAIN = {
 }
 # How each pillar reads in the Today sentence, by sign.
 PILLAR_PHRASE = {
-    "top_down": ("Aarambh's top-down forecast leaning up", "Aarambh's top-down forecast leaning down"),
+    "top_down": ("Aarambh's top-down view leaning up", "Aarambh's top-down view leaning down"),
     "bottom_up": ("broad strength in the Nifty's stocks", "broad weakness in the Nifty's stocks"),
     "agreement": ("both systems leaning bullish together", "both systems leaning bearish together"),
 }
-PILLAR_SUBJECT = {"top_down": "Aarambh's forecast", "bottom_up": "the stocks", "agreement": "their agreement"}
+PILLAR_SUBJECT = {"top_down": "Aarambh's top-down view", "bottom_up": "the stocks", "agreement": "their agreement"}
 
 # ── Precedent ────────────────────────────────────────────────────────────────
 PRECEDENT_METHOD = ("Matches today's read, its pillars and its 5- and 20-day change against past dates whose "

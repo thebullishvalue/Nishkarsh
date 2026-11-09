@@ -3,7 +3,7 @@ Nishkarsh — Reliability: everything about trust, plus method, limits and gloss
 
 Status summary of the one read (status, four numbers, accuracy by year) · the Ledger (every claim
 the system makes, its status and the one number that decides it, keyed to docs/EDGE_LEDGER.md) ·
-the detailed tests (agreement lift, cost-aware backtest, signal chain) · the models' facts · method
+the detailed tests (agreement lift, cost-aware backtest, stage-by-stage accuracy) · the models' facts · method
 & limits and a glossary as plain text. Status words follow the measurement's own flags
 (``conclusion`` payload); the UI grades nothing itself.
 """
@@ -161,7 +161,7 @@ def _chain_panel(con: dict) -> str:
     chain = [_d(c) for c in _list(con.get("chain")) if isinstance(c, dict)]
     rows = [(_STAGE.get(_str(c.get("stage")), _str(c.get("stage")) or "—"),
              f"IC {signed(c.get('ic'), '+.3f')} · {plural(c.get('n'), 'period')}") for c in chain]
-    return (f'<div class="nk-panel"><h4>Aarambh signal chain</h4>{_kv(rows or [("Stages", "—")])}'
+    return (f'<div class="nk-panel"><h4>Aarambh, stage by stage</h4>{_kv(rows or [("Stages", "—")])}'
             '<p class="nk-panel-foot">Accuracy at each stage of the forecast, on the same periods.</p></div>')
 
 

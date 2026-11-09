@@ -237,7 +237,7 @@ def test_hero_real_reading_example():
     assert v["headline"] == "Nishkarsh reads moderately bearish" and v["value_text"] == "−48"
     assert v["tier"] == "MODERATE" and v["direction"] == "BEARISH" and not v["call"]
     assert v["explain"] == ("Driven by broad weakness in the Nifty's stocks (bottom-up −2.1), led by stock cut "
-                            "crossings (−2.3); Aarambh's forecast disagrees mildly (+0.8).")
+                            "crossings (−2.3); Aarambh's top-down view disagrees mildly (+0.8).")
     assert [c["value"] for c in v["chips"]] == ["−12 pts", "12 sessions · since 14 Apr", "85% of past readings"]
     assert v["chips"][1]["label"] == "On this side for"
     assert v["precedent"]["text"] == ("In 10 past moments like today, the Nifty rose 4 times over the next 10 sessions "
@@ -251,7 +251,7 @@ def test_hero_real_reading_example():
     assert single["headline"] == "Nishkarsh reads mildly bullish (top-down only today)"
     assert single["explain"].startswith("Top-down only today")
     agree = _hero("UNPROVEN", 70.0, pillars=PILLAR_SETS[1])
-    assert agree["explain"].startswith("Driven by Aarambh's top-down forecast leaning up (top-down +1.2)")
+    assert agree["explain"].startswith("Driven by Aarambh's top-down view leaning up (top-down +1.2)")
     assert agree["explain"].endswith("the stocks agree mildly (+0.9).")
     flat = _hero("UNPROVEN", 4.0)
     assert flat["headline"] == "Nishkarsh has no lean today" and flat["explain"].startswith("The pillars roughly cancel")

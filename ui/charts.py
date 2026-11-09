@@ -112,6 +112,46 @@ def nko_figure(fr: pd.DataFrame, price: pd.Series | None, index_name: str, heigh
     return fig
 
 
+def precedent_figure(price: pd.Series, index_name: str, matches: list[tuple], horizon: int,
+                     today=None, height: int = 300) -> go.Figure:
+    """The index with each past match marked where it happened, and the ``horizon`` sessions after it
+    shaded by what the index did (green rose / red fell — the analog's own recorded outcome).
+    ``matches`` = [(date, label, fwd_pct or None)]; ``today`` = a date."""
+    price = price[~price.index.duplicated(keep="last")].sort_index().dropna()
+    idx = pd.DatetimeIndex(price.index)
+    fig = go.Figure()
+    for d, _, fwd in matches:
+        if fwd is None:
+            continue
+        i = idx.searchsorted(d)
+        if i >= len(idx):
+            continue
+        j = min(i + int(horizon), len(idx) - 1)
+        fig.add_vrect(x0=idx[i], x1=idx[j], line_width=0, layer="below",
+                      fillcolor=BULL_FILL if fwd > 0 else BEAR_FILL)
+    fig.add_trace(go.Scatter(x=idx, y=price.values, mode="lines", name=index_name, showlegend=False,
+                             line=dict(color=INK, width=1.2),
+                             hovertemplate=f"{index_name} " + "%{y:,.0f}<extra></extra>"))
+    pts = [(idx[i], float(price.iloc[i]), lab) for d, lab, _ in matches
+           if (i := idx.searchsorted(d)) < len(idx)]
+    if pts:
+        fig.add_trace(go.Scatter(x=[p[0] for p in pts], y=[p[1] for p in pts], mode="markers+text",
+                                 text=[p[2] for p in pts], textposition="top center",
+                                 textfont=dict(size=10, color=AMBER),
+                                 marker=dict(size=9, color=AMBER, line=dict(color="#0B1020", width=2)),
+                                 showlegend=False, hovertemplate="Match %{text}<extra></extra>"))
+    if today is not None and len(idx):
+        k = min(idx.searchsorted(today), len(idx) - 1)
+        fig.add_trace(go.Scatter(x=[idx[k]], y=[float(price.iloc[k])], mode="markers", showlegend=False,
+                                 marker=dict(size=12, color="#E2E8F0", symbol="diamond",
+                                             line=dict(color="#0B1020", width=2)),
+                                 hovertemplate="Today<extra></extra>"))
+    fig.update_layout(**chart_layout(height=height, show_legend=False, margin=dict(t=8, l=8, r=8, b=8)))
+    x_axes(fig)
+    fig.update_yaxes(showgrid=True, gridcolor=GRID, zeroline=False, tickformat=",.0f", tickfont=TICK)
+    return fig
+
+
 def _diverging(fig, x, y: pd.Series, row=None, col=None, name: str = "", line: str = INK, hover: str = "+.2f") -> None:
     """A z series as a thin line over green (above 0) / red (below 0) fills."""
     kw = dict(row=row, col=col) if row is not None else {}

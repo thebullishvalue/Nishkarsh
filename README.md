@@ -83,23 +83,19 @@ secret `[aarambh] google_sheets_url = "…"`.
 
 ## What you see
 
-| Tab | What it shows |
-|---|---|
-| **Overview** (default) | *Today's Nishkarsh read* — the Nishkarsh Oscillator in plain language (side, strength, the three inputs driving it, whether the two systems agree), its gauge and its measured status (e.g. *Unproven*, numbers one click away); the read over time against the Nifty (with a pillar view); **What drives today's read** — the three pillars and all ten inputs (agreement anatomy, the forecast, extension, zone breadth, regime mix, HMM state, cut crossings) as contributions to the one number; the precedent line; "How reliable is this?". No buy/sell wording unless the read is VALIDATED. |
-| **Aarambh** | The drill-down behind the Top-down pillar (today's contribution shown on top). Mode-aware: in predictive mode the forecast and its causal z-score (no fair-value framing); in levels mode the valuation stack, labelled as context. |
-| **Nirnay** | The drill-down behind the Bottom-up pillar. Constituent breadth over `n_live` names (coverage shown), the actual adaptive oversold/overbought cuts, regime and volatility distributions, per-stock drill-down. |
-| **Precedent** | *Past moments like today*: the dates whose Nishkarsh Oscillator state (level, pillars, 5/20-day change) most resembled today's — causal, distinct episodes — and what the Nifty did next, against its usual up-share with a binomial p. |
-| **Evidence** | Opens with the Nishkarsh Oscillator's own measurement (the pre-registered rule, evidence, pillar ICs, component table); then the components and diagnostics, with a glossary: the Edge Ledger (edge, out-of-sample edge, Convergence-Lift with power, κ, signal chain, cost-aware backtest), the oscillator's own test, agreement anatomy, model inputs and data health. |
-| **Data** | The merged time series, searchable, CSV export. |
+One inference, five pages. Each page answers one question; nothing is repeated across pages and
+nothing is hidden in a drop-down — every note, limit and definition sits in the section it belongs to.
 
----|---|
-| **Hero verdict** (above the tabs) | The conclusion `C` (+ = bullish) with its tier, the trust chip from `conclusion.trust` (with its numbers), and evidence rows: MODEL, NIRNAY (confirms / contradicts / context only / no data), PRECEDENT (descriptive base rate vs unconditional, votes only when significant), RISK (recent divergences). No coloured directional call unless the trust tier is DIRECTIONAL or TRADEABLE edge. |
-| **CONVERGENCE** | `C` vs the Aarambh-only conclusion, `zA` / `zN`, agreement state, κ, the Convergence-Lift result (with power / MDE), divergence events, and the descriptive agreement anatomy (not used in the conclusion). |
-| **AARAMBH** | Mode-aware: in predictive mode the forecast and its causal z-score (no fair-value framing); in levels mode the valuation stack, labelled as context. |
-| **NIRNAY** | Constituent breadth over `n_live` names (coverage shown), the actual adaptive oversold/overbought cuts, regime and volatility distributions, per-stock drill-down. |
-| **PRECEDENT** | Historical analogs (causal Mahalanobis match with Theiler exclusion) and what followed, against the unconditional base rate with a binomial p. |
-| **DIAGNOSTICS** | The **Edge Ledger** panel for this run (edge, out-of-sample edge, lift, cost-aware backtest, signal-chain ICs), engine diagnostics, data-layer health and provenance. |
-| **DATA** | The merged time series, searchable, CSV export. |
+| Page | The question it answers | What is on it |
+|---|---|---|
+| **Today** (default) | *What does Nishkarsh read today, why, and how far can I trust it?* | The read in plain words with one sentence on what drives it; how much it moved over 5 sessions, how long it has been on this side, how strong it is against its own past; the gauge (the only place the big number appears); one line on its track record; the read over time against the Nifty; one chart of what drives today's read (three pillars and their inputs on one scale); one line on what followed similar readings. |
+| **Drivers** | *What is each system seeing?* | The three pillars in the same grammar — top-down (Aarambh's forecast of the Nifty), bottom-up (what the 50 stocks are doing, with a strip of every stock's oscillator and zone) and agreement (whether the two lean the same way). Each pillar over time, then its inputs as small charts. |
+| **Precedent** | *What happened after readings like this?* | Past moments whose read, pillars and 5/20-day change most resembled today's (causal, one per episode), what the Nifty did 3/5/10/20 sessions later against its usual up-share with a binomial p, and those dates marked on the Nifty with what followed each shaded. |
+| **Reliability** | *How much should I trust it?* | The measured status with its key numbers and yearly accuracy; the Edge Ledger for this run (every claim, its status and the number that decides it); the detailed tests (agreement lift, cost-aware backtest, Aarambh's accuracy stage by stage); the model facts; method, limits and a short glossary in plain text. |
+| **Data** | *Is the data sound?* | Every source with its provenance and as-of date, the run's data notes, and the merged series (searchable, CSV export). The data-status pill in the header points here. |
+
+Directional words (buy, sell, signal, call) appear only when the read's own pre-registered test
+has passed (`VALIDATED`); until then the read is described, not recommended.
 
 ---
 
@@ -237,7 +233,8 @@ engines/            aarambh (purged walk-forward forecast) · nirnay (constituen
 convergence/        conclusion (the conclusion layer) · cross_validator (agreement anatomy) · labels
 data/               fetcher · cache · circuit_breaker · constituents · dates · macro_lag ·
                     sources · synthetic
-ui/                 theme · components (hero) · copy (mode-aware text) · tabs/
+ui/                 theme · components (hero, formatting) · charts · copy (all wording) ·
+                    tabs/ (today · drivers · precedent · reliability · data)
 tests/              unit, statistical-regression and layering tests (pytest)
 docs/               EDGE_LEDGER · ARCHITECTURE · AUDIT · FINDINGS · PERFORMANCE · CUSTOM_PREDICTORS
 ```

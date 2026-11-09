@@ -186,7 +186,7 @@ def prepare_sheet(df: pd.DataFrame, cfg: PipelineConfig) -> PreparedInputs:
                 f"Predictor {bounding} starts {late[bounding].date()} and truncates the usable history: "
                 f"without it the data would start {pd.Timestamp(alt_start).date()} (+{gained} rows, "
                 f"≈{gained / 252:.1f} years), giving the edge tests more non-overlapping windows. "
-                "Deselect it under Predictor Columns to trade it for history.")
+                "Deselect it under Model settings → Predictors to trade it for history.")
     if len(data) < int(cfg.min_data_points):
         raise InputError(f"Need {cfg.min_data_points}+ complete rows for the walk-forward; have {len(data)} "
                          f"(effective start {eff_start.date()}"

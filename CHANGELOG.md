@@ -13,6 +13,48 @@ Sections used: **Added · Changed · Deprecated · Removed · Fixed · Security 
 
 ---
 
+## [2.4.0] — 2026-11-09 — *Five pages, five questions*
+
+### Changed
+- **The app is rebuilt around the questions a reader asks**, one page each: **Today** (what the
+  read is, why, how far to trust it), **Drivers** (what each system is seeing), **Precedent**
+  (what followed similar readings), **Reliability** (everything about trust, plus method and
+  limits) and **Data** (sources, freshness, notes, the table). Each element appears once, on the
+  page whose question it answers.
+- **No drop-downs for content.** Reliability details, data notes, the method, the glossary and
+  the "About" text no longer sit in expanders; each lives in plain text in its home section.
+  Only the sidebar's model settings stay collapsible (they are controls). The footer is one line.
+- **Today** leads with the read in plain words and one sentence on its drivers, three context
+  facts (5-day change, how long it has held this side, how strong it is against its own past),
+  the gauge, one inline line on its track record, the read over time, one chart of what drives
+  it (pillars and inputs on one scale) and one line of precedent.
+- **Drivers** replaces the Aarambh and Nirnay tabs: the three pillars in one visual grammar,
+  each with its inputs as small charts, and a strip of all 50 stocks (oscillator and zone)
+  showing which names drive the breadth. Model diagnostics moved to Reliability.
+- **Reliability** replaces Evidence: status and key numbers, yearly accuracy, the Edge Ledger for
+  this run, the detailed tests, the model facts, and method & limits with an inline glossary.
+- A **data-status pill** in the header ("Data current" / "n data notes — see Data") replaces the
+  data-notes expander.
+- **Precedent** marks each past match on the Nifty itself and shades the sessions that followed
+  green or red by what the Nifty did, replacing a dense line of the read's whole history.
+- The Today sentence names the top-down pillar as "Aarambh's top-down view", so it is not confused
+  with the forecast input it contains.
+
+### Added
+- The read's context facts are computed in the oscillator readout, not in the UI:
+  `change_5d`, `change_20d`, `streak` (side, sessions, since) and `strength_percentile`.
+
+### Tests
+- The app test now checks every page (not only Today) for buy/sell/signal/call wording while the
+  read is unproven, that there are exactly five pages and that the only expander is the sidebar's
+  model settings. 150 fast tests pass.
+
+### Removed
+- The Overview, Aarambh, Nirnay and Evidence tabs and their duplicated cards, sparklines,
+  pillar toggle, CUSUM change points, coverage chart and duplicate average-oscillator chart.
+
+---
+
 ## [2.3.0] — 2026-11-09 — *Nirnay read as trend (one polarity switch)*
 
 ### Changed

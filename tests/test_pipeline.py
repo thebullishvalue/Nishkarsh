@@ -134,6 +134,15 @@ def test_streamlit_app_synthetic_demo_renders():
         assert not t.error and "Could not draw" not in md, (t.label, [e.value for e in t.error])
         low = md.lower()
         assert "+nan" not in low and ">nan<" not in low and ">none<" not in low and " nan " not in low, t.label
+    # no buy/sell/signal/call wording on ANY page unless the read itself is VALIDATED
+    import re
+    from ui.components import BUY_SELL_RE
+    status = ((at.session_state["conclusion"] or {}).get("nko") or {}).get("status")
+    if status != "VALIDATED":
+        for t in at.tabs:
+            text = re.sub(r"<style.*?</style>|<[^>]+>", " ", " ".join(m.value for m in t.markdown), flags=re.S)
+            hit = BUY_SELL_RE.search(text)
+            assert not hit, (t.label, text[max(0, hit.start() - 60):hit.end() + 60])
     today = " ".join(m.value for m in at.tabs[0].markdown)
     assert "Today’s Nishkarsh read" in today or "Today&#x27;s Nishkarsh read" in today
     assert "Track record:" in today and "What drives today" in today and "moments like today" in today
