@@ -16,10 +16,12 @@ from datetime import datetime
 
 import streamlit as st
 
-from core.config import AARAMBH_FORWARD_SIGNAL, AARAMBH_FWD_HORIZON, CONV2_TIER_WEAK, EDGE_ALPHA
-from ui.copy import AGREEMENT_BANDS_TEXT as _AGREEMENT_BANDS_TEXT  # noqa: E402
+from core.config import (
+    AARAMBH_FORWARD_SIGNAL, AARAMBH_FWD_HORIZON, CONV2_TIER_MODERATE, CONV2_TIER_STRONG, CONV2_TIER_WEAK, EDGE_ALPHA,
+)
 from ui.copy import (
-    AGREEMENT_BANDS, LEVELS_TAG, OSC_STATUS, SIGN_C, SIGN_ENGINE, SIGN_Z, SYNTH_BANNER, TIERS_TEXT, TRUST_PLAIN,
+    LEVELS_TAG, NKO_COMPONENT_PLAIN, NKO_PILLAR_PLAIN, NKO_SCALE_TEXT, NKO_STATUS, NKO_TIER_WORD, SIGN_C, SIGN_ENGINE,
+    SIGN_Z, SYNTH_BANNER, TIERS_TEXT,
 )
 
 
@@ -276,7 +278,7 @@ def is_synthetic(run_config) -> bool:
     return any(str(w).upper().startswith("SYNTHETIC") for w in (rc.get("warnings") or []))
 
 
-# ── Hero verdict: pure (no Streamlit) — renders the conclusion, never recomputes it ──
+# ── Aarambh forecast input (C, κ): pure read-out, shown in Evidence as one component ──
 
 CALL_TIERS = frozenset({"DIRECTIONAL_EDGE", "TRADEABLE_EDGE"})
 TRUST_TIERS = ("INVERTED", "NO_PROVEN_EDGE", "DIRECTIONAL_EDGE", "TRADEABLE_EDGE", "INSUFFICIENT_DATA")
@@ -293,46 +295,14 @@ TRUST_CHIP_CLASS = {"TRADEABLE_EDGE": "solid", "DIRECTIONAL_EDGE": "modest", "NO
                     "INVERTED": "inverted", "INSUFFICIENT_DATA": "muted"}
 
 
-def _precedent_row(ph: dict, call_dir: int, target: str) -> dict:
-    n = num(ph.get("n"))
-    pos = num(ph.get("positive_pct"))
-    if not n or n < 1 or pos is None:
-        return {"tag": "PRECEDENT", "state": "info", "word": "no data", "votes": False,
-                "text": "No historical analogs for this run."}
-    n_i = int(round(n))
-    k = int(round(pos / 100.0 * n_i))
-    u, p, med = num(ph.get("unconditional_positive_pct")), num(ph.get("binomial_p")), num(ph.get("median"))
-    hp = num(ph.get("horizon"))
-    hz = f"{int(hp)}d" if hp is not None else "the horizon"
-    tgt = f" ({target})" if target else ""
-    text = (f"{k}/{n_i} analogs rose over {hz} vs {fmt(u, '.0f', suffix='%')} unconditional "
-            f"(binomial p={fmt(p, '.2f')}); median {fmt(med, '+.2f', suffix='%')}{tgt}")
-    votes = p is not None and p < EDGE_ALPHA and u is not None
-    if not votes:
-        return {"tag": "PRECEDENT", "state": "info", "word": "descriptive", "votes": False,
-                "text": text + f" — not significant at p < {EDGE_ALPHA:g}; descriptive only."}
-    lean = 1 if pos > u else -1 if pos < u else 0
-    word = "rise" if lean > 0 else "fall" if lean < 0 else "no lean"
-    if call_dir and lean:
-        state, w = ("confirm", "supports") if lean == call_dir else ("conflict", "against")
-    else:
-        state, w = "info", "context"
-    return {"tag": "PRECEDENT", "state": state, "word": w, "votes": True,
-            "text": text + f" — significant; analogs lean to a {word}."}
-
-
-def build_hero_verdict(conclusion, aarambh_signal=None, precedent_hero=None, run_config=None,
-                       nirnay_latest=None) -> dict:
-    """Pure hero verdict from the C-V2 ``conclusion`` dict (+ engine signal, precedent hero, run config).
-
-    Rules: the headline is the conclusion's latest C (+ = bullish) with its fixed tier/direction; the
-    trust chip is ``conclusion["trust"]`` verbatim; a COLOURED directional call is made only when the
-    trust tier is DIRECTIONAL_EDGE or TRADEABLE_EDGE (INVERTED → no call, ever); levels mode carries
+def build_forecast_readout(conclusion, aarambh_signal=None, run_config=None) -> dict:
+    """Pure read-out of the Aarambh forecast input (the C/κ conclusion) — one component of the
+    Nishkarsh read, shown in Evidence. Rules: the figure is the latest C (+ = bullish) with its fixed
+    tier/direction; the trust chip is ``conclusion["trust"]`` verbatim; a COLOURED direction only when
+    the trust tier is DIRECTIONAL_EDGE or TRADEABLE_EDGE (INVERTED → never); levels mode carries
     "valuation context — falsified as a forecaster"; the Nirnay row is ``conclusion["nirnay"]["text"]``
-    verbatim; precedent votes only when its binomial p < EDGE_ALPHA. Never raises on missing keys or
-    NaN; every missing number renders "—". ``market`` is the plain-language market read
-    (``build_market_read``) built from the conclusion's oscillator + latest read-out."""
-    con, sig, ph, rc = _d(conclusion), _d(aarambh_signal), _d(precedent_hero), _d(run_config)
+    verbatim. Never raises on missing keys or NaN; every missing number renders "—"."""
+    con, sig, rc = _d(conclusion), _d(aarambh_signal), _d(run_config)
     lat, trust, nir = _d(con.get("latest")), _d(con.get("trust")), _d(con.get("nirnay"))
     fm = con.get("forward_mode")
     if not isinstance(fm, bool):
@@ -340,7 +310,6 @@ def build_hero_verdict(conclusion, aarambh_signal=None, precedent_hero=None, run
     forward = bool(fm) if isinstance(fm, bool) else bool(AARAMBH_FORWARD_SIGNAL)
     h_raw = num(con.get("horizon"))
     h = int(h_raw) if h_raw is not None and h_raw >= 1 else int(AARAMBH_FWD_HORIZON)
-    target = _str(rc.get("target"))
 
     C, Ca, zA, zN, kappa = (num(lat.get(k)) for k in ("C", "C_aarambh", "zA", "zN", "kappa"))
     tier = _str(lat.get("tier")).upper()
@@ -366,18 +335,18 @@ def build_hero_verdict(conclusion, aarambh_signal=None, precedent_hero=None, run
                     f"{t_tier.replace('_', ' ').lower()} on this data.")
     elif t_tier == "INVERTED":
         label = "INVERTED · context only"
-        headline = ("The directional head has pointed the wrong way on this data — no directional call "
-                    f"is made (C {c_txt} is shown as context).")
+        headline = ("The directional head has pointed the wrong way on this data — its direction is not "
+                    f"used (C {c_txt} is shown as context).")
     elif has_dir and t_tier == "NO_PROVEN_EDGE":
         label = f"LEAN {direction} ({tier}) · unvalidated"
-        headline = f"The head leans {dword} (C {c_txt}), but no directional edge is proven on this data — no call."
+        headline = f"The head leans {dword} (C {c_txt}), but no directional edge is proven on this data — context only."
     elif has_dir:
         label = f"LEAN {direction} ({tier}) · ungraded"
         headline = (f"The head leans {dword} (C {c_txt}), but there is too little out-of-sample history "
-                    "to grade an edge — no call.")
+                    "to grade an edge — context only.")
     elif C is None:
         label = "NO CONCLUSION"
-        headline = "No conclusion value for the latest date — no lean, no call."
+        headline = "No forecast value for the latest date — no lean."
     else:
         label = "NO LEAN"
         headline = f"C {c_txt} sits inside the ±{CONV2_TIER_WEAK:g} no-lean band — no directional lean."
@@ -406,10 +375,6 @@ def build_hero_verdict(conclusion, aarambh_signal=None, precedent_hero=None, run
     rows.append({"tag": "NIRNAY", "state": n_row_state, "word": n_word, "votes": n_row_state != "info",
                  "text": _str(nir.get("text")) or "Nirnay: — (no read-out in this run)."})
 
-    rows.append(_precedent_row(ph, call_dir, target) if ph else
-                {"tag": "PRECEDENT", "state": "info", "word": "no data", "votes": False,
-                 "text": "No historical analogs for this run."})
-
     div, agr = _d(con.get("divergence_recent")), _d(con.get("agreement"))
     if con.get("single_system") is True:
         risk = {"tag": "RISK", "state": "info", "word": "n/a", "votes": False,
@@ -435,17 +400,16 @@ def build_hero_verdict(conclusion, aarambh_signal=None, precedent_hero=None, run
         "trust": {"tier": t_tier, "label": t_tier.replace("_", " "), "text": t_text,
                   "class": TRUST_CHIP_CLASS[t_tier]},
         "evidence": rows, "as_of": as_of, "synthetic": synth, "banner": SYNTH_BANNER if synth else None,
-        "market": build_market_read(con, rc, nirnay_latest),
     }
 
 
-# ── Market read: the Overview's plain-language read-out (pure; renders, never grades) ──
+# ── The Nishkarsh read (NKO): the hero every surface infers from (pure; renders, never grades) ──
 
-OSC_STATUSES = ("VALIDATED", "UNPROVEN", "INSUFFICIENT_DATA")
-# Buy/sell/signal wording — allowed for the oscillator ONLY when its status is VALIDATED.
+NKO_STATUSES = ("VALIDATED", "UNPROVEN", "INSUFFICIENT_DATA")
+NKO_TIERS = ("STRONG", "MODERATE", "WEAK", "NO LEAN", "NO READ")
+# Buy/sell/signal/call wording — allowed in the read's own words ONLY when its status is VALIDATED.
 # ("buy-side" / "sell-side" describe agreement and are always allowed.)
-BUY_SELL_RE = re.compile(r"\b(buy|sell)\b(?!-side)|\bsignals?\b", re.I)
-_SIDES = {"BUY-SIDE": "buy", "SELL-SIDE": "sell", "SPLIT": "split"}
+BUY_SELL_RE = re.compile(r"\b(buy|sell)\b(?!-side)|\bsignals?\b|\bcalls?\b", re.I)
 
 
 def pretty_date(x) -> str:
@@ -461,20 +425,14 @@ def pretty_date(x) -> str:
 
 
 def signed(x, spec: str = "+.2f") -> str:
-    """``fmt`` with a typographic minus (−) for display; an exact zero carries no sign."""
-    if num(x) == 0:
-        return fmt(0.0, spec.replace("+", ""))
+    """``fmt`` with a typographic minus (−) for display; a value that rounds to zero carries no sign."""
+    v, plain = num(x), spec.replace("+", "")
+    try:
+        if v is not None and float(fmt(v, plain).replace(",", "")) == 0:
+            return fmt(0.0, plain)
+    except ValueError:
+        pass
     return fmt(x, spec).replace("-", "−")
-
-
-def agreement_word(strength) -> str:
-    v = num(strength)
-    if v is None or v <= 0:
-        return ""
-    for lo, word in AGREEMENT_BANDS:
-        if v >= lo:
-            return word
-    return AGREEMENT_BANDS[-1][1]
 
 
 def edge_status_code(e) -> str:
@@ -491,49 +449,102 @@ def edge_status_code(e) -> str:
     return "NOT_PROVEN"
 
 
-def _aarambh_read(lat: dict, forward: bool) -> tuple[str, str]:
-    """(sub-line phrase, card pill) for Aarambh's latest read-out."""
-    C = num(lat.get("C"))
-    tier = _str(lat.get("tier")).upper()
-    direction = _str(lat.get("direction")).upper()
-    noun = "forecast" if forward else "valuation head"
-    if C is None:
-        return f"no {noun} reading", "No reading"
-    if tier not in ("STRONG", "MODERATE", "WEAK") or direction not in ("BULLISH", "BEARISH"):
-        tilt = ", tilting higher" if C > 0 else ", tilting lower" if C < 0 else ""
-        return f"{noun} flat{tilt}", "Flat" + (" · tilts higher" if C > 0 else " · tilts lower" if C < 0 else "")
-    word = "higher" if direction == "BULLISH" else "lower"
-    return f"{noun} leans {word} ({tier.lower()} conviction)", f"Leans {word} · {tier.lower()}"
+def nko_tier_of(v) -> str:
+    """The fixed NKO bands (same mapping as ``convergence.nishkarsh.nko_tier``)."""
+    v = num(v)
+    if v is None:
+        return "NO READ"
+    a = abs(v)
+    return ("STRONG" if a >= CONV2_TIER_STRONG else "MODERATE" if a >= CONV2_TIER_MODERATE
+            else "WEAK" if a > CONV2_TIER_WEAK else "NO LEAN")
 
 
-def _nirnay_read(lat: dict, nl: dict, single: bool) -> tuple[str, str]:
-    """(sub-line phrase, card pill) for Nirnay: breadth in words + its lean from the conclusion state."""
-    if single:
-        return "not running (no stock data)", "Not running"
-    n = num(nl.get("n_live"))
-    ob, os_ = num(nl.get("Overbought_Pct")), num(nl.get("Oversold_Pct"))
-    if not n or (ob is None and os_ is None):
-        phrase = "no stock data today"
+def nko_side(v) -> str:
+    """'bull' / 'bear' outside the no-lean band, 'flat' inside it, 'none' without a value (colour class)."""
+    v = num(v)
+    if v is None:
+        return "none"
+    return "bull" if v > CONV2_TIER_WEAK else "bear" if v < -CONV2_TIER_WEAK else "flat"
+
+
+def z_side(z) -> str:
+    z = num(z)
+    return "none" if z is None else "bull" if z > 0 else "bear" if z < 0 else "flat"
+
+
+def _lean_word(z) -> str:
+    z = num(z)
+    return "has no reading" if z is None else "leans bullish" if z > 0 else "leans bearish" if z < 0 else "is flat"
+
+
+def _mid(label: str) -> str:
+    """A label as it reads mid-sentence ("Stock cut crossings" → "stock cut crossings"; "HMM state" kept)."""
+    return label if (label[:2].isupper() or label.startswith("Aarambh")) else label[:1].lower() + label[1:]
+
+
+def component_label(cid, fallback="") -> str:
+    return NKO_COMPONENT_PLAIN.get(_str(cid), (_str(fallback) or "An input", ""))[0]
+
+
+def _drivers_text(drivers) -> str:
+    items = [(component_label(_d(c).get("id"), _d(c).get("label")), num(_d(c).get("z")))
+             for c in (drivers if isinstance(drivers, (list, tuple)) else [])]
+    items = [(lab, z) for lab, z in items if z is not None][:3]
+    if not items:
+        return "No input has a reading for this date."
+    names = [f"{_mid(lab)} ({signed(z, '+.1f')})" for lab, z in items]
+    joined = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+    signs = {1 if z > 0 else -1 if z < 0 else 0 for _, z in items}
+    tail = ("all on the bullish side" if signs == {1} else "all on the bearish side" if signs == {-1}
+            else "pulling in different directions")
+    return f"Driven most by {joined} — {tail}."
+
+
+def _agreement_text(pillars: dict, two_system: bool) -> str:
+    td, bu = num(pillars.get("top_down")), num(pillars.get("bottom_up"))
+    if not two_system or bu is None:
+        tail = f" Top-down {_lean_word(td)} ({signed(td)})." if td is not None else ""
+        return ("Single-system read — Nirnay has no data for this date, so only the top-down pillar is "
+                "counted." + tail)
+    if td is None:
+        return f"Single-system read — no top-down reading for this date; bottom-up {_lean_word(bu)} ({signed(bu)})."
+    if td * bu > 0:
+        return (f"Both systems lean {'bullish' if td > 0 else 'bearish'} — top-down {signed(td)}, bottom-up "
+                f"{signed(bu)} — so their agreement strengthens the read.")
+    return (f"The two systems disagree — top-down {_lean_word(td)} ({signed(td)}), bottom-up "
+            f"{_lean_word(bu)} ({signed(bu)}) — so they partly cancel.")
+
+
+def _precedent_row(ph, read_dir: int) -> dict:
+    """The hero's precedent line from ``precedent["hero"]`` (basis: the NKO state). It VOTES only when its
+    exact binomial p < EDGE_ALPHA; otherwise it is description."""
+    ph = _d(ph)
+    n, pos = num(ph.get("n")), num(ph.get("positive_pct"))
+    if not n or n < 1 or pos is None:
+        return {"tag": "PRECEDENT", "state": "info", "word": "no data", "votes": False,
+                "text": "No past moments like today were found for this run."}
+    n_i = int(round(n))
+    k = int(round(pos / 100.0 * n_i))
+    u, p, med, hp = (num(ph.get(x)) for x in ("unconditional_positive_pct", "binomial_p", "median", "horizon"))
+    hz = f"{int(hp)} trading days" if hp is not None and hp >= 1 else "the horizon"
+    text = (f"{k}/{n_i} past moments like today rose over the next {hz}, vs {fmt(u, '.0f', suffix='%')} "
+            f"unconditional (binomial p={fmt(p, '.2f')}); median {signed(med, '+.2f')}% for the Nifty")
+    if not (p is not None and p < EDGE_ALPHA and u is not None):
+        return {"tag": "PRECEDENT", "state": "info", "word": "descriptive", "votes": False,
+                "text": text + f" — not significant at p < {EDGE_ALPHA:g}, so descriptive only."}
+    lean = 1 if pos > u else -1 if pos < u else 0
+    word = "rise" if lean > 0 else "fall" if lean < 0 else "neither way"
+    if read_dir and lean:
+        state, w, rel = (("confirm", "in line", ", in line with today's read") if lean == read_dir
+                         else ("conflict", "against", ", against today's read"))
     else:
-        names = f"the {int(round(n))} Nifty stocks"
-        if (ob or 0) >= (os_ or 0) and (ob or 0) > 0:
-            phrase = f"{fmt(ob, '.0f')}% of {names} overbought"
-        elif (os_ or 0) > 0:
-            phrase = f"{fmt(os_, '.0f')}% of {names} oversold"
-        else:
-            phrase = f"none of {names} at an extreme"
-    zn, state = num(lat.get("zN")), _str(lat.get("state")).upper()
-    if zn is None or state in ("", "NO_DATA"):
-        pill = "No data"
-    elif state == "NEUTRAL":
-        pill = "Neutral" + (" · tilts bullish" if zn > 0 else " · tilts bearish" if zn < 0 else "")
-    else:
-        pill = "Leans bullish" if zn > 0 else "Leans bearish" if zn < 0 else "Neutral"
-    return phrase, pill
+        state, w, rel = "info", "context", ""
+    return {"tag": "PRECEDENT", "state": state, "word": w, "votes": True,
+            "text": text + f" — significant; these moments lean to a {word}{rel}."}
 
 
-def _osc_numbers(ev: dict, h: int) -> list[dict]:
-    """The oscillator's measured evidence in plain labels (values only re-formatted, never re-derived)."""
+def _evidence_numbers(ev: dict, h: int) -> list[dict]:
+    """The read's measured evidence in plain labels (values only re-formatted, never re-derived)."""
     if not ev:
         return []
     yearly = _d(ev.get("yearly"))
@@ -544,10 +555,10 @@ def _osc_numbers(ev: dict, h: int) -> list[dict]:
         else (None, None)
     n = num(ev.get("n"))
     return [
-        {"label": "Accuracy score", "value": signed(ev.get("ic")),
-         "note": f"how closely the gauge has lined up with the Nifty's next {h} trading days (0 = no link)"},
+        {"label": "Accuracy score", "value": signed(ev.get("ic"), "+.3f"),
+         "note": f"how closely the read has lined up with the Nifty's next {h} trading days (0 = no link)"},
         {"label": "History tested", "value": f"{int(n)} periods" if n is not None else "—",
-         "note": f"separate, non-overlapping {h}-day periods"},
+         "note": f"separate, non-overlapping {h}-day periods with both systems running"},
         {"label": "Significance", "value": f"p = {fmt(ev.get('p'), '.2f')}",
          "note": f"needs to be below {EDGE_ALPHA:g} to count as evidence"},
         {"label": "Consistency", "value": years, "note": "calendar years with a positive accuracy score"},
@@ -558,118 +569,126 @@ def _osc_numbers(ev: dict, h: int) -> list[dict]:
     ]
 
 
-def build_market_read(conclusion, run_config=None, nirnay_latest=None) -> dict:
-    """Plain-language market read from ``conclusion["oscillator"]`` + ``conclusion["latest"]`` (+ the
-    Nirnay breadth read-out). Pure; never raises; no NaN text. Honesty rules: buy/sell/signal wording
-    only when the oscillator's status is VALIDATED (``BUY_SELL_RE``); colour shows the side of
-    agreement only; levels mode carries the falsified-as-a-forecaster tag."""
-    con, rc, nl = _d(conclusion), _d(run_config), _d(nirnay_latest)
-    lat, osc = _d(con.get("latest")), _d(con.get("oscillator"))
+def build_hero_verdict(conclusion, precedent_hero=None, run_config=None) -> dict:
+    """The Overview hero, inferred from the Nishkarsh Oscillator ONLY (``conclusion["nko"]``) plus the
+    precedent read of the same state (``precedent["hero"]``). Pure; never raises; no NaN text.
+
+    Honesty rules: the headline describes the instrument ("Nishkarsh reads moderately bearish");
+    buy/sell/signal/call wording (``BUY_SELL_RE``) and a directional ``call`` only when the read's
+    measured status is VALIDATED; the status is always named and ``nko["text"]`` is carried verbatim;
+    a single-system date says so; the precedent votes only when its binomial p < EDGE_ALPHA; levels
+    mode carries the falsified-as-a-forecaster tag; SYNTHETIC runs carry the banner."""
+    con, rc = _d(conclusion), _d(run_config)
+    k = _d(con.get("nko"))
     fm = con.get("forward_mode")
     if not isinstance(fm, bool):
         fm = rc.get("forward_mode")
     forward = bool(fm) if isinstance(fm, bool) else bool(AARAMBH_FORWARD_SIGNAL)
     h_raw = num(con.get("horizon"))
     h = int(h_raw) if h_raw is not None and h_raw >= 1 else int(AARAMBH_FWD_HORIZON)
-    single = con.get("single_system") is True
 
-    status = _str(osc.get("status")).upper()
-    status = status if status in OSC_STATUSES else "INSUFFICIENT_DATA"
+    status = _str(k.get("status")).upper()
+    status = status if status in NKO_STATUSES else "INSUFFICIENT_DATA"
     validated = status == "VALIDATED"
-    value = num(osc.get("value"))
-    if value is not None and not -1.0 <= value <= 1.0:
+    value = num(k.get("value"))
+    if value is not None and not -100.0 <= value <= 100.0:
         value = None
-    side = _SIDES.get(_str(osc.get("side")).upper()) if value is not None else None
-    if value is not None and side is None:
-        side = "buy" if value > 0 else "sell" if value < 0 else "split"
-    side = side or "none"
-    strength = num(osc.get("strength"))
-    strength = abs(value) if strength is None and value is not None else strength
-    word = agreement_word(strength) if side in ("buy", "sell") else ""
+    tier = nko_tier_of(value)
+    direction = ("BULLISH" if value > CONV2_TIER_WEAK else "BEARISH" if value < -CONV2_TIER_WEAK
+                 else "NEUTRAL") if value is not None else "NEUTRAL"
+    read_dir = 1 if direction == "BULLISH" else -1 if direction == "BEARISH" else 0
+    call = validated and read_dir != 0
+    side = nko_side(value)
+    two = k.get("two_system") is True
+    v_txt = signed(value, "+.0f")
 
-    if side == "buy":
-        headline, tag, gauge_label = "Both systems lean buy-side", f"{word} agreement", "Buy-side agreement"
-    elif side == "sell":
-        headline, tag, gauge_label = "Both systems lean sell-side", f"{word} agreement", "Sell-side agreement"
-    elif side == "split":
-        headline, tag, gauge_label = "The two systems don't agree today", "no shared side", "Split"
+    if value is None:
+        headline, tag, gauge_label = "No Nishkarsh read today", "No reading for the latest date", "No reading"
+    elif tier == "NO LEAN":
+        headline = "Nishkarsh has no lean today"
+        tag = f"{v_txt} — inside the ±{CONV2_TIER_WEAK:g} no-lean band"
+        gauge_label = "No lean"
     else:
-        headline, tag, gauge_label = "No agreement reading today", "no reading", "No reading"
+        dword = direction.lower()
+        headline = f"Nishkarsh reads {NKO_TIER_WORD[tier]} {dword}"
+        tag = f"{v_txt} — a {tier.lower()} {dword} read" + (" · validated directional call" if call else "")
+        gauge_label = f"{tier.capitalize()} · {dword}"
+    if value is not None and not two:
+        tag += " · single-system"
 
-    a_phrase, a_pill = _aarambh_read(lat, forward)
-    n_phrase, n_pill = _nirnay_read(lat, nl, single)
-    s_label, s_class, s_text = OSC_STATUS[status]
-    as_of = _date(con.get("as_of")) or _date(lat.get("date")) or _date(rc.get("as_of"))
-    osc_as_of = _date(osc.get("as_of"))
-    as_of_note = ""
-    if side == "none":
-        as_of_note = ("Nirnay is not running, so there is no second system to agree with." if single
-                      else "Nirnay has no stock data for this date.")
-    elif osc_as_of and as_of and osc_as_of != as_of:
-        as_of_note = f"Agreement reading from {pretty_date(osc_as_of)}, the latest day both systems had data."
-    trust_tier = _str(_d(con.get("trust")).get("tier")).upper()
-    trust_tier = trust_tier if trust_tier in TRUST_PLAIN else "INSUFFICIENT_DATA"
-    ev = _d(osc.get("evidence"))
+    s_label, s_class, s_text = NKO_STATUS[status]
+    as_of = _date(k.get("as_of")) or _date(con.get("as_of")) or _date(rc.get("as_of"))
+    run_as_of = _date(con.get("as_of"))
+    note = (f"Read from {pretty_date(as_of)}, the latest day with a reading."
+            if as_of and run_as_of and as_of != run_as_of else "")
+    synth = is_synthetic(rc)
     return {
-        "headline": headline, "tag": tag, "side": side, "validated": validated,
-        "value": value, "value_text": signed(value), "strength": strength, "strength_word": word,
-        "gauge_label": gauge_label,
-        "aarambh_text": a_phrase, "aarambh_pill": a_pill, "nirnay_text": n_phrase, "nirnay_pill": n_pill,
-        "subline": f"Aarambh: {a_phrase} · Nirnay: {n_phrase}",
-        "as_of": pretty_date(as_of) if as_of else "—", "as_of_note": as_of_note, "horizon": h,
+        "headline": headline, "tag": tag, "side": side, "value": value, "value_text": v_txt,
+        "tier": tier, "direction": direction, "call": bool(call), "validated": validated,
+        "gauge_label": gauge_label, "two_system": two, "single_system": not two,
+        "drivers_text": _drivers_text(k.get("drivers")) if value is not None else "No reading for this date.",
+        "agreement_text": _agreement_text(_d(k.get("pillars")), two),
+        "precedent": _precedent_row(precedent_hero, read_dir),
         "status": status, "status_label": s_label, "status_class": s_class, "status_text": s_text.format(h=h),
-        "numbers": _osc_numbers(ev, h),
-        "trust_tier": trust_tier, "trust_label": TRUST_PLAIN[trust_tier][0], "trust_class": TRUST_PLAIN[trust_tier][1],
-        "forward_mode": forward, "levels_note": None if forward else LEVELS_TAG,
-        "single_system": single, "synthetic": is_synthetic(rc),
+        "measured_text": _str(k.get("text")) or "Not measured in this run.",
+        "numbers": _evidence_numbers(_d(k.get("evidence")), h),
+        "as_of": pretty_date(as_of) if as_of else "—", "as_of_note": note, "horizon": h,
+        "forward_mode": forward, "mode_label": (f"Forward · {h}-day view" if forward
+                                                else f"Levels · the Aarambh forecast input is {LEVELS_TAG}"),
+        "levels_note": None if forward else LEVELS_TAG,
+        "synthetic": synth, "banner": SYNTH_BANNER if synth else None,
     }
 
 
-def market_texts(m: dict) -> list[str]:
-    """Every string the market read writes itself (what the honesty tests scan)."""
-    m = _d(m)
-    out = [m.get(k, "") for k in ("headline", "tag", "gauge_label", "subline", "aarambh_text", "aarambh_pill",
-                                   "nirnay_text", "nirnay_pill", "as_of", "as_of_note", "value_text",
-                                   "status_label", "status_text", "trust_label")]
-    for r in m.get("numbers") or []:
+def hero_texts(v: dict) -> list[str]:
+    """Every string the hero writes itself (what the honesty tests scan; ``measured_text`` is upstream)."""
+    v = _d(v)
+    out = [v.get(x, "") for x in ("headline", "tag", "gauge_label", "drivers_text", "agreement_text", "as_of",
+                                   "as_of_note", "value_text", "status_label", "status_text", "mode_label",
+                                   "levels_note")]
+    out.append(_d(v.get("precedent")).get("text", ""))
+    for r in v.get("numbers") or []:
         out += [_d(r).get("label", ""), _d(r).get("value", ""), _d(r).get("note", "")]
     return [str(t) for t in out if t]
 
 
 # ── SVG primitives (inline, no external deps) ────────────────────────────────
 
-_SIDE_COLOR = {"buy": "#34D399", "sell": "#FB7185", "split": "#94A3B8", "none": "#64748B"}
+_SIDE_COLOR = {"bull": "#34D399", "bear": "#FB7185", "flat": "#94A3B8", "none": "#64748B"}
 
 
-def gauge_svg(value, side: str = "none") -> str:
-    """Semicircular −1…+1 gauge: sell-side half tinted red, buy-side half green, a filled arc from 0
-    to today's value and a needle. ``value`` None → track only."""
+def gauge_svg(value) -> str:
+    """Semicircular −100…+100 gauge with the fixed NKO bands (±10 no lean, ±30 moderate, ±60 strong):
+    bearish half red, bullish half green, deeper with strength; a filled arc from 0 to today's value and
+    a needle. ``value`` None → track only."""
     cx, cy, r = 150.0, 150.0, 118.0
 
     def pt(v, rr=r):
-        th = math.pi * (1.0 - (v + 1.0) / 2.0)
+        th = math.pi * (1.0 - (v + 100.0) / 200.0)
         return cx + rr * math.cos(th), cy - rr * math.sin(th)
 
     def arc(v0, v1, rr=r):
         (x0, y0), (x1, y1) = pt(v0, rr), pt(v1, rr)
         return f"M {x0:.2f} {y0:.2f} A {rr:.0f} {rr:.0f} 0 0 1 {x1:.2f} {y1:.2f}"
 
-    parts = [
-        f'<path d="{arc(-1, 1)}" stroke="rgba(148,163,184,0.10)" stroke-width="20" fill="none" stroke-linecap="round"/>',
-        f'<path d="{arc(-1, -0.015)}" stroke="rgba(251,113,133,0.20)" stroke-width="20" fill="none" stroke-linecap="round"/>',
-        f'<path d="{arc(0.015, 1)}" stroke="rgba(52,211,153,0.20)" stroke-width="20" fill="none" stroke-linecap="round"/>',
-    ]
-    for t in (-0.6, -0.3, 0, 0.3, 0.6):          # band edges (strong / moderate / weak) and the split
-        (x0, y0), (x1, y1) = pt(t, r + 15), pt(t, r + (24 if t == 0 else 21))
+    w, sw = CONV2_TIER_WEAK, 20
+    bands = ((-100, -CONV2_TIER_STRONG, "251,113,133", 0.34), (-CONV2_TIER_STRONG, -CONV2_TIER_MODERATE, "251,113,133", 0.22),
+             (-CONV2_TIER_MODERATE, -w, "251,113,133", 0.12), (-w, w, "148,163,184", 0.12),
+             (w, CONV2_TIER_MODERATE, "52,211,153", 0.12), (CONV2_TIER_MODERATE, CONV2_TIER_STRONG, "52,211,153", 0.22),
+             (CONV2_TIER_STRONG, 100, "52,211,153", 0.34))
+    parts = [f'<path d="{arc(a + 0.6, b - 0.6)}" stroke="rgba({c},{o})" stroke-width="{sw}" fill="none"/>'
+             for a, b, c, o in bands]
+    for t in (-CONV2_TIER_STRONG, -CONV2_TIER_MODERATE, -w, 0, w, CONV2_TIER_MODERATE, CONV2_TIER_STRONG):
+        (x0, y0), (x1, y1) = pt(t, r + 14), pt(t, r + (23 if t == 0 else 20))
         parts.append(f'<line x1="{x0:.2f}" y1="{y0:.2f}" x2="{x1:.2f}" y2="{y1:.2f}" '
                      f'stroke="rgba(148,163,184,{0.6 if t == 0 else 0.4})" stroke-width="1.5" stroke-linecap="round"/>')
     v = num(value)
-    if v is not None and -1.0 <= v <= 1.0:
-        color = _SIDE_COLOR.get(side, _SIDE_COLOR["none"])
-        if abs(v) >= 0.015:
+    if v is not None and -100.0 <= v <= 100.0:
+        color = _SIDE_COLOR[nko_side(v)]
+        if abs(v) >= 1.0:
             lo, hi = (0.0, v) if v > 0 else (v, 0.0)
-            parts.append(f'<path d="{arc(lo, hi)}" stroke="{color}" stroke-width="20" fill="none" '
-                         f'stroke-linecap="butt" opacity="0.95"/>')
+            parts.append(f'<path d="{arc(lo, hi, r)}" stroke="{color}" stroke-width="6" fill="none" '
+                         f'stroke-linecap="round" opacity="0.95"/>')
         nx, ny = pt(v, r - 30)
         mx, my = pt(v, r)
         parts += [f'<line x1="{cx}" y1="{cy}" x2="{nx:.2f}" y2="{ny:.2f}" stroke="#E2E8F0" stroke-width="3" '
@@ -678,8 +697,19 @@ def gauge_svg(value, side: str = "none") -> str:
                   f'<circle cx="{mx:.2f}" cy="{my:.2f}" r="11" fill="{color}" stroke="#0B1020" stroke-width="4"/>']
     else:
         parts.append(f'<circle cx="{cx}" cy="{cy}" r="7" fill="rgba(148,163,184,0.35)"/>')
-    return ('<svg class="nk-gauge-svg" viewBox="0 0 300 168" role="img" aria-label="Agreement Oscillator gauge '
-            'from minus one (sell-side agreement) to plus one (buy-side agreement)">' + "".join(parts) + "</svg>")
+    return ('<svg class="nk-gauge-svg" viewBox="0 0 300 168" role="img" aria-label="Nishkarsh Oscillator gauge '
+            'from minus 100 (strongly bearish) to plus 100 (strongly bullish)">' + "".join(parts) + "</svg>")
+
+
+def zbar_html(z, scale: float = 3.0) -> str:
+    """A signed horizontal bar for a z-score (centre = 0, ends = ±``scale``); colour by sign."""
+    v = num(z)
+    if v is None:
+        return '<div class="nk-zbar"><div class="mid"></div></div>'
+    frac = max(-1.0, min(1.0, v / scale)) * 50.0
+    left = 50.0 + min(0.0, frac)
+    return (f'<div class="nk-zbar"><div class="mid"></div><div class="fill {z_side(v)}" '
+            f'style="left:{left:.1f}%;width:{abs(frac):.1f}%"></div></div>')
 
 
 def sparkline_svg(series, y_range=None, zero: bool = False, width: int = 320, height: int = 64,
@@ -732,44 +762,65 @@ def chip_html(label: str, cls: str = "muted") -> str:
     return f'<span class="nk-chip {cls}"><span class="nk-dot"></span>{esc(label)}</span>'
 
 
-def render_market_hero(m: dict) -> None:
-    """The Overview hero: market read (left) + the Agreement Oscillator gauge (right). Every string escaped."""
-    m = _d(m)
-    side = str(m.get("side", "none"))
+def render_hero(v: dict) -> None:
+    """The Overview hero: the Nishkarsh read (left) + the oscillator gauge (right). Every string escaped."""
+    v = _d(v)
+    side = str(v.get("side", "none"))
     side = side if side in _SIDE_COLOR else "none"
+    pr = _d(v.get("precedent"))
+    p_cls = {"confirm": "good", "conflict": "bad"}.get(str(pr.get("state")), "muted")
     nums = "".join(
         f'<div class="nk-num-row"><div class="nk-num-label">{esc(_d(r).get("label"))}</div>'
         f'<div class="nk-num-value">{esc(_d(r).get("value"))}</div>'
-        f'<div class="nk-num-note">{esc(_d(r).get("note"))}</div></div>' for r in (m.get("numbers") or []))
-    details = (f'<details class="nk-details"><summary>See the numbers</summary><div class="nk-num-grid">{nums}</div>'
-               f'<div class="nk-num-foot">Strength words: {esc(_AGREEMENT_BANDS_TEXT)}. Full measurement: '
-               f'Evidence tab.</div></details>') if nums else ""
-    levels = (f'<div class="nk-levels-note">Levels mode — {esc(m.get("levels_note"))}.</div>'
-              if m.get("levels_note") else "")
-    note = f'<div class="nk-meta-note">{esc(m.get("as_of_note"))}</div>' if m.get("as_of_note") else ""
-    tag = esc(m.get("tag", ""))
+        f'<div class="nk-num-note">{esc(_d(r).get("note"))}</div></div>' for r in (v.get("numbers") or []))
+    details = (f'<details class="nk-details"><summary>How it was measured</summary>'
+               f'<p class="nk-measured">{esc(v.get("measured_text", ""))}</p>'
+               + (f'<div class="nk-num-grid">{nums}</div>' if nums else "")
+               + f'<div class="nk-num-foot">Bands: {esc(NKO_SCALE_TEXT)}. Rule and full measurement: Evidence tab.'
+                 f'</div></details>')
+    levels = (f'<div class="nk-levels-note">Levels mode — the Aarambh forecast input is '
+              f'{esc(v.get("levels_note"))}.</div>' if v.get("levels_note") else "")
+    note = f'<div class="nk-meta-note">{esc(v.get("as_of_note"))}</div>' if v.get("as_of_note") else ""
     st.markdown(
         f'<div class="nk-hero">'
         f'<div class="nk-hero-main">'
-        f'<div class="nk-eyebrow">Today\'s market read</div>'
-        f'<h2 class="nk-headline">{esc(m.get("headline", "—"))}</h2>'
-        f'<div class="nk-tagline {side}">{tag[:1].upper() + tag[1:] if tag else ""}</div>'
-        f'<div class="nk-subline"><div><b>Aarambh</b> {esc(m.get("aarambh_text", "—"))}</div>'
-        f'<div><b>Nirnay</b> {esc(m.get("nirnay_text", "—"))}</div></div>'
-        f'<div class="nk-meta">As of {esc(m.get("as_of", "—"))} · {esc(m.get("horizon", ""))}-trading-day view</div>'
+        f'<div class="nk-eyebrow">Today\'s Nishkarsh read</div>'
+        f'<h2 class="nk-headline">{esc(v.get("headline", "—"))}</h2>'
+        f'<div class="nk-tagline {side}">{esc(v.get("tag", ""))}</div>'
+        f'<div class="nk-subline"><div><b>Drivers</b> {esc(v.get("drivers_text", "—"))}</div>'
+        f'<div><b>Systems</b> {esc(v.get("agreement_text", "—"))}</div>'
+        f'<div><b>Precedent</b> {chip_html(str(pr.get("word") or "no data").capitalize(), p_cls)} '
+        f'{esc(pr.get("text", "—"))}</div></div>'
+        f'<div class="nk-meta">As of {esc(v.get("as_of", "—"))} · {esc(v.get("horizon", ""))}-trading-day view</div>'
         f'{note}{levels}'
-        f'<div class="nk-status">{chip_html(m.get("status_label", "Not enough data"), m.get("status_class", "muted"))}'
-        f'<p>{esc(m.get("status_text", ""))}</p></div>{details}'
+        f'<div class="nk-status">{chip_html(v.get("status_label", "Not enough data"), v.get("status_class", "muted"))}'
+        f'<p>{esc(v.get("status_text", ""))}</p></div>{details}'
         f'</div>'
         f'<div class="nk-hero-gauge">'
-        f'<div class="nk-gauge-title">Agreement Oscillator</div>'
-        f'{gauge_svg(m.get("value"), side)}'
-        f'<div class="nk-gauge-readout"><div class="nk-gauge-value {side}">{esc(m.get("value_text", "—"))}</div>'
-        f'<div class="nk-gauge-label">{esc(m.get("gauge_label", "No reading"))}</div></div>'
-        f'<div class="nk-gauge-scale"><span>−1 sell-side</span><span>0 split</span><span>+1 buy-side</span></div>'
+        f'<div class="nk-gauge-title">Nishkarsh Oscillator</div>'
+        f'{gauge_svg(v.get("value"))}'
+        f'<div class="nk-gauge-readout"><div class="nk-gauge-value {side}">{esc(v.get("value_text", "—"))}</div>'
+        f'<div class="nk-gauge-label">{esc(v.get("gauge_label", "No reading"))}</div></div>'
+        f'<div class="nk-gauge-scale"><span>−100 bearish</span><span>0</span><span>+100 bullish</span></div>'
+        f'<div class="nk-gauge-bands">±{CONV2_TIER_WEAK:g} no lean · ±{CONV2_TIER_MODERATE:g} moderate · '
+        f'±{CONV2_TIER_STRONG:g} strong</div>'
         f'</div></div>',
         unsafe_allow_html=True,
     )
+
+
+def render_pillar_banner(conclusion, pillar: str) -> None:
+    """One line opening a drill-down tab: which pillar of the one read this tab feeds, and today's value."""
+    k = _d(_d(conclusion).get("nko"))
+    name = NKO_PILLAR_PLAIN.get(pillar, (pillar,))[0]
+    z = num(_d(k.get("pillars")).get(pillar))
+    today = (f"today {signed(z)}" if z is not None else
+             "no reading today" + (" (single-system run)" if k.get("two_system") is not True else ""))
+    read = num(k.get("value"))
+    tail = f" · the read itself is {signed(read, '+.0f')}" if read is not None else ""
+    st.markdown(f'<div class="nk-feeds"><span class="nk-feeds-dot {z_side(z)}"></span><span>Feeds the '
+                f'<b>{esc(name)}</b> pillar of the Nishkarsh read — {esc(today)}{esc(tail)}. The Overview shows '
+                f'the one read; this tab is its drill-down.</span></div>', unsafe_allow_html=True)
 
 
 _CHIP_STYLE = {
@@ -780,8 +831,8 @@ _CHIP_STYLE = {
 }
 
 
-def render_hero_card(verdict: dict) -> None:
-    """Render a ``build_hero_verdict`` dict. Every text field is escaped here; tolerant of missing keys."""
+def render_forecast_card(verdict: dict) -> None:
+    """Render a ``build_forecast_readout`` dict. Every text field is escaped here; tolerant of missing keys."""
     v = _d(verdict)
     trust = _d(v.get("trust"))
     fg, bg = _CHIP_STYLE.get(str(trust.get("class", "muted")), _CHIP_STYLE["muted"])
@@ -797,7 +848,7 @@ def render_hero_card(verdict: dict) -> None:
               if v.get("banner") else "")
     st.markdown(
         f'<div class="signal-card {cls}">'
-        f'<div class="label">Nishkarsh conclusion · as of {esc(v.get("as_of", "—"))}</div>{banner}'
+        f'<div class="label">Aarambh forecast input · as of {esc(v.get("as_of", "—"))}</div>{banner}'
         f'<div class="hero-source">{esc(v.get("mode_label", ""))} · {esc(v.get("sign_note", SIGN_C))}</div>'
         f'<div class="value">{esc(v.get("signal", "—"))} <span class="hero-score">{esc(v.get("score_text", "C —"))}'
         f'</span></div>'

@@ -17,7 +17,10 @@ from core.config import (
     COLOR_AMBER, COLOR_CYAN, COLOR_GREEN, COLOR_MUTED, COLOR_PURPLE, COLOR_RED,
     UI_CHART_HEIGHT_LARGE, UI_CHART_HEIGHT_MEDIUM,
 )
-from ui.components import esc, fmt, num, render_interpretation_card, render_metric_card, render_section_header, section_gap
+from ui.components import (
+    esc, fmt, num, render_interpretation_card, render_metric_card, render_pillar_banner, render_section_header,
+    section_gap,
+)
 from ui.copy import NIRNAY
 from ui.theme import chart_layout, style_axes
 
@@ -52,8 +55,10 @@ def render_nirnay_tab(start_date=None) -> None:
     dfs = ss.get("nirnay_constituent_dfs") or {}
     rep_n = (ss.get("run_report") or {}).get("nirnay") or {}
     st.markdown('<div class="tab-bg nirnay"></div>', unsafe_allow_html=True)
+    render_pillar_banner(ss.get("conclusion"), "bottom_up")
     if daily is None or len(daily) == 0:
-        st.info("No Nirnay constituent data for this run — the conclusion runs in single-system mode.")
+        st.info("No Nirnay constituent data for this run — the Nishkarsh read runs in single-system mode "
+                "(top-down pillar only).")
         return
     full = daily[~daily.index.duplicated(keep="last")].sort_index()
     df = full if start_date is None else full[pd.DatetimeIndex(full.index) >= pd.Timestamp(start_date)]

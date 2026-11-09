@@ -11,7 +11,7 @@ p-values — what is and is not established.
 
 | | |
 |---|---|
-| **Version** | 2.1.0 — *Agreement Oscillator · NSE archives · product UI* |
+| **Version** | 2.2.0 — *One inference: the Nishkarsh Oscillator* |
 | **Stack** | Python 3.13 · Streamlit · scikit-learn · statsmodels · numba · Plotly |
 | **Universe** | Nifty 50 (live list from niftyindices.com; dated fallback list) |
 | **License** | See `LICENSE.md` |
@@ -85,11 +85,11 @@ secret `[aarambh] google_sheets_url = "…"`.
 
 | Tab | What it shows |
 |---|---|
-| **Overview** (default) | *Today's market read* in plain language — whether the two systems agree, on which side, and what each sees ("Nirnay: 52% of the 50 Nifty stocks overbought"); the **Agreement Oscillator** gauge with its measured status beside it (e.g. *Unproven*, numbers one click away); the oscillator's history against the Nifty; an Aarambh and a Nirnay card; "How reliable is this?" (the Edge Ledger in plain words); data notes. No buy/sell wording for anything the data have not validated. |
-| **Aarambh** | Mode-aware: in predictive mode the forecast and its causal z-score (no fair-value framing); in levels mode the valuation stack, labelled as context. |
-| **Nirnay** | Constituent breadth over `n_live` names (coverage shown), the actual adaptive oversold/overbought cuts, regime and volatility distributions, per-stock drill-down. |
-| **Precedent** | Historical analogs (causal Mahalanobis match with Theiler exclusion) and what followed, against the unconditional base rate with a binomial p. |
-| **Evidence** | The full measurement for experts, with a glossary: the verdict in detail, the Edge Ledger (edge, out-of-sample edge, Convergence-Lift with power, κ, signal chain, cost-aware backtest), the oscillator's own test, agreement anatomy, model inputs and data health. |
+| **Overview** (default) | *Today's Nishkarsh read* — the Nishkarsh Oscillator in plain language (side, strength, the three inputs driving it, whether the two systems agree), its gauge and its measured status (e.g. *Unproven*, numbers one click away); the read over time against the Nifty (with a pillar view); **What drives today's read** — the three pillars and all ten inputs (agreement anatomy, the forecast, extension, zone breadth, regime mix, HMM state, cut crossings) as contributions to the one number; the precedent line; "How reliable is this?". No buy/sell wording unless the read is VALIDATED. |
+| **Aarambh** | The drill-down behind the Top-down pillar (today's contribution shown on top). Mode-aware: in predictive mode the forecast and its causal z-score (no fair-value framing); in levels mode the valuation stack, labelled as context. |
+| **Nirnay** | The drill-down behind the Bottom-up pillar. Constituent breadth over `n_live` names (coverage shown), the actual adaptive oversold/overbought cuts, regime and volatility distributions, per-stock drill-down. |
+| **Precedent** | *Past moments like today*: the dates whose Nishkarsh Oscillator state (level, pillars, 5/20-day change) most resembled today's — causal, distinct episodes — and what the Nifty did next, against its usual up-share with a binomial p. |
+| **Evidence** | Opens with the Nishkarsh Oscillator's own measurement (the pre-registered rule, evidence, pillar ICs, component table); then the components and diagnostics, with a glossary: the Edge Ledger (edge, out-of-sample edge, Convergence-Lift with power, κ, signal chain, cost-aware backtest), the oscillator's own test, agreement anatomy, model inputs and data health. |
 | **Data** | The merged time series, searchable, CSV export. |
 
 ---|---|
@@ -268,7 +268,7 @@ count — the failure that voided 1.6.0).
 ## Testing
 
 ```bash
-pytest -m "not slow" -q     # 142 tests, ~1.5 min
+pytest -m "not slow" -q     # 147 tests, ~1.5 min
 pytest -m slow -q           # Monte-Carlo size/power, end-to-end determinism, Streamlit AppTest
 ```
 
@@ -346,4 +346,4 @@ non-optimisations: [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
 
 ---
 
-© 2026 Nishkarsh · [@thebullishvalue](https://twitter.com/thebullishvalue) · v2.1.0
+© 2026 Nishkarsh · [@thebullishvalue](https://twitter.com/thebullishvalue) · v2.2.0

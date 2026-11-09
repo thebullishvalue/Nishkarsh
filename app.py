@@ -328,7 +328,7 @@ def _render_results(ss, synthetic: bool) -> None:
     with tabs[2]:
         _safe("Nirnay", lambda: render_nirnay_tab(start))
     with tabs[3]:
-        _safe("Precedent", lambda: render_precedent_tab(ts, target, horizon, forward))
+        _safe("Precedent", lambda: render_precedent_tab(horizon))
     with tabs[4]:
         _safe("Evidence", lambda: render_evidence_tab(engine, signal, start))
     with tabs[5]:

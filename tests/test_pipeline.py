@@ -128,7 +128,18 @@ def test_streamlit_app_synthetic_demo_renders():
     assert run_btn, "Run Analysis button missing"
     run_btn[0].click().run()
     assert not at.exception, [e.message for e in at.exception]
-    assert len(at.tabs) >= 6
+    assert [t.label for t in at.tabs] == ["Overview", "Aarambh", "Nirnay", "Precedent", "Evidence", "Data"]
+    for t in at.tabs:                         # every tab renders without an error box or NaN text
+        md = " ".join(m.value for m in t.markdown)
+        assert not t.error and "Error in" not in md, (t.label, [e.value for e in t.error])
+        assert "+nan" not in md.lower() and ">nan<" not in md.lower(), t.label
+    prec = " ".join(m.value for m in at.tabs[3].markdown)
+    assert "Past moments like today" in prec and "Extension Z" not in prec
+    assert "Nishkarsh" in " ".join(m.value for m in at.tabs[0].markdown)
+    view = [s for s in at.get("segmented_control") if "Its three pillars" in str(getattr(s, "options", ""))]
+    assert view, "history view toggle missing"
+    view[0].set_value("Its three pillars").run()
+    assert not at.exception, [e.message for e in at.exception]
 
 
 def test_real_sheet_date_typo_runs_and_is_reported():

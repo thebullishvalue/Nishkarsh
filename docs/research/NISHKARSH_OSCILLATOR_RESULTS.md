@@ -30,3 +30,19 @@ bottom-up +0.029, agreement +0.063.
 The product therefore presents NKO as **the system's read** — side, strength and what drives
 it — with this measured status beside it, and never as a buy/sell signal. Every run
 re-measures it with the same rule; the status upgrades by itself only when the rule passes.
+
+## Robustness notes (same day, recorded after the run — no construction change)
+
+- **Data-source sensitivity.** The same construction read through the app (the live sheet,
+  one more day to 2026-11-09, Yahoo market data and the ^NSEI label) measured IC **+0.049**
+  over 139 windows (p 0.29) against **+0.034** / 138 / p 0.35 through the CLI (CSV to
+  2026-11-06, NSE bhavcopies, the sheet's NIFTY label). Same verdict (UNPROVEN); the run
+  report records which sources produced each number.
+- **Knife-edge consensus.** The agreement pillar uses the bare *sign* of the Aarambh
+  forecast z. On 2026-11-06 that z was −0.009 — effectively zero — so the pillar read −0.87
+  ("both lean bearish"); one day later, with the z marginally positive, it read +0.15
+  ("split"), and today's NKO moved from −48 to +1. The Nirnay side already uses a deadband
+  (|zN| ≥ τ = 0.25) in the conclusion layer's agreement state; the Aarambh side does not.
+  **Candidate revision (not applied):** require |zA| ≥ τ as well before a lean counts.
+  It must be pre-registered as a new hypothesis and measured on fresh data before it can
+  replace the frozen construction.

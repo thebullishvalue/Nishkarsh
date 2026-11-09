@@ -78,65 +78,75 @@ LANDING_CARDS = (
 
 # ── product copy: Overview, landing, sidebar (plain language — no internal symbols) ──
 PRODUCT_TITLE = "Nishkarsh"
-PRODUCT_TAGLINE = "Two independent reads of the Nifty 50 — and how strongly they agree."
+PRODUCT_TAGLINE = "Two independent reads of the Nifty 50, folded into one number."
 LANDING_INTRO = (
     "Nishkarsh reads the market two ways: a top-down forecast (Aarambh) and a bottom-up scan of the "
-    "Nifty's stocks (Nirnay). It shows where the two agree, and how far each read has earned your trust "
-    "on past data.")
+    "Nifty's stocks (Nirnay). Both reads, and how far they agree, are folded into one series: the "
+    "Nishkarsh Oscillator. Every surface shows that one read, what drives it, and how far it has "
+    "earned your trust on past data.")
 LANDING_STEPS = (
     ("Choose your data", "Connect your Google Sheet, upload a CSV or Excel file, or try the built-in demo."),
     ("Run the analysis", "Press Run analysis in the sidebar. Real data takes about a minute."),
-    ("Read the overview", "Today's market read, the Agreement Oscillator, and how reliable each part has been."),
+    ("Read the overview", "Today's Nishkarsh read, what drives it, and how reliable it has been."),
 )
-LANDING_FOOTNOTE = "Nothing here is called a signal until the data prove it. Not investment advice."
+LANDING_FOOTNOTE = "Nothing here is called a buy or sell signal until the data prove it. Not investment advice."
 ABOUT_LINES = (
     "Nishkarsh (निष्कर्ष, “conclusion”) reads the Nifty 50 in two independent ways.",
     f"Aarambh is top-down: a model that forecasts the next {AARAMBH_FWD_HORIZON} trading days from the "
     "series in your sheet.",
     "Nirnay is bottom-up: it checks every Nifty stock for overbought and oversold conditions.",
-    "The Agreement Oscillator shows how strongly, and on which side, the two agree.",
+    "The Nishkarsh Oscillator folds both reads, and how far they agree, into one number from −100 to +100.",
     "Every claim is graded on history the models never saw; the Evidence tab shows the figures.",
     "Not investment advice.",
 )
 INTEL_HELP_PLAIN = (
-    "When on, days where Nirnay disagrees with Aarambh can reduce the conclusion's conviction — but only "
-    "if this run's data show that agreement improves accuracy. Otherwise on and off give the same result. "
-    "Nirnay can never add conviction or flip the direction.")
+    "When on, days where Nirnay disagrees with Aarambh can reduce the Aarambh forecast input's conviction — "
+    "but only if this run's data show that agreement improves accuracy. Otherwise on and off give the same "
+    "result. Nirnay can never add conviction or flip the direction.")
 
-# Agreement strength words for |oscillator| (a display mapping, stated wherever it is used).
-AGREEMENT_BANDS = ((0.6, "strong"), (0.3, "moderate"), (0.0, "weak"))
-AGREEMENT_BANDS_TEXT = "strong ≥ 0.6 · moderate ≥ 0.3 · weak below"
-OSC_NAME = "Agreement Oscillator"
-OSC_SCALE_TEXT = ("−1: both systems lean sell-side, fully aligned · 0: they disagree · "
-                  "+1: both lean buy-side, fully aligned")
-# status → (chip label, chip class, one plain sentence). Buy/sell words are reserved for VALIDATED.
-OSC_STATUS = {
+# ── the Nishkarsh Oscillator (NKO): the one read every surface infers from ──
+NKO_SCALE_TEXT = (f"−100 to +100, + = bullish · within ±{CONV2_TIER_WEAK:g} no lean · "
+                  f"±{CONV2_TIER_MODERATE:g} moderate · ±{CONV2_TIER_STRONG:g} strong (fixed bands)")
+NKO_TIER_WORD = {"STRONG": "strongly", "MODERATE": "moderately", "WEAK": "mildly"}
+# status → (chip label, chip class, one plain sentence). Buy/sell/signal/call words are reserved for VALIDATED.
+NKO_STATUS = {
     "VALIDATED": ("Validated", "good",
                   "Its readings have lined up with the Nifty's next {h} trading days on this data, clearing "
                   "the bar that was set before it was tested."),
     "UNPROVEN": ("Unproven", "caution",
-                 "A context gauge: it shows how much the two systems agree, not where the market goes next. "
-                 "Its track record is not yet strong enough to act on."),
+                 "This describes what the two systems read today, not where the market goes next. Its track "
+                 "record is not yet strong enough to act on."),
     "INSUFFICIENT_DATA": ("Not enough data", "muted",
-                          "There is not enough history with both systems running to measure this gauge yet."),
+                          "There is not enough history with both systems running to measure this read yet."),
 }
-# conclusion trust tier → (plain label, chip class). Rendered, never re-graded.
-TRUST_PLAIN = {
-    "TRADEABLE_EDGE": ("Proven, survives costs", "good"),
-    "DIRECTIONAL_EDGE": ("Direction proven", "good"),
-    "NO_PROVEN_EDGE": ("Not proven yet", "caution"),
-    "INVERTED": ("Has pointed the wrong way", "bad"),
-    "INSUFFICIENT_DATA": ("Not enough history", "muted"),
+NKO_PILLAR_PLAIN = {
+    "top_down": ("Top-down", "Aarambh", "the forecast and how stretched it is across lookbacks"),
+    "bottom_up": ("Bottom-up", "Nirnay", "the Nifty's stocks: oscillator, zones, regimes, HMM and cut crossings"),
+    "agreement": ("Agreement", "Both", "whether the two systems lean the same way, and how fully"),
 }
-TRUST_PLAIN_SENTENCE = {
-    "TRADEABLE_EDGE": "Aarambh's direction has been right more often than chance, and the edge survived trading costs.",
-    "DIRECTIONAL_EDGE": ("Aarambh's direction has been right more often than chance, but not by enough to trade "
-                         "after costs."),
-    "NO_PROVEN_EDGE": "So far Aarambh's direction has not been right often enough to rule out luck.",
-    "INVERTED": "Aarambh has pointed the wrong way more often than chance — its direction is not used.",
-    "INSUFFICIENT_DATA": "There is not enough history yet to grade Aarambh's direction.",
+# component id → (plain label, what it reads). + = bullish for every component.
+NKO_COMPONENT_PLAIN = {
+    "forecast": ("Aarambh's forecast", "the conclusion over time: Aarambh's causal forecast z"),
+    "extension": ("Forecast extension", "how stretched the forecast is across lookbacks (−AvgZ)"),
+    "zone_breadth_a": ("Lookback zone breadth", "lookbacks in the bullish zone minus the bearish zone"),
+    "crossings_a": ("Lookback cut crossings", "bullish minus bearish cut crossings across lookbacks"),
+    "oscillator_n": ("Stock oscillator", "the stocks' mean oscillator, read contrarian (oversold = +)"),
+    "zone_breadth_n": ("Stock zone breadth", "% of stocks oversold minus % overbought"),
+    "regime_mix": ("Regime composition", "% of stocks in a bear regime minus a bull regime, read contrarian"),
+    "hmm_state": ("HMM state", "mean bear minus bull HMM probability, read contrarian"),
+    "cut_crossings_n": ("Stock cut crossings", "bullish minus bearish cut crossings, per live stock"),
+    "signed_agreement": ("Signed agreement", "consensus × agreement ratio (the agreement anatomy)"),
 }
+NKO_DOCS = ("docs/research/NISHKARSH_OSCILLATOR_PREREG.md", "docs/research/NISHKARSH_OSCILLATOR_RESULTS.md")
 
+# The signed agreement (former Agreement Oscillator) — now the Agreement pillar's input; Evidence only.
+OSC_SCALE_TEXT = ("−1: both systems lean sell-side, fully aligned · 0: they disagree · "
+                  "+1: both lean buy-side, fully aligned")
+OSC_STATUS = {
+    "VALIDATED": ("Validated", "good", ""),
+    "UNPROVEN": ("Unproven", "caution", ""),
+    "INSUFFICIENT_DATA": ("Not enough data", "muted", ""),
+}
 # ── per-mode tables ──────────────────────────────────────────────────────────
 _FORWARD = {
     "key": "forward",
@@ -240,7 +250,7 @@ _LEVELS = {
 }
 
 CONVERGENCE = {
-    "title": "How the conclusion is built",
+    "title": "Component: the Aarambh forecast input (C, κ)",
     "desc": (f"C = 100·tanh(zA/2)·κ · {SIGN_C}. Aarambh's causal z (zA) is the head; Nirnay's zN can only "
              f"shrink it (κ ≤ 1) on CONTRADICT days, and only after the lift test passes."),
     "c_axis": f"C ({SIGN_Z})",
@@ -249,8 +259,8 @@ CONVERGENCE = {
     "state_desc": (f"State: CONFIRM / CONTRADICT when |zN| ≥ {CONV2_TAU:g} with the same / opposite sign "
                    "as zA; NEUTRAL when |zN| < τ; NO_DATA when Nirnay has no live data that day."),
     "anatomy_title": "Agreement Anatomy",
-    "anatomy_desc": ("Descriptive — not used in the conclusion. Four fixed-weight agreement dimensions, "
-                     "computed only on dates where Nirnay has warm data."),
+    "anatomy_desc": ("Four fixed-weight agreement dimensions, computed only on dates where Nirnay has warm "
+                     "data. Their ratio × the consensus is the signed agreement, the Agreement pillar's input."),
 }
 
 NIRNAY = {
@@ -266,12 +276,13 @@ NIRNAY = {
 }
 
 PRECEDENT = {
-    "desc": ("Covariance-aware (OAS) Mahalanobis state matching on Nishkarsh's own state features. "
-             "Outcomes are the target's realized change after each analog."),
-    "base_rate": ("A descriptive base rate: the share of analogs followed by a rise, against the "
+    "desc": ("The past dates whose Nishkarsh state — the read, its three pillars and its 20-day change — most "
+             "resembled today's (covariance-aware Mahalanobis matching, one match per window), and what the "
+             "Nifty did next. Computed once per run."),
+    "base_rate": ("A descriptive base rate: the share of these moments followed by a rise, against the "
                   "unconditional rise rate over the same history, with an exact two-sided binomial p. "
-                  f"It counts as evidence only when p < {EDGE_ALPHA:g}."),
-    "similarity_note": "relative (1 − d/d_max within this candidate pool)",
+                  f"It counts as evidence only when p < {EDGE_ALPHA:g}; until then it is shown in neutral colours."),
+    "similarity_note": "relative within this candidate pool (1 = the closest possible)",
 }
 
 

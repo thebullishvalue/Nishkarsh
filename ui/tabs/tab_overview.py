@@ -1,14 +1,15 @@
 """
-Nishkarsh v2 — Overview tab: the finished-product read of the run.
+Nishkarsh v2 — Overview tab: the one read of the run, the Nishkarsh Oscillator (NKO).
 निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
 
-Top to bottom: the market read + Agreement Oscillator gauge (hero), the oscillator's history
-against the Nifty, one compact card per system, "How reliable is this?" (the Edge Ledger in
-plain language) and low-key data notes. Everything here RENDERS the conclusion layer's
-outputs (``conclusion``, ``conclusion_frame``, ``label_levels``, ``nirnay_daily``,
-``run_report``, ``run_config``); nothing is graded or re-estimated. No internal symbols —
-the technical figures live in the Evidence tab. Buy/sell wording is reserved for a VALIDATED
-oscillator (``ui.components.BUY_SELL_RE``).
+Top to bottom: the hero (the read in words + the ±100 gauge, inferred from ``conclusion["nko"]``
+and ``precedent["hero"]`` only), the read over time against the Nifty (with its three pillars as
+a decomposition), "What drives today's read" (pillars → the ten inputs: forecast, extension,
+zone breadth, cut crossings, HMM state, regime mix, agreement anatomy), "How reliable is this?"
+and low-key data notes. Everything here RENDERS pipeline outputs (``conclusion``,
+``conclusion_frame``, ``label_levels``, ``precedent``, ``run_config``); nothing is graded or
+re-estimated. Buy/sell/signal/call wording is reserved for a VALIDATED read
+(``ui.components.BUY_SELL_RE``).
 """
 
 from __future__ import annotations
@@ -18,17 +19,24 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from core.config import BACKTEST_REFERENCE_BPS
+from convergence.nishkarsh import COMPONENTS, PILLARS
+from core.config import CONV2_TIER_MODERATE, CONV2_TIER_STRONG, CONV2_TIER_WEAK
 from ui.components import (
-    CALL_TIERS, _d, _str, build_market_read, chip_html, edge_status_code, esc, fmt, num, pretty_date, render_market_hero,
-    signed, sparkline_svg,
+    _d, _str, build_hero_verdict, chip_html, component_label, edge_status_code, esc, fmt, num, pretty_date,
+    render_hero, signed, sparkline_svg, z_side, zbar_html,
 )
-from ui.copy import LEVELS_TAG, OSC_SCALE_TEXT, TRUST_PLAIN, TRUST_PLAIN_SENTENCE
+from ui.copy import NKO_COMPONENT_PLAIN, NKO_PILLAR_PLAIN, NKO_SCALE_TEXT, NKO_STATUS
 from ui.theme import chart_layout
 
 _PRICE = "rgba(226,232,240,0.78)"
 _CRITICAL = ("Stale", "STALE", "FALLBACK", "EMPTY", "failed")
 _PROV_WORD = {"live": "live", "cache": "cached", "stale": "stale", "fallback": "fallback source", "empty": "empty"}
+_SIDE_RGBA = {"bull": "rgba(52,211,153,0.55)", "bear": "rgba(251,113,133,0.55)", "flat": "rgba(148,163,184,0.45)",
+              "none": "rgba(148,163,184,0.25)"}
+PILLAR_COLOR = {"top_down": "#D4A853", "bottom_up": "#22D3EE", "agreement": "#A78BFA"}
+_SINGLE_FILL = "rgba(148,163,184,0.14)"
+_TICK = dict(family="Inter, sans-serif", size=11, color="#7C879A")
+VIEWS = ("Nishkarsh read", "Its three pillars")
 
 
 def _since(obj, start):
@@ -48,40 +56,91 @@ def _index_name(con: dict) -> str:
     return "Nifty 50" if ("NSEI" in src or "NIFTY" in src or not src) else _str(con.get("label_src"))
 
 
-# ── (3) oscillator history vs the index ──────────────────────────────────────
-def _history_chart(fr: pd.DataFrame, price: pd.Series | None, index_name: str) -> None:
-    sao = pd.to_numeric(fr["SAO"], errors="coerce") if "SAO" in fr.columns else pd.Series(dtype=float)
+def single_system_runs(fr: pd.DataFrame) -> list[tuple]:
+    """Contiguous stretches where the read exists but only the top-down pillar counted (two_system False)."""
+    if fr is None or not len(fr) or "NKO" not in fr.columns or "two_system" not in fr.columns:
+        return []
+    mask = pd.to_numeric(fr["NKO"], errors="coerce").notna() & ~fr["two_system"].astype(bool)
+    out, s0, prev = [], None, None
+    for d, m in mask.items():
+        if m and s0 is None:
+            s0 = d
+        elif not m and s0 is not None:
+            out.append((s0, prev))
+            s0 = None
+        prev = d
+    if s0 is not None:
+        out.append((s0, prev))
+    return out
+
+
+def _bar_widths(xs: pd.DatetimeIndex) -> list[float]:
+    gaps = pd.Series(xs[1:] - xs[:-1]).dt.total_seconds().mul(1000).tolist() if len(xs) > 1 else []
+    return gaps + [float(pd.Series(gaps).median()) if gaps else 86_400_000.0]
+
+
+def _axes(fig) -> None:
+    fig.update_xaxes(showgrid=False, zeroline=False, showline=False, tickfont=_TICK, ticks="", showspikes=True,
+                     spikemode="across", spikethickness=0.5, spikedash="dot", spikecolor="rgba(148,163,184,0.35)")
+
+
+# ── (2) the read over time vs the index ──────────────────────────────────────
+def _nko_chart(fr: pd.DataFrame, price: pd.Series | None, index_name: str) -> go.Figure:
+    nko = pd.to_numeric(fr["NKO"], errors="coerce")
+    xs = pd.DatetimeIndex(fr.index)
     fig = make_subplots(specs=[[{"secondary_y": True}]])
-    x = fr.index
-    # Contiguous bars (each as wide as the gap to the next date) read as a stepped area and break
-    # cleanly on days without data. Display only — the values are the frame's SAO, unchanged.
-    xs = pd.DatetimeIndex(x)
-    gaps_ms = pd.Series(xs[1:] - xs[:-1]).dt.total_seconds().mul(1000).tolist() if len(xs) > 1 else []
-    width = gaps_ms + [float(pd.Series(gaps_ms).median()) if gaps_ms else 86_400_000.0]
-    vals = [None if pd.isna(v) else float(v) for v in sao]
-    colors = ["rgba(52,211,153,0.55)" if (v or 0) > 0 else "rgba(251,113,133,0.55)" for v in vals]
-    fig.add_trace(go.Bar(x=list(xs), y=vals, width=width, offset=0, marker=dict(color=colors, line=dict(width=0)),
-                         name="Agreement", showlegend=False, hovertemplate="Agreement %{y:+.2f}<extra></extra>"),
-                  secondary_y=False)
+    for x0, x1 in single_system_runs(fr):
+        fig.add_vrect(x0=x0, x1=x1, fillcolor=_SINGLE_FILL, line_width=0, layer="below")
+    fig.add_hrect(y0=-CONV2_TIER_WEAK, y1=CONV2_TIER_WEAK, fillcolor="rgba(148,163,184,0.06)", line_width=0,
+                  layer="below")
+    vals = [None if pd.isna(v) else float(v) for v in nko]
+    colors = [_SIDE_RGBA["bull" if (v or 0) > CONV2_TIER_WEAK else "bear" if (v or 0) < -CONV2_TIER_WEAK else "flat"]
+              for v in vals]
+    # Contiguous bars (each as wide as the gap to the next date) read as a stepped area and break on
+    # days without a reading. Display only — the values are the frame's NKO, unchanged.
+    fig.add_trace(go.Bar(x=list(xs), y=vals, width=_bar_widths(xs), offset=0,
+                         marker=dict(color=colors, line=dict(width=0)), name="Nishkarsh read", showlegend=False,
+                         hovertemplate="Nishkarsh read %{y:+.0f}<extra></extra>"), secondary_y=False)
     if price is not None and len(price):
         fig.add_trace(go.Scatter(x=price.index, y=price.values, mode="lines", name=index_name, showlegend=False,
                                  line=dict(color=_PRICE, width=1.5),
                                  hovertemplate=f"{index_name} " + "%{y:,.0f}<extra></extra>"), secondary_y=True)
-    lay = chart_layout(height=330, show_legend=False, margin=dict(t=8, l=8, r=8, b=8))
-    fig.update_layout(**lay, bargap=0)
-    tick = dict(family="Inter, sans-serif", size=11, color="#7C879A")
-    fig.update_xaxes(showgrid=False, zeroline=False, showline=False, tickfont=tick, ticks="", showspikes=True,
-                     spikemode="across", spikethickness=0.5, spikedash="dot", spikecolor="rgba(148,163,184,0.35)")
-    fig.update_yaxes(range=[-1.05, 1.05], tickvals=[-1, -0.5, 0, 0.5, 1], ticktext=["−1", "", "0", "", "+1"],
-                     showgrid=True, gridcolor="rgba(255,255,255,0.04)", zeroline=True,
-                     zerolinecolor="rgba(148,163,184,0.25)", zerolinewidth=1, tickfont=tick, secondary_y=False)
-    fig.update_yaxes(showgrid=False, zeroline=False, tickformat=",.0f", tickfont=tick, secondary_y=True)
-    st.plotly_chart(fig, width="stretch", key="ov_history", config={"displayModeBar": False})
+    fig.update_layout(**chart_layout(height=340, show_legend=False, margin=dict(t=8, l=8, r=8, b=8)), bargap=0)
+    _axes(fig)
+    ticks = [-100, -CONV2_TIER_STRONG, -CONV2_TIER_MODERATE, 0, CONV2_TIER_MODERATE, CONV2_TIER_STRONG, 100]
+    fig.update_yaxes(range=[-105, 105], tickvals=ticks, ticktext=[signed(t, "+.0f") for t in ticks],
+                     showgrid=True, gridcolor="rgba(255,255,255,0.05)", zeroline=True,
+                     zerolinecolor="rgba(148,163,184,0.25)", zerolinewidth=1, tickfont=_TICK, secondary_y=False)
+    fig.update_yaxes(showgrid=False, zeroline=False, tickformat=",.0f", tickfont=_TICK, secondary_y=True)
+    return fig
+
+
+def _pillars_chart(fr: pd.DataFrame) -> go.Figure:
+    labels = [NKO_PILLAR_PLAIN[p][0] + f" ({NKO_PILLAR_PLAIN[p][1]})" for p in PILLARS]
+    fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.09, subplot_titles=labels)
+    runs = single_system_runs(fr)
+    for i, p in enumerate(PILLARS, start=1):
+        col = f"P_{p}"
+        y = pd.to_numeric(fr[col], errors="coerce") if col in fr.columns else pd.Series(index=fr.index, dtype=float)
+        fig.add_trace(go.Scatter(x=fr.index, y=y, mode="lines", name=labels[i - 1], showlegend=False,
+                                 line=dict(color=PILLAR_COLOR[p], width=1.4), fill="tozeroy",
+                                 fillcolor=PILLAR_COLOR[p] + "22", connectgaps=False,
+                                 hovertemplate=f"{NKO_PILLAR_PLAIN[p][0]} " + "%{y:+.2f}<extra></extra>"),
+                      row=i, col=1)
+        fig.update_yaxes(range=[-4.2, 4.2], tickvals=[-3, 0, 3], ticktext=["−3", "0", "+3"], showgrid=True,
+                         gridcolor="rgba(255,255,255,0.04)", zeroline=True, zerolinecolor="rgba(148,163,184,0.3)",
+                         tickfont=_TICK, row=i, col=1)
+    for x0, x1 in runs:
+        fig.add_vrect(x0=x0, x1=x1, fillcolor=_SINGLE_FILL, line_width=0, layer="below", row="all", col=1)
+    fig.update_layout(**chart_layout(height=420, show_legend=False, margin=dict(t=24, l=8, r=8, b=8)))
+    fig.update_annotations(font=dict(family="Inter, sans-serif", size=12, color="#AEB6C4"), x=0, xanchor="left")
+    _axes(fig)
+    return fig
 
 
 def _render_history(ss, start, tf_label: str, con: dict) -> None:
     frame = ss.get("conclusion_frame")
-    if frame is None or len(frame) == 0 or "SAO" not in frame.columns:
+    if frame is None or len(frame) == 0 or "NKO" not in frame.columns:
         return
     fr = _since(frame, start)
     lv = ss.get("label_levels")
@@ -89,180 +148,126 @@ def _render_history(ss, start, tf_label: str, con: dict) -> None:
     name = _index_name(con)
     span = span_words(tf_label)
     with st.container(border=True, key="nk_history"):
-        st.markdown(
-            f'<div class="nk-card-head"><div><h3>Agreement over time</h3>'
-            f'<p>The oscillator each day over {esc(span)}, with the {esc(name)} for context.</p></div>'
-            f'<div class="nk-legend"><span><i class="sw buy"></i>Buy-side agreement</span>'
-            f'<span><i class="sw sell"></i>Sell-side agreement</span>'
-            f'<span><i class="sw line"></i>{esc(name)} (right axis)</span></div></div>', unsafe_allow_html=True)
+        left, right = st.columns([3, 1.2], vertical_alignment="bottom")
+        left.markdown(f'<div class="nk-card-head"><div><h3>The read over time</h3><p>The Nishkarsh Oscillator '
+                      f'each day over {esc(span)}, with the {esc(name)} for context.</p></div></div>',
+                      unsafe_allow_html=True)
+        with right:
+            view = st.segmented_control("View", VIEWS, default=VIEWS[0], key="ov_hist_view", required=True,
+                                        label_visibility="collapsed", width="stretch") or VIEWS[0]
+        pillars = view == VIEWS[1]
+        legend = ("".join(f'<span><i class="sw" style="background:{PILLAR_COLOR[p]}"></i>'
+                          f'{esc(NKO_PILLAR_PLAIN[p][0])}</span>' for p in PILLARS) if pillars else
+                  f'<span><i class="sw bull"></i>Bullish read</span><span><i class="sw bear"></i>Bearish read</span>'
+                  f'<span><i class="sw flat"></i>No lean</span><span><i class="sw line"></i>{esc(name)} (right axis)</span>')
+        has_single = bool(single_system_runs(fr))
+        st.markdown(f'<div class="nk-legend">{legend}' + ('<span><i class="sw single"></i>Single-system '
+                    '(top-down only)</span>' if has_single else "") + '</div>', unsafe_allow_html=True)
         if len(fr):
-            _history_chart(fr, price, name)
-        st.markdown(f'<div class="nk-card-foot">{esc(OSC_SCALE_TEXT)}. A gap means Nirnay had no data that '
-                    'day; flat at 0 means the systems disagreed.</div>', unsafe_allow_html=True)
+            fig = _pillars_chart(fr) if pillars else _nko_chart(fr, price, name)
+            st.plotly_chart(fig, width="stretch", key="ov_history", config={"displayModeBar": False})
+        foot = ("Each pillar is a causal z-score against its own past (+ = bullish); the read is their average, "
+                "rescaled to ±100." if pillars else f"Scale: {NKO_SCALE_TEXT}.")
+        st.markdown(f'<div class="nk-card-foot">{esc(foot)} Shaded stretches had no Nirnay data, so only the '
+                    'top-down pillar counted; a gap means no reading that day.</div>', unsafe_allow_html=True)
 
 
-# ── (4) the two systems ──────────────────────────────────────────────────────
-def _pill(text: str, cls: str = "") -> str:
-    return f'<span class="nk-pill {esc(cls)}">{esc(text)}</span>'
+# ── (3) what drives today's read: pillars → components ───────────────────────
+def _pillar_card(p: str, k: dict, fr: pd.DataFrame, span: str) -> str:
+    name, system, desc = NKO_PILLAR_PLAIN[p]
+    z = num(_d(k.get("pillars")).get(p))
+    comps = [_d(c) for c in (k.get("components") or []) if _d(c).get("pillar") == p]
+    if not comps:
+        comps = [{"id": cid, "pillar": pil, "z": None} for pil, cid, _, _ in COMPONENTS if pil == p]
+    drivers = {_str(_d(c).get("id")) for c in (k.get("drivers") or [])}
+    rows = "".join(
+        f'<div class="nk-comp{" driver" if _str(c.get("id")) in drivers else ""}">'
+        f'<div class="nk-comp-top"><span class="nk-comp-label">{esc(component_label(c.get("id"), c.get("label")))}'
+        + ('<span class="nk-driver-tag">driver</span>' if _str(c.get("id")) in drivers else "")
+        + f'</span><span class="nk-comp-z {z_side(c.get("z"))}">{esc(signed(c.get("z")))}</span></div>'
+        f'{zbar_html(c.get("z"))}'
+        f'<div class="nk-comp-src">{esc(NKO_COMPONENT_PLAIN.get(_str(c.get("id")), ("", _str(c.get("source"))))[1])}'
+        f'</div></div>' for c in comps)
+    col = f"P_{p}"
+    spark = sparkline_svg([(fr[col].tolist() if col in fr.columns else [], PILLAR_COLOR[p])], y_range=(-4, 4),
+                          zero=True)
+    n_in = len(comps)
+    return (f'<div class="nk-pillar">'
+            f'<div class="nk-pillar-head"><div><h4>{esc(name)}</h4><span>{esc(system)} · {n_in} input'
+            f'{"s" if n_in != 1 else ""}</span></div><span class="nk-pillar-z {z_side(z)}">{esc(signed(z))}</span></div>'
+            f'{zbar_html(z)}<p>{esc(desc[:1].upper() + desc[1:])}.</p>'
+            f'<div class="nk-spark-wrap">{spark}<div class="nk-spark-cap">This pillar over {esc(span)} · '
+            f'above the dotted line leans bullish</div></div>'
+            f'<div class="nk-comp-list">{rows}</div></div>')
 
 
-def _system_cards(ss, start, con: dict, m: dict, tf_label: str) -> None:
-    lat = _d(con.get("latest"))
-    span = span_words(tf_label)
+def _render_drivers(ss, start, tf_label: str, con: dict) -> None:
+    k = _d(con.get("nko"))
+    if not k:
+        return
     frame = ss.get("conclusion_frame")
     fr = _since(frame, start) if frame is not None else pd.DataFrame()
-    t_tier = m.get("trust_tier", "INSUFFICIENT_DATA")
-    h = m.get("horizon")
-    forward = m.get("forward_mode", True)
-    c_val = num(lat.get("C"))
-    a_spark = sparkline_svg([(fr["C"].tolist() if "C" in fr.columns else [], "#D4A853")], y_range=(-100, 100),
-                            zero=True)
-    a_txt = str(m.get("aarambh_text", "—"))
-    if not forward:
-        a_sentence = f"Valuation head: {esc(a_txt)} — {esc(LEVELS_TAG)}."
-    elif a_txt.startswith("forecast leans"):
-        a_sentence = f"Its {h}-day forecast {esc(a_txt[len('forecast '):])}."
-    elif a_txt.startswith("forecast "):
-        a_sentence = f"Its {h}-day forecast is {esc(a_txt[len('forecast '):])}."
-    else:
-        a_sentence = "No forecast for the latest date."
-    # Colour only a proven directional call (trust tier DIRECTIONAL/TRADEABLE), never a lean.
-    direction = _str(lat.get("direction")).upper()
-    a_cls = (("buy" if direction == "BULLISH" else "sell" if direction == "BEARISH" else "")
-             if t_tier in CALL_TIERS and _str(lat.get("tier")).upper() in ("STRONG", "MODERATE", "WEAK") else "")
-    pos = 50.0 if c_val is None else max(0.0, min(100.0, 50.0 + c_val / 2.0))
-    conv_bar = ('<div class="nk-convbar"><div class="mid"></div>'
-                + ('' if c_val is None else f'<div class="mark" style="left:{pos:.1f}%"></div>') + '</div>')
-    a_card = (
-        f'<div class="nk-sys">'
-        f'<div class="nk-sys-head"><div><h4>Aarambh</h4><span>Top-down forecast</span></div>'
-        f'{_pill(m.get("aarambh_pill", "—"), a_cls)}</div>'
-        f'<div class="nk-sys-figure"><span class="nk-big">{esc(signed(c_val, "+.0f"))}</span>'
-        f'<span class="nk-unit">conviction, on a −100 to +100 scale</span></div>{conv_bar}'
-        f'<p>{a_sentence}</p>'
-        f'<div class="nk-spark-wrap">{a_spark}<div class="nk-spark-cap">Conviction over {esc(span)} · '
-        f'above the dotted line leans higher</div></div>'
-        f'<div class="nk-sys-foot">Track record {chip_html(TRUST_PLAIN[t_tier][0], TRUST_PLAIN[t_tier][1])}</div>'
-        f'</div>')
-
-    nl = _d(_d(_d(ss.get("run_report")).get("nirnay")).get("latest"))
-    ob, os_ = num(nl.get("Overbought_Pct")), num(nl.get("Oversold_Pct"))
-    n_spark = sparkline_svg([(fr["zN"].tolist() if "zN" in fr.columns else [], "#22D3EE")], y_range=(-3, 3),
-                            zero=True)
-    bar = ""
-    if ob is not None or os_ is not None:
-        o1, o2 = max(0.0, min(100.0, os_ or 0.0)), max(0.0, min(100.0, ob or 0.0))
-        bar = (f'<div class="nk-breadth"><div class="seg os" style="width:{o1:.1f}%"></div>'
-               f'<div class="seg mid" style="width:{max(0.0, 100 - o1 - o2):.1f}%"></div>'
-               f'<div class="seg ob" style="width:{o2:.1f}%"></div></div>')
-    n_live = num(nl.get("n_live"))
-    n_sentence = (f"Of the {int(n_live)} Nifty stocks with live data, {fmt(os_, '.0f')}% are oversold and "
-                  f"{fmt(ob, '.0f')}% overbought." if n_live else "No stock-level data for this date.")
-    nir_state = "Context only" if not (_d(con.get("lift")).get("passed") is True) else "Measured"
-    n_card = (
-        f'<div class="nk-sys">'
-        f'<div class="nk-sys-head"><div><h4>Nirnay</h4><span>Bottom-up stock breadth</span></div>'
-        f'{_pill(m.get("nirnay_pill", "—"))}</div>'
-        f'<div class="nk-sys-figure"><span class="nk-big os">{esc(fmt(os_, ".0f", suffix="%"))}</span>'
-        f'<span class="nk-unit">oversold</span><span class="nk-big ob">{esc(fmt(ob, ".0f", suffix="%"))}</span>'
-        f'<span class="nk-unit">overbought</span></div>{bar}'
-        f'<p>{esc(n_sentence)}</p>'
-        f'<div class="nk-spark-wrap">{n_spark}<div class="nk-spark-cap">Nirnay\'s reading over {esc(span)} · '
-        f'above the dotted line leans bullish</div></div>'
-        f'<div class="nk-sys-foot">Role in the conclusion {chip_html(nir_state, "muted")}</div>'
-        f'</div>')
-    c1, c2 = st.columns(2, gap="medium")
-    c1.markdown(a_card, unsafe_allow_html=True)
-    c2.markdown(n_card, unsafe_allow_html=True)
+    span = span_words(tf_label)
+    single = k.get("two_system") is not True
+    st.markdown('<div class="nk-section-head"><h3>What drives today\'s read</h3><p>The read is the average of '
+                'three pillars, each a causal z-score against its own past (+ = bullish). Under each pillar, the '
+                'inputs it averages, with today\'s z-score; the three largest are marked as drivers.'
+                + (' Today is a single-system date: the bottom-up and agreement pillars have no reading.'
+                   if single else '') + '</p></div>', unsafe_allow_html=True)
+    cols = st.columns(3, gap="medium")
+    for c, p in zip(cols, PILLARS):
+        c.markdown(_pillar_card(p, k, fr, span), unsafe_allow_html=True)
 
 
-# ── (5) How reliable is this? — the Edge Ledger in plain language ────────────
+# ── (4) How reliable is this? — the read's measurement in plain language ─────
 def build_reliability_rows(conclusion) -> list[dict]:
-    """Plain-language Edge Ledger rows (claim · status · meaning · numbers) from the conclusion's own
-    flags. Pure; status words follow the conclusion layer's booleans, never a UI threshold."""
+    """Plain-language rows (claim · status · meaning · numbers) from the run's own flags. Pure; status
+    words follow the measurement's booleans, never a UI threshold."""
     con = _d(conclusion)
     h = int(num(con.get("horizon")) or 10)
-    rows = []
-
-    e = _d(con.get("edge"))
-    code = edge_status_code(e)
-    status = {"PROVEN": ("Proven", "good", f"Its direction has matched the next {h} trading days more often "
-                         "than chance on this data."),
-              "NOT_PROVEN": ("Not proven", "caution", "So far its direction has not matched the market often "
-                             "enough to rule out luck."),
-              "INVERTED": ("Wrong way", "bad", "It has pointed the wrong way more often than chance, so its "
-                           "direction is not used."),
-              "INSUFFICIENT": ("Not enough data", "muted", "There is not enough history yet to judge it.")}[code]
-    rows.append({"claim": "Aarambh's forecast points the right way", "status": status[0], "class": status[1],
-                 "meaning": status[2],
-                 "numbers": f"accuracy score {signed(e.get('ic'), '+.3f')} · p {fmt(e.get('p'), '.2f')} · "
-                            f"{fmt(e.get('n'), '.0f')} separate {h}-day periods"})
-
-    lift = _d(con.get("lift"))
-    if con.get("single_system") is True:
-        st_ = ("Not running", "muted", "Nirnay has no data in this run, so the conclusion is Aarambh's alone.")
-    elif lift.get("available") is not True:
-        st_ = ("Not enough data", "muted", "Too few agreeing and disagreeing periods to measure this yet.")
-    elif lift.get("passed") is True:
-        st_ = ("Proven", "good", "Aarambh has been more accurate when Nirnay agrees, so disagreement can lower "
-               "conviction.")
-    else:
-        st_ = ("Not proven", "caution", "Agreement has not been shown to make Aarambh more accurate, so Nirnay "
-               "does not change the conclusion.")
-    rows.append({"claim": "Agreement with Nirnay makes Aarambh more accurate", "status": st_[0],
-                 "class": st_[1], "meaning": st_[2],
-                 "numbers": f"accuracy when they agree {signed(lift.get('ic_confirm'), '+.3f')} vs disagree "
-                            f"{signed(lift.get('ic_contradict'), '+.3f')} · p {fmt(lift.get('p_one_sided'), '.2f')}"})
-
-    oos = _d(con.get("oos"))
-    if oos.get("adds_value") is True:
-        st_ = ("Improved", "good", "On history the models never saw, the combined conclusion beat Aarambh alone.")
-    elif num(oos.get("n")) is None:
-        st_ = ("Not enough data", "muted", "Not enough unseen history to compare yet.")
-    else:
-        st_ = ("No improvement", "caution", "On history the models never saw, combining the two did not beat "
-               "Aarambh alone.")
-    rows.append({"claim": "The combined conclusion beats Aarambh alone", "status": st_[0], "class": st_[1],
-                 "meaning": st_[2],
-                 "numbers": f"accuracy combined {signed(oos.get('ic_C'), '+.3f')} vs Aarambh alone "
-                            f"{signed(oos.get('ic_A'), '+.3f')} · {fmt(oos.get('n'), '.0f')} periods"})
-
-    bt = _d(con.get("backtest"))
-    ref = num(bt.get("reference_bps"))
-    ref = BACKTEST_REFERENCE_BPS if ref is None else ref
-    by_cost = _d(bt.get("by_cost"))
-    b = next((_d(v) for k, v in by_cost.items() if num(k) == ref), {})
-    tier = _str(_d(con.get("trust")).get("tier")).upper()
-    if tier == "TRADEABLE_EDGE":
-        st_ = ("Survives costs", "good", "Trading the conclusion would have stayed profitable after realistic costs.")
-    elif not b:
-        st_ = ("Not enough data", "muted", "No cost-aware test could be run on this data.")
-    else:
-        st_ = ("Not shown", "caution", "Trading the conclusion has not been shown to stay profitable after "
-               "realistic costs.")
-    rows.append({"claim": "Trading it would pay after costs", "status": st_[0], "class": st_[1], "meaning": st_[2],
-                 "numbers": f"risk-adjusted return (Sharpe) {signed(b.get('net_sharpe'))} after {ref:g} bps per "
-                            f"trade · break-even cost {fmt(b.get('breakeven_bps'), '.1f')} bps"})
-
-    osc = _d(con.get("oscillator"))
-    ev = _d(osc.get("evidence"))
-    status = _str(osc.get("status")).upper()
-    st_ = {"VALIDATED": ("Validated", "good", f"Its readings have lined up with the Nifty's next {h} trading "
-                         "days, clearing the bar set before it was tested."),
-           "UNPROVEN": ("Unproven", "caution", "Its readings have not yet lined up with the Nifty's next moves "
-                        "strongly or consistently enough to act on.")}.get(
-        status, ("Not enough data", "muted", "Not enough history with both systems running to measure it."))
+    k = _d(con.get("nko"))
+    status = _str(k.get("status")).upper()
+    status = status if status in NKO_STATUS else "INSUFFICIENT_DATA"
+    label, cls, _ = NKO_STATUS[status]
+    meaning = {"VALIDATED": f"Its readings have lined up with the Nifty's next {h} trading days, clearing the "
+                            "bar set before it was tested.",
+               "UNPROVEN": "Its readings have not yet lined up with the Nifty's next moves strongly or "
+                           "consistently enough to act on.",
+               "INSUFFICIENT_DATA": "Not enough history with both systems running to measure it."}[status]
+    ev = _d(k.get("evidence"))
     yearly = _d(ev.get("yearly"))
     share = num(ev.get("yearly_positive_share"))
     yrs = f" · positive in {int(round(share * len(yearly)))} of {len(yearly)} years" if share is not None and yearly else ""
-    rows.append({"claim": "The Agreement Oscillator anticipates the market", "status": st_[0], "class": st_[1],
-                 "meaning": st_[2],
-                 "numbers": f"accuracy score {signed(ev.get('ic'), '+.3f')} · p {fmt(ev.get('p'), '.2f')}{yrs}"})
+    rows = [{"claim": "The Nishkarsh read anticipates the Nifty", "status": label, "class": cls, "meaning": meaning,
+             "numbers": f"accuracy score {signed(ev.get('ic'), '+.3f')} · p {fmt(ev.get('p'), '.2f')} · "
+                        f"{fmt(ev.get('n'), '.0f')} separate {h}-day periods{yrs}"}]
+    pic = _d(k.get("pillar_ic"))
+    for p in PILLARS:
+        e = _d(pic.get(p))
+        rows.append({"claim": f"{NKO_PILLAR_PLAIN[p][0]} pillar on its own", "status": "Reported", "class": "muted",
+                     "meaning": "Measured on the same periods for context; it does not decide anything.",
+                     "numbers": f"accuracy score {signed(e.get('ic'), '+.3f')} · p {fmt(e.get('p'), '.2f')} · "
+                                f"{fmt(e.get('n'), '.0f')} periods"})
+    e = _d(con.get("edge"))
+    st_ = {"PROVEN": ("Proven", "good", f"Its direction has matched the next {h} trading days more often than "
+                      "chance on this data."),
+           "NOT_PROVEN": ("Not proven", "caution", "So far its direction has not matched the market often enough "
+                          "to rule out luck."),
+           "INVERTED": ("Wrong way", "bad", "It has pointed the wrong way more often than chance."),
+           "INSUFFICIENT": ("Not enough data", "muted", "There is not enough history yet to judge it.")}[
+        edge_status_code(e)]
+    rows.append({"claim": "Aarambh's forecast input points the right way", "status": st_[0], "class": st_[1],
+                 "meaning": st_[2] + " It is one of the ten inputs.",
+                 "numbers": f"accuracy score {signed(e.get('ic'), '+.3f')} · p {fmt(e.get('p'), '.2f')} · "
+                            f"{fmt(e.get('n'), '.0f')} separate {h}-day periods"})
     return rows
 
 
-def _render_reliability(con: dict, m: dict) -> None:
-    tier = m.get("trust_tier", "INSUFFICIENT_DATA")
+def _render_reliability(con: dict) -> None:
+    k = _d(con.get("nko"))
+    status = _str(k.get("status")).upper()
+    label, cls, sentence = NKO_STATUS.get(status, NKO_STATUS["INSUFFICIENT_DATA"])
+    h = int(num(con.get("horizon")) or 10)
     rows = "".join(
         f'<div class="nk-ledger-row"><div class="nk-claim">{esc(r["claim"])}</div>'
         f'<div class="nk-ledger-status">{chip_html(r["status"], r["class"])}</div>'
@@ -270,10 +275,10 @@ def _render_reliability(con: dict, m: dict) -> None:
         f'</div>' for r in build_reliability_rows(con))
     with st.expander("How reliable is this?", expanded=False):
         st.markdown(
-            f'<div class="nk-ledger"><div class="nk-ledger-overall"><span>Overall grade</span>'
-            f'{chip_html(TRUST_PLAIN[tier][0], TRUST_PLAIN[tier][1])}<p>{esc(TRUST_PLAIN_SENTENCE[tier])} '
-            f'Each claim below is tested on history the models did not see when they were fitted.</p></div>'
-            f'{rows}<div class="nk-ledger-foot">Exact figures, tests and charts: Evidence tab.</div></div>',
+            f'<div class="nk-ledger"><div class="nk-ledger-overall"><span>The Nishkarsh read</span>'
+            f'{chip_html(label, cls)}<p>{esc(sentence.format(h=h))} Each figure is measured on history with the '
+            f'rule fixed before the test.</p></div>'
+            f'{rows}<div class="nk-ledger-foot">Exact figures, the rule and every component: Evidence tab.</div></div>',
             unsafe_allow_html=True)
 
 
@@ -302,18 +307,16 @@ def _render_data_notes(rc: dict) -> None:
 
 
 def render_overview_tab(start, tf_label: str) -> None:
-    """Overview — market read + oscillator gauge, history, system cards, reliability, data notes."""
+    """Overview — the Nishkarsh read (hero + gauge), its history, what drives it, reliability, data notes."""
     ss = st.session_state
     con, rc = _d(ss.get("conclusion")), _d(ss.get("run_config"))
-    nl = _d(_d(_d(ss.get("run_report")).get("nirnay")).get("latest"))
-    m = build_market_read(con, rc, nl)
-    render_market_hero(m)
+    render_hero(build_hero_verdict(con, _d(ss.get("precedent")).get("hero"), rc))
     crit = [w for w in (rc.get("warnings") or []) if any(k in str(w) for k in _CRITICAL)]
     if crit:
         st.markdown('<div class="nk-inline-warn">Some inputs are stale or came from a fallback source — '
                     'see Data notes at the bottom of this page.</div>', unsafe_allow_html=True)
     _render_history(ss, start, tf_label, con)
-    _system_cards(ss, start, con, m, tf_label)
+    _render_drivers(ss, start, tf_label, con)
     st.markdown('<div class="nk-gap"></div>', unsafe_allow_html=True)
-    _render_reliability(con, m)
+    _render_reliability(con)
     _render_data_notes(rc)

@@ -13,6 +13,37 @@ Sections used: **Added · Changed · Deprecated · Removed · Fixed · Security 
 
 ---
 
+## [2.2.0] — 2026-11-09 — *One inference: the Nishkarsh Oscillator*
+
+### Added
+- **The Nishkarsh Oscillator (NKO)** — `convergence/nishkarsh.py`: the ten read-outs the app
+  showed as separate panels (conclusion over time, forecast extension, lookback zone breadth
+  and cut crossings, constituent oscillator, zone breadth, regime composition, HMM state,
+  cut crossings, agreement anatomy) folded into ONE causal series in ±100: inputs oriented a
+  priori (+ = bullish, Nirnay contrarian), causally z-scored, equal-weighted into three
+  pillars (top-down, bottom-up, agreement). Nothing is fitted to returns; disagreement
+  mutes the read, agreement amplifies it. Computed and measured on every run
+  (`conclusion.nko`).
+- Pre-registered and measured on real data (`docs/research/NISHKARSH_OSCILLATOR_*`): IC
+  +0.034 (CLI, NSE data) / +0.049 (app, Yahoo data), p ≈ 0.3 → **UNPROVEN**; cohesive but not
+  more accurate than its signed-agreement pillar. Edge Ledger L-13. A knife-edge in the
+  consensus sign (no deadband on the Aarambh side) is recorded as a candidate revision,
+  not applied.
+
+### Changed — every surface infers from the one read
+- **Hero / Overview**: "Today's Nishkarsh read" from the NKO alone — side, strength, the three
+  drivers, whether the systems agree, gauge on ±100 with fixed bands, the read over time vs
+  the Nifty (pillar view), and *What drives today's read* (pillars + all ten inputs).
+- **Precedent** rewired: matches today's NKO *state* (level, pillars, 5/20-day change)
+  against causal past states (outcomes realized before today, OAS Mahalanobis, Theiler-
+  separated episodes) and reports the Nifty's next moves vs its unconditional up-share
+  (binomial p). The engine-feature matcher is removed.
+- **Aarambh / Nirnay** tabs open with the pillar they feed and today's contribution;
+  **Evidence** opens with the NKO's measurement. The former headline (Aarambh forecast + κ)
+  is now one input, shown in Evidence.
+
+---
+
 ## [2.1.0] — 2026-11-09 — *Agreement Oscillator · NSE archives · product UI*
 
 ### Added

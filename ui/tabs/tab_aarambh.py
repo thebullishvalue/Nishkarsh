@@ -21,7 +21,8 @@ from core.config import (
     UI_CHART_HEIGHT_MEDIUM, UI_CHART_HEIGHT_SMALL, UI_CHART_HEIGHT_XLARGE,
 )
 from ui.components import (
-    CALL_TIERS, esc, fmt, num, render_interpretation_card, render_metric_card, render_section_header, section_gap,
+    CALL_TIERS, esc, fmt, num, render_interpretation_card, render_metric_card, render_pillar_banner,
+    render_section_header, section_gap,
 )
 from ui.copy import SIGN_ENGINE, mode_copy, regime_label, zone_label
 from ui.theme import chart_layout, style_axes
@@ -227,6 +228,7 @@ def render_aarambh_tab(engine, ts_f: pd.DataFrame, ts: pd.DataFrame, signal: dic
     con = conclusion or {}
     signal, model_stats = signal or {}, model_stats or {}
     st.markdown('<div class="tab-bg aarambh"></div>', unsafe_allow_html=True)
+    render_pillar_banner(con, "top_down")
     render_section_header("Model Quality", mc["quality_desc"], icon="cpu", accent="violet")
     st.caption(mc["badge"])
     _quality_cards(model_stats, signal, ts, mc, forward)
