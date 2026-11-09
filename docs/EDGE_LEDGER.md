@@ -34,6 +34,7 @@ Status vocabulary:
 | L-10 | Precedent (analog) base rate is a stronger directional read | **UNTESTED** | The "historically stronger" claim was imported from another project (Tattva) and never measured here; on a pure null the v1 precedent row leaned directionally 41% of the time. | Precedent shows `k/n up vs unconditional %` with a binomial p; it votes in the hero only when significant. |
 | L-11 | Custom engineered predictors improve the forecast | **UNTESTED** | Inert for Aarambh in predictive mode (the PCA gate is bypassed there); feed MMR only. | — |
 | L-12 | The Signed Agreement Oscillator (consensus × agreement ratio) is a directional buy/sell read | **UNPROVEN — positive lead** | Pre-registered test (docs/research/AGREEMENT_OSCILLATOR_*.md): IC +0.091, HAC t 1.92, CI [−0.008, +0.190], 5/7 years positive, Holm p 0.53 — not significant at 163 windows (minimum detectable IC ≈ 0.20). Unsigned agreement level: IC −0.002 (nothing). | `conclusion.oscillator` on every run; status upgrades only when the pre-registered rule passes. |
+| L-13 | The Nishkarsh Oscillator (all ten read-outs in one series) is a directional read | **UNPROVEN** | Pre-registered (docs/research/NISHKARSH_OSCILLATOR_*.md): IC +0.034, n 138, p 0.35, CI [−0.078, +0.148], 3/6 years positive. Cohesive but not more accurate than its signed-agreement pillar (+0.063 here; +0.091 as the stand-alone oscillator, L-12). | `conclusion.nko` on every run. |
 
 ## How a row changes status
 

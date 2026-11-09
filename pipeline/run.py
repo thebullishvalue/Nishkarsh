@@ -129,17 +129,18 @@ def _nirnay_one(sym, ohlcv_df, macro: MacroPanel, cfg: PipelineConfig):
     return res
 
 
-def compute_precedent(ts_rows: pd.DataFrame, cfg: PipelineConfig) -> dict:
-    """Analogs + base rates computed ONCE per run (A4-16). ``ts_rows``: engine ts with RangeIndex,
-    ``Date`` and ``Price`` columns. Returns {"analogs", "summary", "hero"}."""
-    from analytics.analogs import find_similar_periods, summarize_forward
+def compute_precedent(nko: pd.DataFrame, price_levels: pd.Series | None, cfg: PipelineConfig) -> dict:
+    """Precedent from the system's single inference series: past dates whose Nishkarsh
+    Oscillator state most resembled today's, and what the index did next (A4-16: computed
+    once per run). Returns {"analogs", "summary", "hero"}."""
+    from analytics.analogs import find_state_analogs, nko_state_frame, summarize_forward
     holds = tuple(int(h) for h in cfg.precedent_horizons)
-    analogs = find_similar_periods(ts_rows, cfg.target, hold_horizons=holds, mom_window=int(cfg.mom_k))
-    summary = summarize_forward(analogs, holds, ts=ts_rows) if analogs else {}
-    # The precedent read is graded at the SAME horizon as the conclusion (both modes).
-    hp = int(cfg.horizon)
-    if not summary.get(hp):
-        hp = int(max(holds))
+    if nko is None or nko.empty or price_levels is None or not len(price_levels):
+        return {"analogs": [], "summary": {}, "hero": None}
+    state = nko_state_frame(nko, price_levels, holds)
+    analogs, uncond = find_state_analogs(state, holds, gap=max(int(max(holds)), int(cfg.mom_k)))
+    summary = summarize_forward(analogs, holds, uncond) if analogs else {}
+    hp = int(cfg.horizon) if summary.get(int(cfg.horizon)) else int(max(holds))
     row = summary.get(hp)
     hero = None
     if row and row.get("n"):
@@ -147,7 +148,7 @@ def compute_precedent(ts_rows: pd.DataFrame, cfg: PipelineConfig) -> dict:
         hero = {"horizon": hp, "median": med, "positive_pct": float(row["positive_pct"]), "n": int(row["n"]),
                 "dir": 1 if med > 0 else -1 if med < 0 else 0,
                 "unconditional_positive_pct": row.get("unconditional_positive_pct"),
-                "binomial_p": row.get("binomial_p")}
+                "binomial_p": row.get("binomial_p"), "basis": "Nishkarsh Oscillator state"}
     return {"analogs": list(analogs or []), "summary": {int(k): v for k, v in summary.items()}, "hero": hero}
 
 
@@ -347,6 +348,16 @@ def _run(sheet_df, cfg, sources, *, progress, log, force, sheet_info, today) -> 
         attach_oscillator(conclusion, anatomy, levels, int(cfg.horizon))
     except Exception as e:  # noqa: BLE001
         warnings.append(f"Agreement oscillator failed: {e}")
+    nko = pd.DataFrame()
+    try:   # the Nishkarsh Oscillator — the single inference series (convergence/nishkarsh.py)
+        from convergence.conclusion import _json_safe
+        from convergence.nishkarsh import build_nishkarsh_oscillator, nko_readout
+        nko = build_nishkarsh_oscillator(conclusion.frame, aarambh_ts, nirnay_daily)
+        for c in nko.columns:
+            conclusion.frame[c] = nko[c]
+        conclusion.payload["nko"] = _json_safe(nko_readout(nko, levels, int(cfg.horizon)))
+    except Exception as e:  # noqa: BLE001
+        warnings.append(f"Nishkarsh Oscillator failed: {e}")
     log.end_phase("CONCLUSION")
     T["conclusion"] = time.perf_counter() - t
 
@@ -355,7 +366,7 @@ def _run(sheet_df, cfg, sources, *, progress, log, force, sheet_info, today) -> 
     log.start_phase("PRECEDENT & REPORT", 5, 5)
     prog(92, "Finding Precedents", "Mahalanobis analogs")
     try:
-        precedent = compute_precedent(aarambh_ts.reset_index(drop=True), cfg)
+        precedent = compute_precedent(nko, levels, cfg)
     except Exception as e:  # noqa: BLE001
         precedent = {"analogs": [], "summary": {}, "hero": None}
         warnings.append(f"Precedent failed: {e}")

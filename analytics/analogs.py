@@ -1,22 +1,21 @@
 """
-Nishkarsh — Analog (Similar-Period) matcher.
-निष्कर्ष (Nishkarsha) — "Conclusion / Inference"
+Precedent — historical analogs of the NISHKARSH OSCILLATOR state.
 
-ANALYTICS — Covariance-aware historical analog matching, ported from Arthagati's
-``find_similar_periods`` (Mahalanobis + trajectory cosine + recency) and inherited
-from Tattva. The matcher itself is unchanged; only its INPUTS are adapted to
-Nishkarsh:
+Answers one descriptive question, from the system's single inference series
+(``convergence/nishkarsh.py``): "on the past dates whose Nishkarsh Oscillator state
+looked most like today's, what did the Nifty do next — and is that different from what
+it usually does?"
 
-  • Feature vector is built from the quantities Nishkarsh already computes per day
-    (``engine.ts_data``) — conformal extension (AvgZ), net internal breadth, target
-    momentum, realized volatility, and rolling Hurst — instead of Arthagati's mood
-    features.
-  • Forward-return horizons follow the Aarambh forecast lens (AARAMBH_FWD_HORIZON
-    primary; AARAMBH_FWD_MOM_K momentum window), not a fixed 5/20/60/90.
-
-It answers an empirical, non-parametric question that complements the model
-forecast: "when the target's state looked statistically like today, what did the
-target do next?" — a base rate, descriptive not predictive.
+  • State vector: NKO level, its three pillars (top-down, bottom-up, agreement) and its
+    5- and 20-day change — i.e. where the read is, what drives it, and where it is going.
+  • Match: covariance-aware Mahalanobis distance with OAS shrinkage (Chen, Wiesel, Eldar
+    & Hero 2010) over CAUSAL candidates only — dates whose longest forward outcome was
+    realized before today.
+  • Distinct episodes: greedy Theiler exclusion (Theiler 1986; Farmer & Sidorowich 1987)
+    in trading days, so ten analogs are ten episodes, not one episode ten times.
+  • Honest base rate: the analogs' up-share is reported against the unconditional
+    up-share of the same candidate pool, with an exact binomial p. Descriptive only — it
+    votes in the hero only when that p is below EDGE_ALPHA.
 """
 
 from __future__ import annotations
@@ -25,22 +24,8 @@ import numpy as np
 import pandas as pd
 from scipy import stats as _sstats
 
-from analytics.hurst import hurst_dfa
+STATE_FEATURES = ("NKO", "P_top_down", "P_bottom_up", "P_agreement", "dNKO_5", "dNKO_20")
 
-# ── Blend weights (ported verbatim from Arthagati) ───────────────────────────
-# Blend re-tuned for Tattva (2026-06-20, research/analog_tuning_study.py + research/analog_confirm.py:
-# 13 targets, non-overlapping OOS IC full + recent-half). The ported Arthagati blend
-# (.55/.35/.10) was actively HURTING: trajectory adds ~nothing and recency degrades
-# the recent regime. PURE Mahalanobis state-matching is the clear winner — it
-# recovers the decayed recent edge (10d recent IC −0.010 → +0.079; 20d −0.083 →
-# +0.095) while holding full-sample IC. So trajectory + recency are dropped (weight
-# 0; their dead code paths were removed in 2.0.0 — the score is the Mahalanobis
-# similarity alone, bit-identical to the old 1/0/0 blend).
-
-
-# ════════════════════════════════════════════════════════════════════════════
-# Core matcher — ported verbatim from Arthagati (arthagati.py)
-# ════════════════════════════════════════════════════════════════════════════
 
 def _oas_shrinkage(S: np.ndarray, n: int) -> np.ndarray:
     """Oracle Approximating Shrinkage estimator (Chen, Wiesel, Eldar & Hero
@@ -138,258 +123,89 @@ def mahalanobis_distance_batch(features: np.ndarray, center: np.ndarray,
 # Tattva adaptation — feature vector from engine.ts_data
 # ════════════════════════════════════════════════════════════════════════════
 
-def _rolling_hurst(price: np.ndarray, window: int = 120, step: int = 5) -> np.ndarray:
-    """Rolling Hurst (DFA) over a trailing window, computed every ``step`` points
-    and forward-filled — a regime persistence/mean-reversion feature. Mirrors
-    Arthagati's stepped rolling-Hurst approach to keep it cheap on ~2k-row series.
 
-    Off-grid rows carry the latest on-grid estimate (causal forward fill; 0.5 only
-    before the first estimate). The v1 placeholder was 0.5 on every row, so the
-    ``.replace(0.0, nan).ffill()`` never fired and 4 of every 5 rows read 0.5 —
-    the analog match keyed on (row mod 5) (audit A4-01).
-    """
-    n = len(price)
-    if n < window:
-        return np.full(n, 0.5, dtype=np.float64)
-    out = np.full(n, np.nan, dtype=np.float64)
-    log_p = np.log(np.where(price > 0, price, np.nan))
-    rets = np.diff(log_p)
-    for i in range(window, n, step):
-        seg = rets[i - window:i]
-        seg = seg[np.isfinite(seg)]
-        if len(seg) >= 30:
-            out[i] = hurst_dfa(seg)
-    return pd.Series(out).ffill().fillna(0.5).to_numpy(dtype=np.float64, copy=True)
+_ledoit_wolf_shrinkage = _oas_shrinkage  # backward-compatible alias (audit A4-13)
 
 
-def _build_feature_frame(ts: pd.DataFrame, mom_window: int) -> tuple[pd.DataFrame, list[str]]:
-    """Assemble the per-day analog state matrix from Tattva's engine.ts_data.
+def nko_state_frame(nko: pd.DataFrame, price: pd.Series, hold_horizons: tuple[int, ...]) -> pd.DataFrame:
+    """Per-date state vector + forward index returns (%) on the NKO frame's dates.
 
-    Feature set re-tuned for Tattva (research/analog_tuning_study.py): AvgZ was DROPPED —
-    it degraded the recent regime (10d recent IC −0.010 → +0.034 without it) while
-    NetBreadth proved critical and the candidate extras (ModelSpread, ExtremeBreadth,
-    SignalBreadth, ConvictionRaw, MomentumLong) added nothing. Kept (availability-
-    guarded):
-      • Momentum     — trailing ``mom_window``-day log-return of the target Price
-      • Realized Vol — rolling σ of daily log-returns over ``mom_window``
-      • NetBreadth   — OversoldBreadth − OverboughtBreadth, if present (key feature)
-      • Hurst        — rolling DFA Hurst of the target Price
-
-    Returns ``(frame, feature_cols)`` where ``frame`` carries the feature columns
-    plus ``Price`` and ``Date`` (forward returns and recency are derived from these).
-    """
-    if ts is None or ts.empty or "Price" not in ts.columns:
-        return pd.DataFrame(), []
-
-    df = ts.reset_index(drop=True).copy()
-    price = pd.to_numeric(df["Price"], errors="coerce").to_numpy(dtype=np.float64)
-    log_ret = pd.Series(np.log(np.where(price > 0, price, np.nan))).diff()
-
-    feat = pd.DataFrame(index=df.index)
-    feat["Momentum"] = log_ret.rolling(mom_window, min_periods=mom_window).sum()
-    feat["RealizedVol"] = log_ret.rolling(mom_window, min_periods=mom_window).std()
-
-    if {"OversoldBreadth", "OverboughtBreadth"}.issubset(df.columns):
-        feat["NetBreadth"] = (pd.to_numeric(df["OversoldBreadth"], errors="coerce")
-                              - pd.to_numeric(df["OverboughtBreadth"], errors="coerce"))
-        # The engine's own [0, MIN_TRAIN_SIZE) warm-up (no genuine walk-forward
-        # forecast — see the B4 audit fix) has no real breadth reading; force
-        # NetBreadth to NaN there so the analog pool can exclude the warm-up
-        # instead of matching against a fabricated "neutral" state.
-        if "Valid" in df.columns:
-            feat.loc[~df["Valid"].astype(bool), "NetBreadth"] = np.nan
-    feat["Hurst"] = _rolling_hurst(price, window=max(60, mom_window * 3))
-
-    feature_cols = [c for c in ("Momentum", "RealizedVol", "NetBreadth", "Hurst")
-                    if c in feat.columns]
-    feat["Price"] = price
-    feat["Date"] = df["Date"].to_numpy() if "Date" in df.columns else df.index.to_numpy()
-    # Carried DISPLAY-ONLY columns (not in feature_cols, never matched on):
-    #   • AvgZ — the engine's extension z-score at the analog's date. It is
-    #     not a matching feature, but the Precedent tab's analog cards display
-    #     "Extension (Z)" and key their tier badge/color off it; without
-    #     carrying it every card silently read the dict default 0.0 →
-    #     permanently "Neutral" badges (audit finding B14).
-    #   • ValidRow — the engine's Valid flag (False through the walk-forward
-    #     warm-up). Lets find_similar_periods exclude rows whose NetBreadth
-    #     would be median-filled fabrication from the candidate pool.
-    if "AvgZ" in df.columns:
-        feat["AvgZ"] = pd.to_numeric(df["AvgZ"], errors="coerce").to_numpy(dtype=np.float64)
-    if "Valid" in df.columns:
-        feat["ValidRow"] = df["Valid"].astype(bool).to_numpy()
-    return feat, feature_cols
-
-
-def find_similar_periods(
-    ts: pd.DataFrame,
-    target_col: str,
-    hold_horizons: tuple[int, ...] = (3, 5, 10, 20),
-    *,
-    mom_window: int = 20,
-    top_n: int = 10,
-) -> list[dict]:
-    """Analog finder — covariance-aware Mahalanobis state match.
-
-    Score = Mahalanobis similarity (1 − d/max_d; RELATIVE to the farthest
-    candidate, not an absolute probability). Trajectory/recency terms were
-    dropped (weight 0, see the module header) and their code removed. Candidates are drawn from genuinely-forecast
-    history only (engine warm-up rows excluded) and selected under a Theiler
-    exclusion window so each returned analog is a distinct episode.
-
-    Returns top-N analogs as dicts with the target's forward returns at each
-    ``hold_horizons`` value (% Price change t→t+h).
-    """
-    feat, feature_cols = _build_feature_frame(ts, mom_window)
-    if feat.empty or len(feature_cols) < 2:
-        return []
-
-    n = len(feat)
-    purge = int(max(hold_horizons)) if hold_horizons else 20
-    # Exclude the tail: those rows have no realized forward path yet.
-    historical = feat.iloc[:n - purge].copy()
-    # Exclude the engine's walk-forward WARM-UP rows from the candidate pool
-    # (ValidRow False, see _build_feature_frame): their NetBreadth is genuinely
-    # missing, and matching against a median-filled fabrication is not a state
-    # match. The frame keeps its original RangeIndex labels after this filter,
-    # so `historical.index` remains the TEMPORAL row position — the forward-
-    # return lookups and the Theiler gap below both rely on that.
-    if "ValidRow" in historical.columns:
-        historical = historical[historical["ValidRow"]]
-    if len(historical) < 30:
-        return []
-
-    latest = feat.iloc[-1]
-    current_vec = latest[feature_cols].to_numpy(dtype=np.float64)
-    # .copy() is load-bearing: on Streamlit Cloud DataFrame.to_numpy() can return a
-    # READ-ONLY view (consolidated/cached buffers), and the median-fill below writes
-    # in place → "assignment destination is read-only" without a writable copy.
-    hist_matrix = historical[feature_cols].to_numpy(dtype=np.float64).copy()
-
-    # Clean NaN/Inf → column medians (port of Arthagati's cleaning)
-    for col in range(hist_matrix.shape[1]):
-        col_data = hist_matrix[:, col]
-        valid = np.isfinite(col_data)
-        median_val = np.median(col_data[valid]) if valid.any() else 0.0
-        hist_matrix[~valid, col] = median_val
-    current_vec = np.where(np.isfinite(current_vec), current_vec, 0.0)
-
-    # ── Part 1: Mahalanobis (the signal — covariance-aware state match) ─────
-    cov_matrix = np.cov(hist_matrix, rowvar=False)
-    if cov_matrix.ndim < 2:
-        cov_matrix = np.array([[max(float(cov_matrix), 1e-6)]])
-    maha_dist = mahalanobis_distance_batch(hist_matrix, current_vec, cov_matrix)
-    max_dist = maha_dist.max() if maha_dist.max() > 0 else 1.0
-    maha_sim = 1.0 - (maha_dist / max_dist)
-
-    # ── Combined (pure Mahalanobis; trajectory/recency removed at weight 0) ─
-    combined = maha_sim
-    price_all = feat["Price"].to_numpy(dtype=np.float64)
-    historical = historical.copy()
-    historical["similarity"] = combined
-
-    # Theiler exclusion window (see select_analogs_theiler docstring): without
-    # it, top-N-by-similarity typically returns a RUN of adjacent days from
-    # 1-3 historical episodes whose h-day forward outcomes overlap almost
-    # completely — "10 analogs" that are really 1-3 independent observations,
-    # inflating summarize_forward's apparent median/positive_pct precision.
-    # gap = the longer of the momentum window (how far back the STATE feature
-    # vector looks) and the longest requested forward horizon (how far the
-    # OUTCOME extends) — below that, either the state or the outcome (or both)
-    # would overlap a neighbor's. positions= carries the ORIGINAL temporal row
-    # positions (RangeIndex labels) because the pool above may be filtered
-    # (warm-up rows removed) — the gap must be measured in trading days.
-    gap = max(int(mom_window), int(max(hold_horizons)) if hold_horizons else 0, 1)
-    accepted = select_analogs_theiler(
-        combined, top_n, gap, positions=historical.index.to_numpy(),
-    )
-    top = historical.iloc[accepted]
-
-    def _num(row: dict, key: str, default: float) -> float:
-        """Finite-or-default coercion — carried columns can be NaN."""
-        v = row.get(key)
-        try:
-            fv = float(v)
-        except (TypeError, ValueError):
-            return default
-        return fv if np.isfinite(fv) else default
-
-    results: list[dict] = []
-    for pos, row in zip(top.index, top.to_dict("records")):
-        price_at = float(row["Price"]) if row["Price"] and row["Price"] > 0 else None
-        fwd: dict[int, float | None] = {}
-        for h in hold_horizons:
-            fi = int(pos) + h
-            if fi < len(price_all) and price_at:
-                fwd[h] = (price_all[fi] / price_at - 1) * 100
-            else:
-                fwd[h] = None
-        date_val = row["Date"]
-        date_str = (pd.Timestamp(date_val).strftime("%Y-%m-%d")
-                    if not isinstance(date_val, (int, np.integer)) else f"t={int(date_val)}")
-        results.append({
-            "date": date_str,
-            "similarity": float(row["similarity"]),
-            "price": price_at or 0.0,
-            "momentum": _num(row, "Momentum", 0.0) * 100,  # → %
-            "realized_vol": _num(row, "RealizedVol", 0.0) * 100,
-            "avgz": _num(row, "AvgZ", 0.0),
-            "net_breadth": _num(row, "NetBreadth", 0.0),
-            "hurst": _num(row, "Hurst", 0.5),
-            "fwd": {int(h): fwd[h] for h in hold_horizons},
-        })
-    return results
-
-
-def unconditional_positive_pct(ts: pd.DataFrame, hold_horizons: tuple[int, ...]) -> dict[int, float]:
-    """Unconditional h-day positive-return rate (%) over the SAME candidate pool that
-    ``find_similar_periods`` draws analogs from (Valid rows with a realized path at
-    the longest horizon) — the base rate an analog hit rate must beat."""
-    if ts is None or len(ts) == 0 or "Price" not in ts.columns or not hold_horizons:
-        return {}
-    df = ts.reset_index(drop=True)
-    price = pd.to_numeric(df["Price"], errors="coerce").to_numpy(dtype=np.float64)
-    n = len(price)
-    purge = int(max(hold_horizons))
-    pool = np.arange(max(n - purge, 0))
-    if "Valid" in df.columns:
-        pool = pool[df["Valid"].astype(bool).to_numpy()[pool]]
-    out: dict[int, float] = {}
+    ``pos`` is the trading-day position (the NKO frame is on the trading calendar), used
+    for the Theiler gap and for causality. ``fwd_<h>`` is the % change of ``price`` from
+    the date to h trading days later — NaN until realized."""
+    df = pd.DataFrame(index=nko.index)
+    for c in ("NKO", "P_top_down", "P_bottom_up", "P_agreement"):
+        df[c] = pd.to_numeric(nko.get(c), errors="coerce")
+    df["dNKO_5"] = df["NKO"] - df["NKO"].shift(5)
+    df["dNKO_20"] = df["NKO"] - df["NKO"].shift(20)
+    df["two_system"] = nko.get("two_system", pd.Series(True, index=nko.index)).astype(bool)
+    df["pos"] = np.arange(len(df), dtype=np.int64)
+    px = pd.to_numeric(price, errors="coerce")
+    px.index = pd.DatetimeIndex(px.index)
+    px = px[~px.index.duplicated(keep="last")].sort_index().reindex(df.index, method="ffill", limit=5)
     for h in hold_horizons:
-        h = int(h)
-        p0, p1 = price[pool], price[pool + h]
-        ok = np.isfinite(p0) & np.isfinite(p1) & (p0 > 0)
-        if ok.any():
-            out[h] = float(np.mean(p1[ok] > p0[ok]) * 100.0)
-    return out
+        df[f"fwd_{int(h)}"] = (px.shift(-int(h)) / px - 1.0) * 100.0
+    return df
+
+
+def find_state_analogs(state: pd.DataFrame, hold_horizons: tuple[int, ...], *, top_n: int = 10,
+                       gap: int | None = None, features: tuple[str, ...] = STATE_FEATURES,
+                       min_pool: int = 60) -> tuple[list[dict], dict[int, float]]:
+    """Top-N distinct past analogs of today's NKO state, and the unconditional up-share.
+
+    Candidates: two-system dates whose state is complete and whose LONGEST forward
+    outcome is realized before today (``pos ≤ today − max(h)``) — so no analog's outcome
+    overlaps the present. Returns ``(analogs, unconditional_positive_pct_by_h)``."""
+    if state is None or state.empty or not hold_horizons:
+        return [], {}
+    maxh = int(max(hold_horizons))
+    gap = int(gap if gap is not None else max(maxh, 20))
+    feats = [f for f in features if f in state.columns]
+    live = state[state["two_system"] & state[feats].notna().all(axis=1)]
+    if live.empty:
+        return [], {}
+    today = live.iloc[-1]
+    fwd_cols = [f"fwd_{int(h)}" for h in hold_horizons]
+    pool = live[(live["pos"] <= int(today["pos"]) - maxh) & live[fwd_cols].notna().all(axis=1)]
+    if len(pool) < min_pool:
+        return [], {}
+    X = pool[feats].to_numpy(dtype=np.float64).copy()
+    c = today[feats].to_numpy(dtype=np.float64)
+    d = mahalanobis_distance_batch(X, c, np.cov(X, rowvar=False))
+    sim = 1.0 - d / (d.max() if d.max() > 0 else 1.0)
+    acc = select_analogs_theiler(sim, top_n, gap, positions=pool["pos"].to_numpy())
+    out = []
+    for i in acc:
+        r = pool.iloc[int(i)]
+        out.append({
+            "date": str(pd.Timestamp(pool.index[int(i)]).date()),
+            "similarity": float(sim[int(i)]),
+            "nko": float(r["NKO"]),
+            "pillars": {"top_down": float(r["P_top_down"]), "bottom_up": float(r["P_bottom_up"]),
+                        "agreement": float(r["P_agreement"])},
+            "dnko_20": float(r["dNKO_20"]),
+            "fwd": {int(h): float(r[f"fwd_{int(h)}"]) for h in hold_horizons},
+        })
+    uncond = {int(h): float((pool[f"fwd_{int(h)}"] > 0).mean() * 100.0) for h in hold_horizons}
+    return out, uncond
 
 
 def summarize_forward(periods: list[dict], hold_horizons: tuple[int, ...],
-                      ts: pd.DataFrame | None = None) -> dict[int, dict]:
-    """Per-horizon base-rate summary across the analogs.
-
-    Keys per horizon: ``median`` (% return), ``positive_pct``, ``n``, and (audit
-    A4-14) ``unconditional_positive_pct`` — the h-day positive rate over the whole
-    candidate pool (needs ``ts``, the frame passed to ``find_similar_periods``) — and
-    ``binomial_p``: two-sided exact binomial p of ``k/n`` positives against that
-    unconditional rate (analogs are Theiler-separated by ≥ the longest horizon, so
-    their outcomes do not overlap). Both are None when ``ts`` is not given.
-    "7/10 up vs 58% unconditional, p = 0.35" is the honest read."""
-    base = unconditional_positive_pct(ts, hold_horizons) if ts is not None else {}
+                      unconditional: dict[int, float] | None = None) -> dict[int, dict]:
+    """Per-horizon base rate across the analogs: ``median`` (% return), ``positive_pct``,
+    ``n``, ``unconditional_positive_pct`` (the same candidate pool's up-share) and the exact
+    two-sided ``binomial_p`` of k/n positives against it. Analogs are Theiler-separated by
+    ≥ the longest horizon, so their outcomes do not overlap. "7/10 up vs 58% usually,
+    p = 0.35" is the honest read."""
     out: dict[int, dict] = {}
     for h in hold_horizons:
         vals = [p["fwd"].get(int(h)) for p in periods]
         vals = [v for v in vals if v is not None and np.isfinite(v)]
-        if vals:
-            k = sum(1 for v in vals if v > 0)
-            u = base.get(int(h))
-            bp = None
-            if u is not None:
-                bp = float(_sstats.binomtest(k, len(vals), min(max(u / 100.0, 0.0), 1.0)).pvalue)
-            out[int(h)] = {
-                "median": float(np.median(vals)),
-                "positive_pct": k / len(vals) * 100.0,
-                "n": len(vals),
-                "unconditional_positive_pct": u,
-                "binomial_p": bp,
-            }
+        if not vals:
+            continue
+        k = sum(1 for v in vals if v > 0)
+        u = (unconditional or {}).get(int(h))
+        bp = float(_sstats.binomtest(k, len(vals), min(max(u / 100.0, 0.0), 1.0)).pvalue) if u is not None else None
+        out[int(h)] = {"median": float(np.median(vals)), "positive_pct": k / len(vals) * 100.0, "n": len(vals),
+                       "unconditional_positive_pct": u, "binomial_p": bp}
     return out
