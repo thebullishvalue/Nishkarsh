@@ -29,7 +29,7 @@ p-values — what is and is not established.
 
 ## Contents
 [Why two systems](#why-two-systems) · [Quick start](#quick-start) · [What you see](#what-you-see) ·
-[The conclusion](#the-conclusion) · [The Agreement Oscillator](#the-agreement-oscillator) · [Headless pipeline & run report](#headless-pipeline--run-report) ·
+[The conclusion](#the-conclusion) · [The Nishkarsh Oscillator](#the-nishkarsh-oscillator--one-inference) · [Headless pipeline & run report](#headless-pipeline--run-report) ·
 [Data layer](#data-layer) · [Architecture](#architecture) · [Configuration](#configuration) ·
 [Testing](#testing) · [Performance](#performance) · [Known limitations](#known-limitations) ·
 [Troubleshooting](#troubleshooting) · [References](#references)
@@ -140,30 +140,37 @@ last 20 trading days). Descriptive only — no edge is claimed for them.
 
 ---
 
-## The Agreement Oscillator
+## The Nishkarsh Oscillator — one inference
 
-How strongly — and on which side — the two systems agree:
+Everything the system computes is folded into **one causal series in −100…+100**
+(+ = bullish), which the hero, the history chart and Precedent all infer from:
 
-```
-consensus_t = +1 if Aarambh and Nirnay both lean bullish, −1 if both lean bearish, 0 if they split
-agreement_t = the agreement ratio (fixed-weight anatomy of direction · breadth · magnitude · regime)
-SAO_t       = consensus_t × agreement_t        ∈ [−1, +1]   (+ = buy-side agreement)
-```
+| Pillar | Inputs (oriented so + = bullish; Nirnay read contrarian) |
+|---|---|
+| **Top-down** (Aarambh) | the forecast (the conclusion over time) · forecast extension · lookback zone breadth · lookback cut crossings |
+| **Bottom-up** (Nirnay) | constituent oscillator · zone breadth · regime composition · HMM state · cut crossings |
+| **Agreement** | consensus × agreement ratio (the agreement anatomy) |
 
-It was measured on real data before it was promoted (pre-registered:
-[`docs/research/AGREEMENT_OSCILLATOR_PREREG.md`](docs/research/AGREEMENT_OSCILLATOR_PREREG.md);
-results: [`…_RESULTS.md`](docs/research/AGREEMENT_OSCILLATOR_RESULTS.md)). On all 50
-constituents 2020–2026 the **signed** oscillator is the best directional read the system
-has produced — IC +0.09, positive in 5 of 7 years — but **not yet statistically proven**
-(p 0.13 over 163 windows; the sample can only confirm IC ≥ 0.20). The unsigned agreement
-level carries nothing. So the app shows it as the central gauge of the two systems'
-agreement, with its measured status beside it, and uses no buy/sell wording for it.
-**Every run re-tests it**; the status upgrades to VALIDATED by itself only when the
-pre-registered rule passes (p < 0.05, bootstrap CI above 0, ≥ 60% of years positive).
+Each input is causally z-scored, each pillar is the equal-weight mean of its inputs
+(re-standardized), and `NKO = 100·tanh(z(mean of pillars)/2)`. Nothing is fitted to
+returns. When the two systems disagree their pillars cancel and the agreement pillar is
+zero, so the read collapses toward 0; when they agree, it strengthens.
 
-The same data gave the first real support for the two-system thesis: Aarambh's accuracy
-is +0.08 when Nirnay confirms it and −0.26 when Nirnay contradicts it (lift p 0.033) —
-not yet stable across start offsets or out of sample.
+**Measured before promotion** (pre-registered:
+[`docs/research/NISHKARSH_OSCILLATOR_PREREG.md`](docs/research/NISHKARSH_OSCILLATOR_PREREG.md);
+results: [`…_RESULTS.md`](docs/research/NISHKARSH_OSCILLATOR_RESULTS.md)): on the owner's
+sheet with all 50 constituents, IC +0.034 over 138 ten-day windows (p 0.35) — **UNPROVEN**.
+It makes the system cohesive but is not more accurate than its best ingredient, the
+signed-agreement pillar (the stand-alone Agreement Oscillator measured IC +0.09, p 0.13 —
+also unproven; [`AGREEMENT_OSCILLATOR_RESULTS.md`](docs/research/AGREEMENT_OSCILLATOR_RESULTS.md)).
+So the app presents NKO as **the system's read** — side, strength, what drives it — with
+its measured status beside it, never as a buy/sell signal. Every run re-measures it, and
+the status upgrades to VALIDATED by itself only when the pre-registered rule passes
+(p < 0.05, bootstrap CI above 0, ≥ 60% of years positive).
+
+**Precedent** matches today's NKO *state* (level, pillars, 5- and 20-day change) against
+causal past states — every analog's outcome realized before today, distinct episodes —
+and reports what the Nifty did next against the pool's unconditional up-share (binomial p).
 
 ---
 

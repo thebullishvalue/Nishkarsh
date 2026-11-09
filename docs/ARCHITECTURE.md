@@ -18,6 +18,10 @@
      C      = 100 · tanh(zA / 2) · (κ on CONTRADICT days, else 1)      (+ = bullish)
      evidence on C at the displayed horizon: Fisher / HAC / block-bootstrap IC,
      yearly ICs, momentum baseline, cost-aware backtest, signal-chain ICs, trust tier
+                                         ▼
+          NISHKARSH OSCILLATOR (convergence/nishkarsh.py) — the single inference
+     ten read-outs → three pillars (top-down · bottom-up · agreement) → NKO ∈ ±100
+     hero · history · Precedent (NKO-state analogs) all infer from it; measured every run
 ```
 
 **Why this shape.** The 2.0 council measured that (a) Aarambh's forecast is the only
@@ -46,7 +50,7 @@ Never upward, never sideways; `tests/test_layering.py` enforces it with an AST s
 |---|---|
 | `analytics/` | `causal_stats` (causal_z, Spearman, Fisher-z, Newey-West, block bootstrap), `backtest`, `conformal`, `ddm_filter`, `ou_process`, `hurst`, `structural_breaks` (heuristic, diagnostic only), `regime` (numba kernel + class oracle), `factors` (causal PCA), `custom_features`, `analogs`, `utils`. |
 | `engines/` | `aarambh.FairValueEngine` (purged walk-forward; `Valid`, `Forecast`, `Label`, `ForecastZ`, `wf_meta`), `nirnay` (`run_full_analysis`, `aggregate_constituent_timeseries`). |
-| `convergence/` | `conclusion.run_conclusion → ConclusionResult` (the product's conclusion), `cross_validator.compute_agreement_anatomy` (descriptive only), `labels` (return-label resolution). |
+| `convergence/` | `nishkarsh.build_nishkarsh_oscillator` / `nko_readout` — **the single inference series** every surface infers from; `conclusion.run_conclusion → ConclusionResult` (forecast head, κ, lift, edge evidence, the signed-agreement oscillator), `cross_validator.compute_agreement_anatomy`, `labels` (return-label resolution). |
 | `data/` | `fetcher`, `cache` (parquet/JSON, atomic, no pickle), `circuit_breaker`, `constituents`, `dates.parse_dates`, `macro_lag.lag_non_ist`, `sources` (`FetchResult` provenance; Live / Snapshot / Synthetic), `synthetic`. |
 | `pipeline/` | `config.PipelineConfig` (+ `fingerprint()`), `inputs.prepare_sheet`, `macro.assemble_macro_panel`, `run.run_pipeline → PipelineResult`, `report.build_run_report` / `render_diagnostics`, `__main__` (CLI). |
 
