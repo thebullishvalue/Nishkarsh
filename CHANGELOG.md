@@ -13,6 +13,21 @@ Sections used: **Added · Changed · Deprecated · Removed · Fixed · Security 
 
 ---
 
+## [2.5.2] — 2026-11-10 — *Three design-system fixes*
+
+### Fixed
+- Icons drawn from `<rect>` elements (cpu, grid, briefcase — e.g. the "Model Quality" header)
+  rendered blank or dotted: icon normalisation stripped width/height from inner elements, not
+  only the outer `<svg>`.
+- Rows of columns (KPI strips, card rows) stopped one gap (16px) short of the panels around them:
+  Streamlit's column basis relies on flex-grow, which the design system turns off; each unwrapped
+  row now gets the exact basis for its column count.
+- Table panels cut off their last 8px: the gap under the panel header is now padding on the table's
+  container, which is sized for it.
+- All three were inherited from Tattva 2.8.0 and are fixed the same way in Nivesa 3.0.0.
+
+---
+
 ## [2.5.1] — 2026-11-09 — *Real sources only; Convergence leads the engines*
 
 ### Changed
