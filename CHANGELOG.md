@@ -13,6 +13,16 @@ Sections used: **Added · Changed · Deprecated · Removed · Fixed · Security 
 
 ---
 
+## [2.5.3] — 2026-11-10 — *iPad: the page fills the screen when the rail is collapsed*
+
+### Fixed
+- On iPad in portrait (and any window 1024px wide or less), collapsing the sidebar slid it
+  off-screen but the page kept its 200px slot, leaving a blank strip. The narrow-rail width now
+  applies only while the rail is open. (Inherited from Tattva 2.8.0; fixed the same way in
+  Nivesa 3.0.1.)
+
+---
+
 ## [2.5.2] — 2026-11-10 — *Three design-system fixes*
 
 ### Fixed

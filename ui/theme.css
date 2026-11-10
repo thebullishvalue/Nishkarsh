@@ -2418,8 +2418,11 @@
     :root { --col-min: 200px; --page-pad: var(--s5); }
     /* The rail is a quarter of an iPad's width. Narrowed here, not hidden:
        the instrument selector is how you change what every page is about. */
-    [data-testid="stSidebar"] { min-width: 200px !important; max-width: 200px !important; }
-    [data-testid="stSidebar"] > div { min-width: 200px !important; }
+    /* OPEN rail only. Unscoped, this floor also held the COLLAPSED rail at
+       200px in the layout: Streamlit slides it off-screen but the page kept
+       its slot, leaving a 200px blank strip on iPad portrait (measured). */
+    [data-testid="stSidebar"][aria-expanded="true"] { min-width: 200px !important; max-width: 200px !important; }
+    [data-testid="stSidebar"][aria-expanded="true"] > div { min-width: 200px !important; }
 }
 @media (max-width: 768px) {                         /* iPad portrait */
     :root { --col-min: 180px; }
