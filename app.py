@@ -91,11 +91,14 @@ PAGES = (
 )
 
 #: The page favicon — Tattva's mark pattern (a ring and a rising line), in the Paper cobalt.
-_FAVICON = ("data:image/svg+xml;utf8,"
-            "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>"
-            "<circle cx='12' cy='12' r='10' fill='none' stroke='%232B5FD9' stroke-width='2'/>"
-            "<path d='M8 14l3-5 2 3 3-4' fill='none' stroke='%232B5FD9' stroke-width='2' "
-            "stroke-linecap='round' stroke-linejoin='round'/></svg>")
+_FAVICON = (  # Tattva's exact tab icon (its cobalt ring-and-line mark), in Tattva's own
+              # base64 encoding — the same bytes, so the three apps' tabs match.
+    "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My"
+    "5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PGNpcmNsZSBjeD0iMTIiIGN5PSIxMiIgcj0iMTAiIG"
+    "ZpbGw9Im5vbmUiIHN0cm9rZT0iIzNENkZFOCIgc3Ryb2tlLXdpZHRoPSIyIi8+PHBhdGggZD0iTTggMTRsMy01ID"
+    "IgMyAzLTQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzNENkZFOCIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZW"
+    "NhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz48L3N2Zz4="
+)
 
 
 def _clear_derived(keep_data: bool = False) -> None:
