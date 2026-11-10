@@ -13,6 +13,17 @@ Sections used: **Added · Changed · Deprecated · Removed · Fixed · Security 
 
 ---
 
+## [2.5.5] — 2026-11-10
+
+### Fixed
+- **Black native surfaces on dark-mode phones.** With both `[theme.light]` and `[theme.dark]`
+  in `.streamlit/config.toml`, Streamlit's native widgets followed the viewer's OS while the app
+  follows its Paper/Slate toggle, so a dark-mode phone in Paper got near-black native surfaces.
+  The config now has exactly one `[theme]` section (a fixed native layer for every viewer, as in
+  Pragyam, Samhita and Swing), and the tab strip's overflow fade is painted from `var(--bg)`.
+
+---
+
 ## [2.5.4] — 2026-11-10 — *Tattva's tab icon*
 
 ### Changed
