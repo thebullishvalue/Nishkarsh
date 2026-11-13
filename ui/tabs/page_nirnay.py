@@ -123,7 +123,7 @@ def _stocks_chart(snap: pd.DataFrame) -> None:
     fig.add_hline(y=0, line_color=grid_rgba(0.10), line_width=0.6)
     many = len(syms) > 20
     fig.update_layout(**chart_layout(height=UI_CHART_HEIGHT_MEDIUM, show_legend=False,
-                                     margin=dict(t=12, l=52, r=16, b=70 if many else 38)))
+                                     margin=dict(t=12, l=60, r=24, b=70 if many else 38)))
     style_axes(fig, y_title="Oscillator")
     fig.update_xaxes(tickangle=-90 if many else 0, showgrid=False)
     n_bull, n_bear = int((s["side"] > 0).sum()), int((s["side"] < 0).sum())
