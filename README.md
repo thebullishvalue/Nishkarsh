@@ -11,7 +11,7 @@ p-values — what is and is not established.
 
 | | |
 |---|---|
-| **Version** | 2.5.8 — *The copy keeps its gap below the header* |
+| **Version** | 2.5.9 — *One button face across the family* |
 | **Stack** | Python 3.13 · Streamlit 1.52.2 (pinned) · scikit-learn · statsmodels · numba · Plotly |
 | **Universe** | Nifty 50 (live list from niftyindices.com; dated fallback list) |
 | **License** | See `LICENSE.md` |

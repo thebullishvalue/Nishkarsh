@@ -13,7 +13,7 @@ Rules:
 
 # ─── Version / Product ───────────────────────────────────────────────────────
 
-VERSION = "2.5.8"
+VERSION = "2.5.9"
 PRODUCT_NAME = "NISHKARSH"
 COMPANY = "@thebullishvalue"
 
