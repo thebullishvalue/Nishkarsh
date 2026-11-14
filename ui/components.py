@@ -1175,7 +1175,9 @@ def render_edge_panel(edge: dict | None, key: str, *, what: str, show_chart: boo
     if show_chart and blocks:
         import plotly.graph_objects as go
         fig = go.Figure(go.Bar(
-            x=[f"{str(b.get('start'))[:7]} → {str(b.get('end'))[:7]}" for b in blocks],
+            # Two lines, not one: "2021-03 → 2021-12" is 17 characters per bar,
+            # and five of them overran each other across a phone-width axis.
+            x=[f"{str(b.get('start'))[:7]}<br>→ {str(b.get('end'))[:7]}" for b in blocks],
             y=[b.get("ic") for b in blocks],
             marker=dict(color=[chart_color("emerald") if (num(b.get("ic")) or 0) > 0
                                else chart_color("rose") for b in blocks]),
@@ -1184,6 +1186,7 @@ def render_edge_panel(edge: dict | None, key: str, *, what: str, show_chart: boo
         fig.add_hline(y=0, line_color=grid_rgba(0.10), line_width=0.6)
         fig.update_layout(**chart_layout(height=240, show_legend=False))
         style_axes(fig, y_title="IC")
+        fig.update_xaxes(automargin=True)
         render_chart_panel(fig, f"edge-{key}", units="IC per period", windowed=False,
                            footer=html_mod.escape(edge_summary_text(edge, what)))
 
