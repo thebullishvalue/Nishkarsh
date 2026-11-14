@@ -234,7 +234,7 @@ def _render_landing_page() -> None:
                     + "</div>",
                     unsafe_allow_html=True,
                 )
-    render_section_header("What a run returns", icon="target")
+    render_section_header("What a Run Returns", icon="target")
     outcomes = (
         ("One read", "Strongly bullish to strongly bearish, from three pillars — and the one thing "
                      "limiting how far it can be trusted, named."),
