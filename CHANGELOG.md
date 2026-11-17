@@ -13,6 +13,18 @@ Sections used: **Added · Changed · Deprecated · Removed · Fixed · Security 
 
 ---
 
+## [2.5.16] — 2026-11-17
+### Fixed
+- **Chart tooltips print rounded numbers.** Plotly.js 3.1, which Streamlit bundles, rejects a
+  number format that pairs the sign flag with a fixed precision (`%{y:+.2f}`) and prints the raw
+  float in its place: a tooltip read "Consensus : 0.2295574715461816 · NEUTRAL". Plain formats
+  (`.2f`) were never affected, so the leak sat only in the signed readings. Every chart now passes
+  through `fix_hover_formats` on its way to the page, which formats each signed value in Python
+  and hands Plotly the finished string; a unified tooltip's header (the axis value) is rounded the
+  same way. Measured by sweeping the pointer across every chart on every page.
+
+---
+
 ## [2.5.15] — 2026-11-16
 ### Fixed
 - **The cursor and typed search text are visible on Paper.** Streamlit's base theme is the dark
