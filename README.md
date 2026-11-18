@@ -11,7 +11,7 @@ p-values — what is and is not established.
 
 | | |
 |---|---|
-| **Version** | 2.5.16 — *Tooltips print rounded numbers* |
+| **Version** | 2.5.17 — *The appearance switch reaches the rail's foot* |
 | **Stack** | Python 3.13 · Streamlit 1.52.2 (pinned) · scikit-learn · statsmodels · numba · Plotly |
 | **Universe** | Nifty 50 (live list from niftyindices.com; dated fallback list) |
 | **License** | See `LICENSE.md` |
