@@ -319,6 +319,11 @@ def main() -> None:
     # tables and iframes agree on one value for the whole run.
     st.session_state["theme"] = "light" if theme_choice() == "Paper" else "dark"
     inject_css(theme=st.session_state["theme"])
+    # The terminal's masthead, once per process; library and module logs join the run trace.
+    from core.logger_config import console as _console, capture_library_output, route_logging
+    capture_library_output()
+    route_logging(_console, names=("data", "engines", "convergence", "pipeline"))
+    _console.banner(PRODUCT_NAME, VERSION, "Top-Down Forecast · Bottom-Up Breadth · One Inference")
     # Read by default_chart_context: every panel's context line reads "NIFTY 50 · 6M · units".
     st.session_state["active_target"] = INSTRUMENT
     # ONE main-area progress slot, used from the first click (no sidebar spinners).

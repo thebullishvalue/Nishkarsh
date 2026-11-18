@@ -13,6 +13,31 @@ Sections used: **Added · Changed · Deprecated · Removed · Fixed · Security 
 
 ---
 
+## [2.5.19] — 2026-11-18
+### Changed
+- **One console, shared by the family.** `core/logger_config.py` is now the family console, the same file
+  in all nine apps, as the fidelity block of `theme.css` is for the page. Seven consoles had grown
+  from one design (five copies of the same module, two more embedded in Samhita and Swing) and
+  drifted: rules 60 and 70 wide, phases written three ways, timers rounded to whole seconds
+  ("[0s]"), colour codes written into captured logs, a second run id printed under the first.
+- **One grammar.** The product's banner once per process; a run's masthead (title, version, one
+  run id, its start); its inputs in a labelled block; numbered phases with their time; numbered
+  steps that close with what they produced and how long they took; labels in one column, long
+  values wrapping under it at 72 columns; ✓ ⚠ ✗ ℹ in their colours; result cards; and a closing
+  line, RUN COMPLETE or RUN FAILED, with the run's time and its warning and error counts.
+- **Library output joins the run.** yfinance's HTTP errors (`HTTP Error 401: Unauthorized{"finance":
+  …}`), its "possibly delisted" notices and Python warnings (a pandas RuntimeWarning with its full
+  site-packages path) printed raw into the middle of a run. Each now arrives as one dimmed ⚠ line
+  naming its source, once per run, counted as a warning.
+- **Colour only on a terminal**, so a captured log is plain text (`NO_COLOR` / `FORCE_COLOR` honoured).
+- The walk-forward metadata printed as a Python dict (`wf {'min_train': 1500, …}`); it reads as a
+  line ("356 chunks · refit every 5 · 0 starved · 0 fallback"), and the ticks drop "Walking Forward...".
+- Diagnostics in words: significant / not significant, adds value, passed, in place of
+  `significant=False`, `adds_value=True`; the timing card reads "Time · data 7.87s" for `t_data: 7.9s`.
+- The fifty constituent lines align in columns; the module logs of the data layer join the trace.
+
+---
+
 ## [2.5.18] — 2026-11-18
 ### Fixed
 - **Numbers written as text read as numbers.** A table column whose numbers arrive already

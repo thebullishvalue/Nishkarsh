@@ -227,9 +227,9 @@ def _run(sheet_df, cfg, sources, *, progress, log, force, sheet_info, today) -> 
     prepared = prepare_sheet(sheet_df, cfg)          # raises InputError with a user-facing message
     warnings += prepared.warnings
     T["inputs"] = time.perf_counter() - t
-    log.header("NISHKARSH — Unified Analysis", f"v{C.VERSION}")
-    log.main_header("ANALYSIS CONFIGURATION", {
-        "Run ID": run_id, "Target": cfg.target, "Predictors": f"{len(prepared.features)} columns",
+    log.header(f"{C.PRODUCT_NAME} · Unified analysis", C.VERSION)
+    log.main_header("Analysis configuration", {
+        "Target": cfg.target, "Predictors": f"{len(prepared.features)} columns",
         "Rows": f"{prepared.rows_used} used / {prepared.rows_raw} in sheet ({prepared.sheet_span[0]} → {prepared.sheet_span[1]})",
         "Effective start": prepared.effective_start + (f" (bounded by {prepared.bounding_predictor})"
                                                        if prepared.bounding_predictor else ""),
@@ -295,7 +295,8 @@ def _run(sheet_df, cfg, sources, *, progress, log, force, sheet_info, today) -> 
         now = time.time()
         if p >= 1.0 or now - last[0] >= 4.0:
             last[0] = now
-            log.detail(f"Walk-forward {float(p) * 100:3.0f}% · {msg}")
+            log.detail(f"Walk-forward {float(p) * 100:3.0f}% · " + str(msg).replace("Walking Forward... ", "rows ")
+                       .replace("(", "").replace(")", ""))
 
     engine = FairValueEngine()
     engine.fit(X, prepared.y, feature_names=names, progress_callback=_aar_progress,
@@ -308,7 +309,10 @@ def _run(sheet_df, cfg, sources, *, progress, log, force, sheet_info, today) -> 
     aarambh_ts.index = pd.DatetimeIndex(prepared.dates.to_numpy())
     aarambh_ts["Date"] = aarambh_ts.index
     n_valid = int(aarambh_ts["Valid"].sum()) if "Valid" in aarambh_ts.columns else 0
-    log.item("Valid forecasts", f"{n_valid}/{len(aarambh_ts)} · wf {engine.wf_meta}")
+    wf = engine.wf_meta or {}
+    log.item("Valid forecasts", f"{n_valid}/{len(aarambh_ts)} · first at row {wf.get('first_forecast_row')}")
+    log.item("Walk-forward", f"{wf.get('chunks_total')} chunks · refit every {wf.get('refit')} · "
+                             f"{wf.get('chunks_skipped_starved')} starved · {wf.get('chunks_fallback')} fallback")
     if n_valid == 0:
         warnings.append("Aarambh produced no valid out-of-sample forecast.")
     log.end_phase("AARAMBH ENGINE")
@@ -329,8 +333,9 @@ def _run(sheet_df, cfg, sources, *, progress, log, force, sheet_info, today) -> 
             else:
                 dfs[sym] = res
                 lr = res.iloc[-1]
-                log.detail(f"[{i + 1}/{total}] {sym}: osc={float(lr.get('Unified_Osc', np.nan)):+.1f} "
-                           f"[{lr.get('Condition', 'N/A')}] regime={lr.get('Regime', 'N/A')} rows={len(res)}")
+                log.detail(f"{i + 1:>2}/{total} {sym.replace('.NS', ''):<12} osc "
+                           f"{float(lr.get('Unified_Osc', np.nan)):+5.1f} · {str(lr.get('Condition', 'N/A')):<10} · "
+                           f"{str(lr.get('Regime', 'N/A')):<9} · {len(res)} rows")
         except Exception as e:  # noqa: BLE001 — counted and reported, never silently swallowed
             failures[sym] = f"{type(e).__name__}: {e}"
             log.failure(sym, str(e))

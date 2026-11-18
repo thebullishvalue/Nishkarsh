@@ -201,7 +201,7 @@ def render_diagnostics(report: dict, log) -> None:
     inp, data, a, n = report["inputs"], report["data"], report["aarambh"], report["nirnay"]
     con, cfg = report["conclusion"], report["config"]
     v = verdict_lines(report)
-    log.section("SYSTEM DIAGNOSTICS", "DIAGNOSTICS")
+    log.section("System diagnostics", "Report")
     if v["synthetic"]:
         log.warning(v["synthetic"])
 
@@ -217,7 +217,7 @@ def render_diagnostics(report: dict, log) -> None:
     for k in ("sheet", "constituents", "macro", "ohlcv", "index"):
         p = data.get(k)
         if p:
-            log.item(f"  {k}", f"{p['provenance']}" + (f" · as of {p['as_of']}" if p.get("as_of") else "")
+            log.item(f"Source · {k}", f"{p['provenance']}" + (f" · as of {p['as_of']}" if p.get("as_of") else "")
                      + (f" · {len(p['missing'])} missing" if p.get("missing") else "")
                      + (f" · {p['note'][:90]}" if p.get("note") else ""))
     mp = data["macro_panel"]
@@ -261,16 +261,17 @@ def render_diagnostics(report: dict, log) -> None:
             ci = e.get("boot_ci")
             log.item(name, f"IC {_f(e.get('ic'))} · n {e.get('n')} · HAC t {_f(e.get('hac_t'), '+.2f')} · "
                      f"p {_f(e.get('p'), '.3f')} · CI {('[' + _f(ci[0]) + ', ' + _f(ci[1]) + ']') if ci else 'n/a'}"
-                     f" · significant={e.get('significant')}")
+                     f" · {'significant' if e.get('significant') else 'not significant'}")
         else:
             log.item(name, "not available")
     lf = con.get("lift") or {}
-    log.item("Convergence lift", f"available={lf.get('available')} · lift {_f(lf.get('lift'))} · p "
-             f"{_f(lf.get('p_one_sided'), '.3f')} · MDE {_f(lf.get('mde'))} · passed={lf.get('passed')} · "
-             f"κ {_f(lf.get('kappa'), '.2f')} · κ enabled={con.get('kappa_enabled')}")
+    log.item("Convergence lift", (f"lift {_f(lf.get('lift'))} · p {_f(lf.get('p_one_sided'), '.3f')} · "
+                                  f"MDE {_f(lf.get('mde'))} · {'passed' if lf.get('passed') else 'not passed'} · "
+                                  f"κ {_f(lf.get('kappa'), '.2f')} ({'on' if con.get('kappa_enabled') else 'off'})")
+             if lf.get("available") else "not available")
     oos = con.get("oos") or {}
     log.item("OOS C vs A", f"IC_C {_f(oos.get('ic_C'))} · IC_A {_f(oos.get('ic_A'))} · n {oos.get('n')} · "
-             f"adds_value={oos.get('adds_value')}")
+             f"{'adds value' if oos.get('adds_value') else 'adds no value'}")
     bt = con.get("backtest") or {}
     ref = (bt.get("by_cost") or {}).get(str(float(bt.get("reference_bps", C.BACKTEST_REFERENCE_BPS)))) or {}
     log.item(f"Backtest @{bt.get('reference_bps')}bps", f"net Sharpe {_f(ref.get('net_sharpe'), '+.2f')} · t "
@@ -287,5 +288,6 @@ def render_diagnostics(report: dict, log) -> None:
     log.item("Trust", v["trust"])
     for w in report.get("warnings") or []:
         log.warning(w)
-    log.summary("RUN SUMMARY", {"Run ID": report.get("run_id"), "Fingerprint": report["fingerprint"][:12],
-                                **{f"t_{k}": f"{t:.1f}s" for k, t in (report.get("timings") or {}).items()}})
+    from core.logger_config import fmt_elapsed
+    log.summary("Run summary", {"Fingerprint": report["fingerprint"][:12],
+                                **{f"Time · {k}": fmt_elapsed(float(t)) for k, t in (report.get("timings") or {}).items()}})
