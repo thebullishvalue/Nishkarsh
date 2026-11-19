@@ -48,7 +48,7 @@ if str(PROJECT_ROOT) in sys.path:
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.config import (  # noqa: E402
-    COMPANY, DEFAULT_PREDICTORS, HISTORY_YEARS, NIRNAY_POLARITY, PRODUCT_NAME, TIMEFRAME_TRADING_DAYS, VERSION,
+    COMPANY, DEFAULT_PREDICTORS, HISTORY_YEARS, PRODUCT_NAME, TIMEFRAME_TRADING_DAYS, VERSION,
 )
 from pipeline.config import PipelineConfig  # noqa: E402
 from pipeline.inputs import InputError, sheet_content_hash  # noqa: E402
@@ -56,8 +56,8 @@ from pipeline.run import SESSION_KEYS, run_pipeline  # noqa: E402
 from ui.components import (  # noqa: E402
     _d, _list, _str, asof_date, num, panel, render_control_hint, render_header, render_kpi_strip, render_nav_brand,
     render_outcome_grid, render_system_grid,
-    render_notice_rail, render_rail_readout, render_section_header, render_ticker, render_top_bar,
-    render_warning_box, signed,
+    render_notice_rail, render_section_header, render_ticker, render_top_bar,
+    render_warning_box,
 )
 from ui.tabs.page_aarambh import render_aarambh_page  # noqa: E402
 from ui.tabs.page_convergence import render_convergence_page  # noqa: E402
@@ -268,32 +268,6 @@ def _render_footer() -> None:
 
 
 # ─── Rail: Model readout ─────────────────────────────────────────────────────
-def _render_model_readout() -> None:
-    """What the run reached, not a control: the pillar weights, the read's walk-forward edge,
-    its positive periods and Nirnay's polarity. Nothing about the model is configurable."""
-    st.markdown('<div class="sidebar-title">Model</div>', unsafe_allow_html=True)
-    if not _d(st.session_state.get("conclusion")):
-        render_control_hint("Run an analysis to populate.")
-        return
-    v = read_verdict()
-    k = _d(v.get("kpi"))
-    rows = [(f"{lab} weight", f"{w:.2f}", "accent")
-            for lab, w in (("Top-down", num(_d(k.get("pillar_weights")).get("top_down"))),
-                           ("Bottom-up", num(_d(k.get("pillar_weights")).get("bottom_up"))),
-                           ("Agreement", num(_d(k.get("pillar_weights")).get("agreement"))))
-            if w is not None]
-    t = _d(v.get("trust"))
-    ic = num(t.get("oos_ic"))
-    if ic is not None:
-        rows.append(("Read edge (IC)", signed(ic, "+.3f"), "long" if ic > 0 else "short"))
-        nb = int(num(t.get("n_blocks")) or 0)
-        if nb:
-            rows.append(("Periods +", f"{int(num(t.get('positive_blocks')) or 0)}/{nb}", ""))
-    rows.append(("Nirnay polarity", NIRNAY_POLARITY.capitalize(), ""))
-    render_rail_readout(rows)
-
-
-# ─── Inputs: the defaults the model runs on (not user-configurable) ──────────
 def _resolve_inputs(df: pd.DataFrame) -> dict | str:
     """Target, date column and predictors — the defaults the retired "Model settings" controls
     defaulted to (rule 28: the model is not user-configurable). Returns an error string when the
@@ -413,9 +387,8 @@ def main() -> None:
         _render_footer()
         return
 
-    # ─── Rail, loaded: Model readout · Session · Appearance ─────────────────
+    # ─── Rail, loaded: Session · Appearance ─────────────────────────────────
     with st.sidebar:
-        _render_model_readout()
         st.markdown('<div class="sidebar-title">Session</div>', unsafe_allow_html=True)
         do_refresh = st.button(
             "Refresh data", type="secondary", width="stretch",

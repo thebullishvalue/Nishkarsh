@@ -13,6 +13,23 @@ Sections used: **Added · Changed · Deprecated · Removed · Fixed · Security 
 
 ---
 
+## [2.5.22] — 2026-11-19
+### Changed
+- **The rail holds controls only.** The Model readout under the controls is gone (pillar weights,
+  the read's edge, its positive periods and Nirnay's polarity after a run). Every member's rail
+  reads identity, controls, appearance, and VAAYDO's never had one; where a readout stood, each
+  app showed a different kind of fact, and each pushed the appearance switch further down. Nothing
+  is lost: all of them are on the System page.
+- **The appearance switch sits at the foot on every screen.** Streamlit ends the rail with 96px of
+  padding, so the switch "pinned to the foot" floated well above it on every screen, and on a rail
+  taller than the screen it sat below the fold. The rail now ends 16px under the switch (plus a
+  phone's home-bar inset), and the switch is pinned: where the rail scrolls, it stays at the foot
+  on the rail's own ground and the controls pass behind it. A rail that carries the page list pins
+  it on a desktop at least 820px tall; on a smaller screen it is the rail's last item, 16px from
+  its end, so a long page list never leaves it half-hidden over the controls.
+
+---
+
 ## [2.5.21] — 2026-11-19
 ### Changed
 - **The landing page reads as Arthagati's.** Below the masthead and the claim, three segments in

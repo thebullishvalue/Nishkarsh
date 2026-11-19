@@ -11,7 +11,7 @@ p-values — what is and is not established.
 
 | | |
 |---|---|
-| **Version** | 2.5.21 — *The landing page in three segments* |
+| **Version** | 2.5.22 — *The rail holds controls* |
 | **Stack** | Python 3.13 · Streamlit 1.52.2 (pinned) · scikit-learn · statsmodels · numba · Plotly |
 | **Universe** | Nifty 50 (live list from niftyindices.com; dated fallback list) |
 | **License** | See `LICENSE.md` |
