@@ -13,6 +13,24 @@ Sections used: **Added · Changed · Deprecated · Removed · Fixed · Security 
 
 ---
 
+## [2.5.21] — 2026-11-19
+### Changed
+- **The landing page reads as Arthagati's.** Below the masthead and the claim, three segments in
+  one order: **Engines** (the three parts of the system, each a plain paragraph on what it does
+  and why it matters, then three short facts), **Inputs & Scope** (what it can be pointed at and
+  the history behind it) and **Run Outputs** (the four things a run puts on screen). It ran
+  Coverage, Systems, What a Run Returns: scope before the system it bounds. Each section now opens
+  with one sentence saying what it holds.
+- **Plain words.** The copy says what each part does and why it matters, without the internal
+  shorthand it carried ("Purged walk-forward ensemble", "MSF + MMR oscillator", "Kalman · HMM ·
+  GARCH · CUSUM", "Walk-forward IC"). A method's name stays only where it helps the reader.
+- **One height, one row.** The three panels are one grid, so they stand at one height with their
+  facts on one baseline (as Streamlit containers each sized to its own copy, the longest panel
+  stood taller); the four output cards sit in one row, then two by two, then one per row on a
+  phone (they wrapped three and one, the fourth alone on its row).
+
+---
+
 ## [2.5.20] — 2026-11-19
 ### Changed
 - **The data source is a select.** The rail's Data source was a radio, the last one in the family:

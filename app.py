@@ -55,6 +55,7 @@ from pipeline.inputs import InputError, sheet_content_hash  # noqa: E402
 from pipeline.run import SESSION_KEYS, run_pipeline  # noqa: E402
 from ui.components import (  # noqa: E402
     _d, _list, _str, asof_date, num, panel, render_control_hint, render_header, render_kpi_strip, render_nav_brand,
+    render_outcome_grid, render_system_grid,
     render_notice_rail, render_rail_readout, render_section_header, render_ticker, render_top_bar,
     render_warning_box, signed,
 )
@@ -167,36 +168,50 @@ def _render_header() -> None:
     render_header(PRODUCT_NAME, "Top-Down Forecast · Bottom-Up Breadth · One Inference")
 
 
-#: The three systems, as the cold-start screen describes them — data, not markup, rendered
-#: through one template so the panels cannot drift apart in structure.
-_SYSTEM_PANELS = (
-    ("aarambh", "Aarambh", "The top-down forecast",
-     "Forecasts the Nifty's next ten sessions from your sheet's valuation, rates and breadth "
-     "series with a purged walk-forward ensemble, refitted on a schedule so no forecast ever sees "
-     "its own outcome — then asks how stretched that forecast is across lookbacks.",
-     (("Estimator", "Purged walk-forward ensemble"),
-      ("Horizon", "10 sessions"),
-      ("Pillar", "Forecast · extension · breadth"))),
-    ("nirnay", "Nirnay", "The fifty stocks, bottom up",
-     "Reads every Nifty 50 constituent through its own oscillator and a regime ensemble, then "
-     "counts how many stand on each side. Its polarity is one switch, set by the owner and "
-     "recorded with its evidence.",
-     (("Signal", "MSF + MMR oscillator"),
-      ("Breadth", "Share of stocks per zone"),
-      ("Regime", "Kalman · HMM · GARCH · CUSUM"))),
-    ("convergence", "Convergence", "One read, measured",
-     "Scores the two systems against each other across direction, breadth, magnitude and regime, "
-     "folds both and their agreement into one causal oscillator, and grades it the way every "
-     "engine is graded — walk-forward, before any claim is made.",
-     (("Fusion", "Aarambh × Nirnay"),
-      ("Read", "Mean of three pillars, ±100"),
-      ("Graded", "Walk-forward IC"))),
+#: The landing page's three segments, as data: Engines, Inputs & Scope, Run Outputs, in the
+#: order Arthagati reads them. Plain words first; a method's name only where it helps.
+_ENGINES = (
+    ("Aarambh", "The forecast · top down",
+     "Forecasts where the Nifty's valuation is heading over the next ten sessions, from the "
+     "series in your sheet: valuation, interest rates and breadth. Each forecast is made only "
+     "from data available at the time, so none has ever seen its own outcome, and the app "
+     "shows how stretched the forecast is.",
+     (("Looks ahead", "10 sessions"),
+      ("Learns from", "Your sheet's market series"),
+      ("Built as", "Four models, averaged"))),
+    ("Nirnay", "The breadth · bottom up",
+     "Reads each of the fifty Nifty stocks on its own — how stretched it is, and what kind of "
+     "market it is in — then counts how many stand on each side. A move the stocks themselves "
+     "are joining reads differently from one carried by a few names.",
+     (("Covers", "All 50 Nifty stocks"),
+      ("Per stock", "Stretch and market regime"),
+      ("Reads", "Share of stocks on each side"))),
+    ("Nishkarsh", "The conclusion · one read",
+     "Combines the forecast, the breadth and how far the two agree into one reading from −100 "
+     "to +100. When they agree it strengthens; when they disagree it falls back towards zero. "
+     "Nothing in it is fitted to past returns, and every run re-tests whether it has "
+     "anticipated the Nifty.",
+     (("Combines", "Forecast · breadth · agreement"),
+      ("Scale", "−100 bearish to +100 bullish"),
+      ("Tested", "On every run"))),
+)
+
+_OUTPUTS = (
+    ("One reading", "From strongly bearish to strongly bullish, with what is driving it and the "
+                    "one thing that most limits how far it can be trusted."),
+    ("Its track record", "The reading and each of its parts scored against what the Nifty "
+                         "actually did, window by window: an honest answer to whether it has "
+                         "worked."),
+    ("A historical base rate", "What the Nifty did after the most similar past readings, "
+                               "matched on the reading itself rather than on a model fitted to "
+                               "returns."),
+    ("The full record", "Every series behind the reading, joined by date, ready to explore or "
+                        "export."),
 )
 
 
 def _render_landing_page() -> None:
-    """Cold start — a description of the product, built from the product's own parts:
-    the claim, then section headers + a KPI strip + panels + one outcome grid."""
+    """Cold start: the claim, then Engines, Inputs & Scope and Run Outputs (Arthagati's three)."""
     st.markdown(
         '<div class="lede">'
         '<div class="lede-claim">Aarambh forecasts the Nifty from the top down, Nirnay reads its fifty '
@@ -206,51 +221,38 @@ def _render_landing_page() -> None:
         '</div>',
         unsafe_allow_html=True,
     )
-    render_section_header("Coverage", icon="layers")
+    render_section_header(
+        "Engines",
+        "Two independent views of the Nifty and the one reading built from them: a forecast from "
+        "the top, a count from the bottom, and where the two meet.",
+        icon="cpu",
+    )
+    render_system_grid(_ENGINES)
+    render_section_header(
+        "Inputs & Scope",
+        "What a run reads, and how far back it reaches.",
+        icon="database",
+    )
     render_kpi_strip(
         [
-            {"label": "Nifty 50 Constituents", "value": "50",
-             "subtext": "Every current member read bottom up — today's list applied to the past, which "
-                        "flatters the bottom-up history (survivorship)"},
-            {"label": "Inputs → Pillars", "value": "10 → 3",
-             "subtext": "Four top-down inputs, five bottom-up and one for agreement, each standardized "
-                        "against its own past; no weight or sign fitted to returns"},
-            {"label": "Daily History Per Run", "value": f"~{int(HISTORY_YEARS)}y",
-             "subtext": "Every published value uses only data available on its own date, so re-running "
-                        "extends the record instead of rewriting it"},
+            {"label": "Nifty Stocks", "value": "50",
+             "subtext": "Every current member, each read on its own; today's list is used for the "
+                        "past too, which flatters that history slightly"},
+            {"label": "Readings Combined", "value": "10 → 3",
+             "subtext": "Four top-down, five bottom-up and one on agreement, grouped into three, "
+                        "each compared only with its own past"},
+            {"label": "Daily History", "value": f"~{int(HISTORY_YEARS)}y",
+             "subtext": "Every value uses only what was known on its own date, so a later run adds "
+                        "to the record without rewriting it"},
         ],
         max_cols=3, key="landing-coverage",
     )
-    render_section_header("Systems", icon="cpu")
-    cols = st.columns(3, gap="small")
-    for col, (cls, name, kicker, body, specs) in zip(cols, _SYSTEM_PANELS):
-        with col:
-            with panel(f"landing-{cls}", name, context=kicker):
-                st.markdown(
-                    f'<div class="panel-copy">{html.escape(body)}</div>'
-                    '<div class="panel-specs">'
-                    + "".join(f'<div class="lookback-row"><span class="lbl">{html.escape(k)}</span>'
-                              f'<span class="val">{html.escape(v)}</span></div>' for k, v in specs)
-                    + "</div>",
-                    unsafe_allow_html=True,
-                )
-    render_section_header("What a Run Returns", icon="target")
-    outcomes = (
-        ("One read", "Strongly bullish to strongly bearish, from three pillars — and the one thing "
-                     "limiting how far it can be trusted, named."),
-        ("A measured edge", "The read and each pillar scored on non-overlapping windows at the read's "
-                            "horizon: the honest answer to whether it has anticipated the Nifty."),
-        ("A base rate", "What the Nifty did after the most similar past reads — no model fitted to "
-                        "returns, matched on the read's own state."),
-        ("The record", "Every series behind the read, joined by date and exportable."),
+    render_section_header(
+        "Run Outputs",
+        "Four things land on screen when a run finishes, each with the evidence behind it.",
+        icon="target",
     )
-    st.markdown(
-        '<div class="outcome-grid">'
-        + "".join(f'<div class="outcome"><div class="o-t">{html.escape(t)}</div>'
-                  f'<div class="o-d">{html.escape(d)}</div></div>' for t, d in outcomes)
-        + "</div>",
-        unsafe_allow_html=True,
-    )
+    render_outcome_grid(_OUTPUTS)
 
 
 def _render_footer() -> None:
