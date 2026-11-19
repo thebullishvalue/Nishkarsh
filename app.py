@@ -336,7 +336,8 @@ def main() -> None:
     with st.sidebar:
         render_nav_brand()
         st.markdown('<div class="sidebar-title">Instrument</div>', unsafe_allow_html=True)
-        source = st.radio("Data source", SOURCES, key="data_source")
+        # A select, as every choice in the family's rails is; the configured sheet comes first.
+        source = st.selectbox("Data source", SOURCES, index=0, key="data_source")
         if ss.get("_sources_kind") and ss["_sources_kind"] != source:
             _clear_derived()                       # switching source discards everything derived
         has_data = "data" in ss and bool(ss.get("run_analysis"))

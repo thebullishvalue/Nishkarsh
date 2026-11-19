@@ -13,6 +13,16 @@ Sections used: **Added · Changed · Deprecated · Removed · Fixed · Security 
 
 ---
 
+## [2.5.20] — 2026-11-19
+### Changed
+- **The data source is a select.** The rail's Data source was a radio, the last one in the family:
+  every other choice in a rail (an asset class, a universe, a mode) is a select. It reads
+  DATA SOURCE · Google Sheets, the configured sheet first and chosen by default, with Upload
+  the other option; choosing Upload brings up the file picker as before. The test that pins the
+  rail's sources now also pins the default.
+
+---
+
 ## [2.5.19] — 2026-11-18
 ### Changed
 - **One console, shared by the family.** `core/logger_config.py` is now the family console, the same file

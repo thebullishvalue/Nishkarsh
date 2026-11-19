@@ -147,9 +147,12 @@ def test_streamlit_app_renders_every_page():
         assert not at.exception, [e.message for e in at.exception]
         cold = " ".join(m.value for m in at.markdown)
         assert "premium-header" in cold and "lede-claim" in cold and "outcome-grid" in cold
-        # the rail offers the real sources only — no synthetic selector
-        radios = [r for r in at.radio if r.label == "Data source"]
-        assert radios and list(radios[0].options) == ["Google Sheets", "Upload"], "data sources"
+        # the rail offers the real sources only — no synthetic selector — in a select, the
+        # configured Google Sheet first and chosen by default
+        sels = [s for s in at.selectbox if s.label == "Data source"]
+        assert sels and list(sels[0].options) == ["Google Sheets", "Upload"], "data sources"
+        assert sels[0].value == "Google Sheets", "Google Sheets is the default source"
+        assert not [r for r in at.radio if r.label == "Data source"], "the source is a select, not a radio"
         assert [b for b in at.button if "Run" in str(b.label)], "Run Analysis button missing"
         # one offline run: the deterministic synthetic world injected as a loaded sheet + sources
         from data.sources import FetchResult
