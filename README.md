@@ -6,7 +6,7 @@
 
 Top-Down Forecast · Bottom-Up Breadth · One Inference
 
-[![Version](https://img.shields.io/badge/version-2.5.22-2B5FD9)](CHANGELOG.md) [![Python](https://img.shields.io/badge/python-3.13-3776AB)](requirements.txt) [![Streamlit](https://img.shields.io/badge/streamlit-1.52.2-FF4B4B)](requirements.txt) [![License](https://img.shields.io/badge/license-proprietary-6B7280)](LICENSE) [![Pragyam Family](https://img.shields.io/badge/pragyam-family-0F1217)](#the-pragyam-family)
+[![Version](https://img.shields.io/badge/version-2.5.23-2B5FD9)](CHANGELOG.md) [![Python](https://img.shields.io/badge/python-3.13-3776AB)](requirements.txt) [![Streamlit](https://img.shields.io/badge/streamlit-1.52.2-FF4B4B)](requirements.txt) [![License](https://img.shields.io/badge/license-proprietary-6B7280)](LICENSE) [![Pragyam Family](https://img.shields.io/badge/pragyam-family-0F1217)](#the-pragyam-family)
 
 </div>
 
