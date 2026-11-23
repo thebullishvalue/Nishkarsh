@@ -13,6 +13,16 @@ Sections used: **Added · Changed · Deprecated · Removed · Fixed · Security 
 
 ---
 
+## [2.5.24] — 2026-11-23
+### Fixed
+- **The chart window keeps its choice across pages.** The window control held the choice in its
+  own widget state, which Streamlit deletes on any page that does not draw the control: a window
+  picked on Convergence came back as the default after a visit to Overview. The choice now lives
+  in one session key that each panel's control starts from and writes back, and clicking the
+  chosen window cannot clear it. Found in Vyāpti, whose shared component carried the same rule.
+
+---
+
 ## [2.5.23] — 2026-11-20
 ### Fixed
 - **A tooltip is one box, in the family's note type.** Every `help=` tip, the rail's refresh hint
