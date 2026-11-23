@@ -372,19 +372,24 @@ def main() -> None:
     if df is None:
         with st.sidebar:
             _render_appearance_control()
-        _render_header()
         # A session that HAD a run and lost its data is not a cold start — say so, and clear the
         # stale flags so the rail stops advertising a live session.
-        if ss.get("run_analysis") and "data" not in ss:
-            render_warning_box(
-                "Session data expired",
-                "This session had a completed run, but its data is no longer in memory — the server "
-                "dropped it, which happens on hosted deployments when memory is reclaimed. Run the "
-                "analysis again to rebuild it.")
+        expired = bool(ss.get("run_analysis") and "data" not in ss)
+        if expired:
             for k in ("run_analysis", "results_cache", "_result_key"):
                 ss.pop(k, None)
-        _render_landing_page()
-        _render_footer()
+
+        def _cold_start() -> None:
+            _render_header()
+            if expired:
+                render_warning_box(
+                    "Session data expired",
+                    "This session had a completed run, but its data is no longer in memory — the server "
+                    "dropped it, which happens on hosted deployments when memory is reclaimed. Run the "
+                    "analysis again to rebuild it.")
+            _render_landing_page()
+
+        _hidden_pages(_cold_start)
         return
 
     # ─── Rail, loaded: Session · Appearance ─────────────────────────────────
@@ -501,6 +506,25 @@ def _page_fn(title: str, render, windowed: bool):
         _safe_render(title, render)
     _page.__name__ = f"page_{title.lower()}"
     return _page
+
+
+def _hidden_pages(render) -> None:
+    """Register every page, hidden, each drawing ``render`` (the landing page).
+
+    Before a run there is nothing for the pages to show, and the app used to return before
+    registering them at all. A session that starts on a page's address, or restarts under an
+    open one (Streamlit Cloud reboots the app on every push to main, and wakes a sleeping one
+    the same way), then held links to pages it had never registered: the landing page showed,
+    and every link in the rail did nothing until the next run. Registered and hidden, every
+    address resolves, the stale links go, and the page the reader was on comes back after Run.
+    """
+    def page() -> None:
+        render()
+        _render_footer()
+
+    st.navigation([st.Page(page, title=title, icon=icon, url_path=url, default=(i == 0))
+                   for i, (_, title, icon, url, _render, _windowed) in enumerate(PAGES)],
+                  position="hidden").run()
 
 
 def _render_pages() -> None:
