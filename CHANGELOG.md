@@ -13,6 +13,15 @@ Sections used: **Added · Changed · Deprecated · Removed · Fixed · Security 
 
 ---
 
+## [2.5.26] — 2026-11-24
+### Changed
+- **The family's fidelity block, in step.** It gains the rule that makes a help icon's (?) follow its colour:
+  Streamlit strokes the ring near-white at 60% whatever colour it is given, which all but hid it on Paper in
+  Vyāpti, Pragyam, Arthagati, Nivesa and Anumaan. No widget here shows a help icon today; the block stays
+  identical in every member, so the next one reads.
+
+---
+
 ## [2.5.25] — 2026-11-23
 ### Fixed
 - **A page link never goes dead.** Before a run there is nothing for the pages to show, and the
