@@ -10,6 +10,13 @@ Sections used: **Added · Changed · Deprecated · Removed · Fixed · Security 
 ---
 
 ## [Unreleased]
+### Fixed (tests)
+- **CI's fast tests pass again.** Four test files located the repository at a hard-coded `/home/user/Nishkarsh`,
+  the development container's path, unless `NISHKARSH_ROOT` said otherwise. Three only put it on the import path,
+  but `test_page_modules_bind_no_colour_at_import` read the engine page modules from it, so on GitHub's runner
+  (checked out under `/home/runner/work/...`) it raised FileNotFoundError and failed every push to main since
+  2.5.9: one failure e-mail per push. The root is now the directory the tests sit in; `NISHKARSH_ROOT` still
+  overrides it. No change to the app.
 
 ---
 

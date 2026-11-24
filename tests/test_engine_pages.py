@@ -17,7 +17,8 @@ import re
 import sys
 from pathlib import Path
 
-_ROOT = os.environ.get("NISHKARSH_ROOT", "/home/user/Nishkarsh")
+# the repository this file sits in, wherever it is checked out (CI runs it under /home/runner/...)
+_ROOT = os.environ.get("NISHKARSH_ROOT", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
