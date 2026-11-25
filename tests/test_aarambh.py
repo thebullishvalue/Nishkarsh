@@ -85,7 +85,11 @@ def test_prefix_invariance(fwd, n_short):
     a, b = es.ts_data, el.ts_data.iloc[:len(es.ts_data)]
     cols = [c for c in a.columns if c not in CAUSAL_SKIP]
     assert len(cols) > 30 and a["Valid"].sum() > 400
-    assert frame_diff(a, b, cols) == {}
+    # The two fits see their inputs in arrays of different lengths, so a float can differ in its last bits on
+    # some CPUs (CI failed once on ModelSpread, 1 row, and passed on a re-run of the same commit). 1e-12 admits
+    # rounding and nothing else: a repainted value is a refit on other rows, many orders of magnitude away.
+    # Discrete columns (zones, tiers, Valid) stay exact; test_determinism stays bit-exact.
+    assert frame_diff(a, b, cols, rtol=1e-12, atol=1e-12) == {}
 
 
 def test_determinism(base):

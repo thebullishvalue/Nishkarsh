@@ -80,13 +80,21 @@ def ic_nonovl(sig, y, ok, h: int = H) -> tuple[float, int]:
     return float(np.nanmean([rank_ic(sig[idx[o::h]], y[idx[o::h]]) for o in range(h)])), len(idx)
 
 
-def frame_diff(a: pd.DataFrame, b: pd.DataFrame, cols) -> dict:
-    """{column: n_mismatched_rows} (NaN == NaN; exact equality otherwise)."""
+def frame_diff(a: pd.DataFrame, b: pd.DataFrame, cols, *, rtol: float = 0.0, atol: float = 0.0) -> dict:
+    """{column: n_mismatched_rows} (NaN == NaN; exact equality otherwise).
+
+    ``rtol``/``atol`` (default 0: bit-exact) apply to float columns only: a value computed from the same
+    inputs in arrays laid out differently in memory can differ in its last bits on some CPUs (numpy's
+    SIMD reductions and the iterative solvers take a different path by alignment), which is rounding,
+    not a different result. Discrete columns are always compared exactly."""
     bad = {}
     for c in cols:
         x, z = a[c].to_numpy(), b[c].to_numpy()
         if x.dtype.kind in "fc":
-            d = ~((x == z) | (np.isnan(x) & np.isnan(z)))
+            if rtol or atol:
+                d = ~np.isclose(x, z, rtol=rtol, atol=atol, equal_nan=True)
+            else:
+                d = ~((x == z) | (np.isnan(x) & np.isnan(z)))
         else:
             d = x != z
         if np.any(d):

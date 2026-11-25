@@ -11,6 +11,14 @@ Sections used: **Added · Changed · Deprecated · Removed · Fixed · Security 
 
 ## [Unreleased]
 ### Fixed (tests)
+- **Prefix invariance tolerates rounding, not repainting.** `test_prefix_invariance` compared a fit on 603 rows
+  with the same fit on 643 bit for bit. On some GitHub runners one `ModelSpread` value (the members'
+  dispersion) differed in its last bits, because the two fits hold their inputs in arrays of different
+  lengths and numpy's reductions take a different SIMD path by alignment: CI failed on 2.5.27 and passed on a
+  re-run of the same commit. Float columns are now compared to 1e-12 (`frame_diff(..., rtol, atol)`, exact by
+  default); a repainted value would be a refit on other rows, many orders of magnitude away. Discrete columns
+  stay exact, and `test_determinism` (the same fit twice) stays bit-exact. No change to the app.
+### Fixed (tests)
 - **CI's fast tests pass again.** Four test files located the repository at a hard-coded `/home/user/Nishkarsh`,
   the development container's path, unless `NISHKARSH_ROOT` said otherwise. Three only put it on the import path,
   but `test_page_modules_bind_no_colour_at_import` read the engine page modules from it, so on GitHub's runner
